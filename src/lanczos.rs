@@ -435,7 +435,7 @@ fn tridiagonal_qr(alpha: &[f64], beta: &[f64], tol: f64) -> (Vec<f64>, Vec<Vec<f
 
     // Sort by eigenvalue
     let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| d[a].partial_cmp(&d[b]).unwrap());
+    indices.sort_by(|&a, &b| d[a].partial_cmp(&d[b]).unwrap_or(std::cmp::Ordering::Equal));
 
     let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| d[i]).collect();
     let sorted_eigenvectors: Vec<Vec<f64>> = indices
