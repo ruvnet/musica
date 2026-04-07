@@ -1,0 +1,24 @@
+[package]
+name = "musica"
+version = "0.1.0"
+edition = "2021"
+description = "Structure-first audio source separation via dynamic mincut graph partitioning"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ruvnet/musica"
+keywords = ["audio", "source-separation", "spectral", "mincut", "dsp"]
+categories = ["multimedia::audio", "algorithms", "science"]
+
+[workspace]
+
+[features]
+default = []
+wasm = []
+transcribe = ["candle-core", "candle-nn", "candle-transformers"]
+
+[dependencies]
+ruvector-mincut = { version = "2.0", features = ["monitoring", "approximate", "exact"] }
+
+# Optional: candle-whisper for pure-Rust transcription
+candle-core = { version = "0.10", optional = true }
+candle-nn = { version = "0.10", optional = true }
+candle-transformers = { version = "0.10", optional = true }

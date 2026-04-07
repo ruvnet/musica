@@ -1,0 +1,6 @@
+/target
+Cargo.lock
+*.wav
+*.mp3
+*.flac
+test_audio/*.wav
