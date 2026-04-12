@@ -4,10 +4,7 @@
 //! cargo run --release --example clipcannon_bench
 //! ```
 
-use musica::clipcannon::bench::{
-    bench_analyzer_block, bench_analyzer_composite, bench_prosody_frame, bench_speaker_observe,
-    bench_viseme_map,
-};
+use musica::clipcannon::bench::run_all;
 
 fn main() {
     println!("================================================================");
@@ -15,13 +12,7 @@ fn main() {
     println!("  16 kHz, 128-sample blocks, 256-sample windows");
     println!("================================================================\n");
 
-    let results = vec![
-        bench_prosody_frame(),
-        bench_viseme_map(),
-        bench_speaker_observe(),
-        bench_analyzer_block(),
-        bench_analyzer_composite(),
-    ];
+    let results = run_all();
 
     for r in &results {
         println!("{}", r);

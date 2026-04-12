@@ -17,9 +17,15 @@ use std::time::Instant;
 
 use crate::hearmusica::{AudioBlock, AudioProcessor};
 
+use super::emotion::EmotionEstimator;
+use super::localize::{Localizer, DEFAULT_MIC_SPACING_M};
+use super::music_speech::MusicSpeechDetector;
 use super::pipeline::RealtimeAvatarAnalyzer;
-use super::prosody::ProsodyExtractor;
+use super::prosody::{ProsodyExtractor, ProsodySnapshot};
+use super::singing::{PitchTracker, StyleClassifier, StyleMatch};
+use super::spectrum::SharedSpectrum;
 use super::speaker_embed::SpeakerTracker;
+use super::vad::VadDetector;
 use super::viseme::VisemeMapper;
 
 /// Default warm-up iterations.
@@ -112,18 +118,23 @@ pub fn bench_prosody_frame() -> BenchResult {
 }
 
 pub fn bench_prosody_frame_with(warmup: u32, iters: u32) -> BenchResult {
+    // Bench the SOTA path: prosody from a precomputed SharedSpectrum
+    // (Wiener-Khinchin ACF, no redundant FFT). This is what the analyser
+    // uses in production.
     let sr = 16_000.0_f32;
     let win = 256_usize;
+    let mut spec = SharedSpectrum::new(sr, win);
+    let l = voiced_frame(win, sr, 220.0);
+    let r = voiced_frame(win, sr, 220.0);
+    spec.compute(&l, &r);
     let mut ext = ProsodyExtractor::new(sr, win);
-    let frame = voiced_frame(win, sr, 220.0);
-    let mags = naive_mags(&frame);
     for _ in 0..warmup {
-        std::hint::black_box(ext.extract(&frame, &mags));
+        std::hint::black_box(ext.extract_from_spectrum(&spec));
     }
     let mut samples = Vec::with_capacity(iters as usize);
     for _ in 0..iters {
         let t = Instant::now();
-        let r = ext.extract(&frame, &mags);
+        let r = ext.extract_from_spectrum(&spec);
         std::hint::black_box(r);
         samples.push(t.elapsed().as_secs_f64() * 1e6);
     }
@@ -244,12 +255,217 @@ pub fn bench_analyzer_composite() -> BenchResult {
     summarise("analyzer_composite_1s", samples)
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// New benches for ADRs 149-154
+// ────────────────────────────────────────────────────────────────────────
+
+/// Bench `SharedSpectrum::compute` — the one FFT per block.
+pub fn bench_shared_spectrum() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let win = 256_usize;
+    let mut spec = SharedSpectrum::new(sr, win);
+    let l = voiced_frame(win, sr, 220.0);
+    let r = voiced_frame(win, sr, 220.0);
+    for _ in 0..DEFAULT_WARMUP {
+        spec.compute(&l, &r);
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        spec.compute(&l, &r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("shared_spectrum", samples)
+}
+
+/// Bench `Localizer::locate` against a precomputed shared spectrum.
+pub fn bench_localize_block() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let win = 256_usize;
+    let mut spec = SharedSpectrum::new(sr, win);
+    let l = voiced_frame(win, sr, 220.0);
+    let r = voiced_frame(win, sr, 220.0);
+    spec.compute(&l, &r);
+    let mut loc = Localizer::new(sr, win, DEFAULT_MIC_SPACING_M);
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(loc.locate(&spec));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = loc.locate(&spec);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("localize_block", samples)
+}
+
+/// Bench the VAD state machine on a precomputed snapshot.
+pub fn bench_vad_observe() -> BenchResult {
+    let mut vad = VadDetector::new();
+    let snap = ProsodySnapshot {
+        f0_hz: 220.0,
+        voicing: 0.85,
+        energy_db: -10.0,
+        centroid_hz: 1500.0,
+        rolloff_hz: 4000.0,
+        zcr: 0.05,
+        flatness: 0.10,
+    };
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(vad.observe(&snap, 8.0));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = vad.observe(&snap, 8.0);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("vad_observe", samples)
+}
+
+/// Bench the emotion estimator.
+pub fn bench_emotion_observe() -> BenchResult {
+    let mut e = EmotionEstimator::new();
+    let snap = ProsodySnapshot {
+        f0_hz: 220.0,
+        voicing: 0.85,
+        energy_db: -10.0,
+        centroid_hz: 1500.0,
+        rolloff_hz: 4000.0,
+        zcr: 0.05,
+        flatness: 0.10,
+    };
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(e.observe(&snap));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = e.observe(&snap);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("emotion_observe", samples)
+}
+
+/// Bench the music/speech discriminator.
+pub fn bench_music_speech_observe() -> BenchResult {
+    let mut d = MusicSpeechDetector::new();
+    let snap = ProsodySnapshot {
+        f0_hz: 220.0,
+        voicing: 0.85,
+        energy_db: -10.0,
+        centroid_hz: 1500.0,
+        rolloff_hz: 4000.0,
+        zcr: 0.05,
+        flatness: 0.10,
+    };
+    // warm history
+    for _ in 0..16 {
+        d.observe(&snap, true);
+    }
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(d.observe(&snap, true));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = d.observe(&snap, true);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("music_speech_observe", samples)
+}
+
+/// Bench the singing pitch tracker.
+pub fn bench_pitch_track() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let win = 256_usize;
+    let mut spec = SharedSpectrum::new(sr, win);
+    let l = voiced_frame(win, sr, 440.0);
+    let r = vec![0.0_f32; win];
+    spec.compute(&l, &r);
+    let snap = ProsodySnapshot {
+        f0_hz: 440.0,
+        voicing: 0.9,
+        energy_db: -10.0,
+        centroid_hz: 2200.0,
+        rolloff_hz: 5500.0,
+        zcr: 0.10,
+        flatness: 0.18,
+    };
+    let mut pt = PitchTracker::new(sr);
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(pt.track(&spec, &snap));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = pt.track(&spec, &snap);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("pitch_track", samples)
+}
+
+/// Bench the singing style classifier `top_k` lookup over the default library.
+pub fn bench_style_top_k() -> BenchResult {
+    let mut sc = StyleClassifier::default_library();
+    let snap = ProsodySnapshot {
+        f0_hz: 220.0,
+        voicing: 0.9,
+        energy_db: -10.0,
+        centroid_hz: 2200.0,
+        rolloff_hz: 5500.0,
+        zcr: 0.10,
+        flatness: 0.18,
+    };
+    let pitch = crate::clipcannon::PitchSnapshot {
+        f0_hz: 220.0,
+        cents: 0.0,
+        midi_note: 69.0,
+        stability: 0.9,
+        voiced: true,
+    };
+    let vib = crate::clipcannon::VibratoSnapshot {
+        rate_hz: 5.5,
+        depth_cents: 50.0,
+        presence: 0.6,
+    };
+    for _ in 0..32 {
+        sc.observe(&snap, &pitch, &vib);
+    }
+    let mut out = [StyleMatch {
+        name: "",
+        similarity: 0.0,
+    }; 3];
+    for _ in 0..DEFAULT_WARMUP {
+        sc.top_k(3, &mut out);
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        sc.top_k(3, &mut out);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("style_top_k", samples)
+}
+
 /// Run all benches and return their results.
 pub fn run_all() -> Vec<BenchResult> {
     vec![
+        bench_shared_spectrum(),
         bench_prosody_frame(),
         bench_viseme_map(),
         bench_speaker_observe(),
+        bench_localize_block(),
+        bench_vad_observe(),
+        bench_emotion_observe(),
+        bench_music_speech_observe(),
+        bench_pitch_track(),
+        bench_style_top_k(),
         bench_analyzer_block(),
         bench_analyzer_composite(),
     ]

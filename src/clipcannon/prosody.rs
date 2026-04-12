@@ -1,11 +1,14 @@
 //! Signal Analysis bounded context — per-frame prosody features.
 //!
 //! See [ADR-147](../../../docs/adr/ADR-147-clipcannon-prosody-emotion-speaker.md)
-//! for the algorithm rationale and [the domain
-//! model](../../../docs/ddd/clipcannon-domain-model.md#31-prosodysnapshot)
+//! for the algorithm rationale, [ADR-153](../../../docs/adr/ADR-153-clipcannon-sota-optimization.md)
+//! for the SOTA-optimised path that consumes a [`SharedSpectrum`], and
+//! [the domain model](../../../docs/ddd/clipcannon-domain-model.md#31-prosodysnapshot)
 //! for invariants.
 
 use core::f32::consts::PI;
+
+use super::spectrum::SharedSpectrum;
 
 /// Per-frame prosody features. Immutable value object.
 ///
@@ -105,6 +108,82 @@ impl ProsodyExtractor {
     #[inline]
     pub fn sample_rate(&self) -> f32 {
         self.sample_rate
+    }
+
+    /// Extract prosody from a precomputed [`SharedSpectrum`] (ADR-153).
+    ///
+    /// This is the SOTA path: zero re-computation of FFT, ACF, or magnitudes.
+    /// It is the path used by `RealtimeAvatarAnalyzer`.
+    pub fn extract_from_spectrum(&mut self, spec: &SharedSpectrum) -> ProsodySnapshot {
+        debug_assert_eq!(spec.window, self.window);
+
+        // Energy from spectrum's precomputed value.
+        let energy_db = spec.energy_db_l;
+
+        // Zero-crossing rate (cheap, time-domain only).
+        let mut zc = 0_u32;
+        let mut prev = spec.frame_l[0];
+        for &x in &spec.frame_l[1..] {
+            if (prev >= 0.0) ^ (x >= 0.0) {
+                zc += 1;
+            }
+            prev = x;
+        }
+        let zcr = zc as f32 / (self.window as f32 - 1.0).max(1.0);
+
+        // F0 from the shared Wiener-Khinchin ACF.
+        let r0 = spec.r0_l();
+        let mut best_idx = 0_usize;
+        let mut best_val = spec.acf_l[self.min_lag];
+        let acf = &spec.acf_l;
+        for lag in (self.min_lag + 1)..=self.max_lag {
+            let v = acf[lag];
+            if v > best_val {
+                best_val = v;
+                best_idx = lag - self.min_lag;
+            }
+        }
+        let best_lag = self.min_lag + best_idx;
+
+        // Wiener-Khinchin ACF is unbiased — no length normalisation needed,
+        // because zero-padding to 2N gives a true linear (not circular) ACF.
+        let voicing = (best_val / r0).clamp(0.0, 1.0);
+
+        // Sub-sample parabolic interpolation around the peak.
+        let f0_hz = if voicing > 0.3 && best_lag > self.min_lag && best_lag + 1 <= self.max_lag {
+            let l = acf[best_lag - 1];
+            let c = acf[best_lag];
+            let r = acf[best_lag + 1];
+            let denom = l - 2.0 * c + r;
+            let delta = if denom.abs() > 1e-9 {
+                0.5 * (l - r) / denom
+            } else {
+                0.0
+            };
+            let refined = best_lag as f32 + delta;
+            if refined > 0.0 {
+                self.sample_rate / refined
+            } else {
+                0.0
+            }
+        } else if voicing > 0.3 && best_lag > 0 {
+            self.sample_rate / best_lag as f32
+        } else {
+            0.0
+        };
+
+        // Spectral features from the shared mags.
+        let (centroid_hz, rolloff_hz, flatness) = spectral_features(&spec.mags_l, self.sample_rate);
+
+        ProsodySnapshot {
+            f0_hz: sanitize(f0_hz),
+            voicing: sanitize(voicing),
+            energy_db: sanitize(energy_db),
+            centroid_hz: sanitize(centroid_hz),
+            rolloff_hz: sanitize(rolloff_hz),
+            zcr: sanitize(zcr),
+            flatness: sanitize(flatness),
+        }
     }
 
     /// Extract prosody from one frame and its precomputed magnitude spectrum.

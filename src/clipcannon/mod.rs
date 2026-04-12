@@ -47,15 +47,32 @@
 
 pub mod analysis;
 pub mod bench;
+pub mod emotion;
+pub mod events;
+pub mod localize;
+pub mod music_speech;
 pub mod pipeline;
 pub mod prosody;
+pub mod singing;
 pub mod speaker_embed;
+pub mod spectrum;
+pub mod vad;
 pub mod viseme;
 
 pub use analysis::{AnalysisFrame, Analyzer, EmotionBucket, HighlightScorer, SafeCutDetector};
+pub use emotion::{EmotionEstimator, EmotionVector};
+pub use events::{ClipCannonEvent, EventSink, NullSink, RingSink};
+pub use localize::{LocalizationSnapshot, Localizer, DEFAULT_MIC_SPACING_M};
+pub use music_speech::{MusicSpeechDetector, SignalKind};
 pub use pipeline::RealtimeAvatarAnalyzer;
 pub use prosody::{ProsodyExtractor, ProsodySnapshot};
+pub use singing::{
+    KaraokeScorer, PitchSnapshot, PitchTracker, StyleClassifier, StyleMatch, StylePrototype,
+    VibratoDetector, VibratoSnapshot, DEFAULT_STYLE_PROTOTYPES,
+};
+pub use spectrum::SharedSpectrum;
 pub use speaker_embed::{SpeakerFingerprint, SpeakerTracker, SPEAKER_EMBED_DIM};
+pub use vad::{VadDecision, VadDetector, VadState};
 pub use viseme::{Viseme, VisemeCoeffs, VisemeMapper};
 
 /// Default sample rate used by the realtime subsystem when none is supplied.
