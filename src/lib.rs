@@ -25,6 +25,7 @@
 //! - `benchmark` — SDR/SIR/SAR evaluation
 
 pub mod advanced_separator;
+pub mod clipcannon;
 pub mod enhanced_separator;
 pub mod hearmusica;
 pub mod adaptive;
