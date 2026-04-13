@@ -101,6 +101,106 @@ Overlap-Add Reconstruction
 | [`wav.rs`](src/wav.rs) | 342 | 2 | 16/24-bit PCM WAV reader/writer |
 | [`benchmark.rs`](src/benchmark.rs) | 379 | 5 | SDR/SIR/SAR evaluation (BSS_EVAL style) |
 | [`hearmusica/`](src/hearmusica/) | ~1,200 | — | Hearing aid DSP pipeline (Tympan-compatible processing blocks) |
+| [`clipcannon/`](src/clipcannon/) | ~5,500 | 88 | Realtime analysis + synthesis subsystem (see below) |
+
+## ClipCannon — Realtime Analysis & Synthesis Subsystem
+
+The `src/clipcannon/` module is a self-contained realtime audio
+understanding and voice synthesis stack inspired by — but not a port of —
+the analysis layer of [ClipCannon](https://github.com/mrjcleaver/clipcannon).
+Where ClipCannon needs an NVIDIA GPU and gigabytes of trained weights,
+this Rust subsystem runs everything on a single CPU core in microseconds
+with **zero on-disk model files**. See ADRs 145–159 for the full design.
+
+### Capabilities
+
+| Capability                                       | Module                  | Per block (16 kHz, 8 ms) |
+|--------------------------------------------------|-------------------------|--------------------------|
+| Per-frame prosody (F0, voicing, energy, ZCR…)    | `prosody.rs`            | 0.75 µs                  |
+| Viseme classification + jaw/lip coefficients     | `viseme.rs`             | 0.52 µs                  |
+| 64-dim speaker fingerprint + diarisation         | `speaker_embed.rs`      | 1.27 µs                  |
+| Binaural localisation (GCC-PHAT ITD/ILD)         | `localize.rs`           | 2.06 µs                  |
+| Voice Activity Detection + end-of-turn timer     | `vad.rs`                | 0.03 µs                  |
+| Continuous (valence, arousal) emotion vector     | `emotion.rs`            | 0.07 µs                  |
+| Music vs speech discriminator                    | `music_speech.rs`       | 0.17 µs                  |
+| Cent-accurate pitch tracker (singing)            | `singing.rs`            | 0.49 µs                  |
+| 4–8 Hz vibrato detection                         | `singing.rs`            | (sub-µs)                 |
+| Style/genre prototype classifier (8 prototypes)  | `singing.rs`            | 0.09 µs                  |
+| Karaoke scoring vs reference melody              | `singing.rs`            | (sub-µs)                 |
+| Push-based domain event sink                     | `events.rs`             | (~0 if `NullSink`)       |
+| **Klatt-class formant voice synthesiser**        | `klatt.rs`              | 10.1 µs                  |
+| **English grapheme→phoneme (rule-based)**        | `phonemise.rs`          | 1.05 µs / sentence       |
+| **Singing synthesiser (Klatt + PSOLA backends)** | `sing_synth.rs`         | 3.6 – 13.8 µs            |
+| **Streaming TTS pipeline**                       | `tts_pipeline.rs`       | 19.5 µs                  |
+
+### Closed-loop budget
+
+A complete listen → think → speak loop on 8 ms blocks:
+
+```text
+listen   →  RealtimeAvatarAnalyzer       22.6 µs    0.3% of 8 ms
+think    →  host LLM/agent               (host)
+speak    →  RealtimeVoiceSynthesiser     19.5 µs    0.2% of 8 ms
+─────────────────────────────────────────────────────────────────
+loop overhead                            42 µs      0.5% of 8 ms
+```
+
+The analyser runs at **354× realtime**, the synthesiser at **6 580×
+realtime**, and the entire round-trip uses **<0.5% of one CPU core**.
+
+### Quick example
+
+```rust
+use musica::clipcannon::{RealtimeAvatarAnalyzer, RealtimeVoiceSynthesiser};
+use musica::hearmusica::{AudioBlock, AudioProcessor};
+
+// 1. Listen.
+let mut analyzer = RealtimeAvatarAnalyzer::new();
+analyzer.prepare(16_000.0, 128);
+
+let mut block = AudioBlock::new(128, 16_000.0);
+// ... fill block.left / block.right with mic audio ...
+analyzer.process(&mut block);
+
+if let Some(frame) = analyzer.last_frame() {
+    println!("viseme = {:?}, jaw_open = {}, speaker = {:?}",
+             frame.viseme.viseme, frame.viseme.jaw_open, frame.speaker_id);
+}
+
+// 2. Speak.
+let mut tts = RealtimeVoiceSynthesiser::new(16_000.0, 128);
+tts.speak("hello world.");
+
+let mut out = AudioBlock::new(128, 16_000.0);
+while !tts.is_idle() {
+    tts.render_block(&mut out);
+    // ... ship out.left to a sink ...
+}
+```
+
+### Documentation
+- [`docs/adr/ADR-145`](docs/adr/ADR-145-clipcannon-rust-exploration.md) – scope & integration boundary
+- [`docs/adr/ADR-146`](docs/adr/ADR-146-clipcannon-ddd-architecture.md) – DDD bounded contexts
+- [`docs/adr/ADR-147`](docs/adr/ADR-147-clipcannon-prosody-emotion-speaker.md) – prosody/emotion/speaker algorithms
+- [`docs/adr/ADR-148`](docs/adr/ADR-148-clipcannon-benchmark-methodology.md) – benchmark methodology
+- [`docs/adr/ADR-149`](docs/adr/ADR-149-clipcannon-binaural-localization.md) – binaural localization
+- [`docs/adr/ADR-150`](docs/adr/ADR-150-clipcannon-vad-end-of-turn.md) – VAD + end-of-turn
+- [`docs/adr/ADR-151`](docs/adr/ADR-151-clipcannon-emotion-vector-music-speech.md) – continuous emotion + music/speech
+- [`docs/adr/ADR-152`](docs/adr/ADR-152-clipcannon-event-sink.md) – event sink
+- [`docs/adr/ADR-153`](docs/adr/ADR-153-clipcannon-sota-optimization.md) – SOTA shared-FFT optimisation
+- [`docs/adr/ADR-154`](docs/adr/ADR-154-clipcannon-singing-analysis.md) – singing analysis
+- [`docs/adr/ADR-155`](docs/adr/ADR-155-clipcannon-klatt-formant-synth.md) – Klatt formant synth
+- [`docs/adr/ADR-156`](docs/adr/ADR-156-clipcannon-phonemiser-g2p.md) – phonemiser
+- [`docs/adr/ADR-158`](docs/adr/ADR-158-clipcannon-singing-synthesis.md) – singing synthesis
+- [`docs/adr/ADR-159`](docs/adr/ADR-159-clipcannon-streaming-tts-pipeline.md) – streaming TTS pipeline
+- [`docs/ddd/clipcannon-domain-model.md`](docs/ddd/clipcannon-domain-model.md) – domain model reference
+- [`docs/bench/clipcannon-baseline-v3.md`](docs/bench/clipcannon-baseline-v3.md) – latest baseline numbers
+
+Run the full benchmark suite with:
+
+```bash
+cargo run --release --example clipcannon_bench
+```
 
 ## Quick Start
 

@@ -15,6 +15,10 @@ pub enum ClipCannonEvent {
     MusicStarted { frame_index: u64 },
     MusicStopped { frame_index: u64 },
     AzimuthChanged { frame_index: u64, azimuth_deg: f32 },
+    // ─── ADR-159 streaming TTS ───
+    TtsStarted { utterance_id: u32 },
+    TtsBoundary { utterance_id: u32, phoneme_index: u32 },
+    TtsFinished { utterance_id: u32 },
 }
 
 /// Sink for `ClipCannonEvent`s. Implementations MUST NOT block, allocate,

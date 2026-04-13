@@ -49,13 +49,17 @@ pub mod analysis;
 pub mod bench;
 pub mod emotion;
 pub mod events;
+pub mod klatt;
 pub mod localize;
 pub mod music_speech;
+pub mod phonemise;
 pub mod pipeline;
 pub mod prosody;
+pub mod sing_synth;
 pub mod singing;
 pub mod speaker_embed;
 pub mod spectrum;
+pub mod tts_pipeline;
 pub mod vad;
 pub mod viseme;
 
@@ -74,6 +78,12 @@ pub use spectrum::SharedSpectrum;
 pub use speaker_embed::{SpeakerFingerprint, SpeakerTracker, SPEAKER_EMBED_DIM};
 pub use vad::{VadDecision, VadDetector, VadState};
 pub use viseme::{Viseme, VisemeCoeffs, VisemeMapper};
+
+// ──── Synthesis side (ADRs 155-159) ────
+pub use klatt::{formant_target, FormantTarget, KlattSynthesiser};
+pub use phonemise::{Phoneme, Phonemiser, TimedPhoneme};
+pub use sing_synth::{SingerVoice, SingingSynthesiser, SungNote, VoiceBank};
+pub use tts_pipeline::{RealtimeVoiceSynthesiser, VoiceMode};
 
 /// Default sample rate used by the realtime subsystem when none is supplied.
 pub const DEFAULT_SAMPLE_RATE: f32 = 16_000.0;

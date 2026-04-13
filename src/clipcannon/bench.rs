@@ -18,13 +18,17 @@ use std::time::Instant;
 use crate::hearmusica::{AudioBlock, AudioProcessor};
 
 use super::emotion::EmotionEstimator;
+use super::klatt::KlattSynthesiser;
 use super::localize::{Localizer, DEFAULT_MIC_SPACING_M};
 use super::music_speech::MusicSpeechDetector;
+use super::phonemise::{Phoneme, Phonemiser};
 use super::pipeline::RealtimeAvatarAnalyzer;
 use super::prosody::{ProsodyExtractor, ProsodySnapshot};
+use super::sing_synth::{SingingSynthesiser, SungNote};
 use super::singing::{PitchTracker, StyleClassifier, StyleMatch};
 use super::spectrum::SharedSpectrum;
 use super::speaker_embed::SpeakerTracker;
+use super::tts_pipeline::RealtimeVoiceSynthesiser;
 use super::vad::VadDetector;
 use super::viseme::VisemeMapper;
 
@@ -453,6 +457,110 @@ pub fn bench_style_top_k() -> BenchResult {
     summarise("style_top_k", samples)
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Synthesis-side benches (ADRs 155-159)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Bench `KlattSynthesiser::render` for one 128-sample block of vowel /Aa/.
+pub fn bench_klatt_render_block() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let mut k = KlattSynthesiser::new(sr);
+    k.set_phoneme(Phoneme::Aa, 150.0);
+    let mut buf = vec![0.0_f32; 128];
+    for _ in 0..DEFAULT_WARMUP {
+        k.render(&mut buf);
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        k.render(&mut buf);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("klatt_render_block", samples)
+}
+
+/// Bench `Phonemiser::phonemise` on a representative English sentence.
+pub fn bench_phonemise_sentence() -> BenchResult {
+    let p = Phonemiser::english();
+    let text = "the quick brown fox jumps over the lazy dog";
+    for _ in 0..DEFAULT_WARMUP {
+        std::hint::black_box(p.phonemise(text));
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        let r = p.phonemise(text);
+        std::hint::black_box(r);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("phonemise_sentence", samples)
+}
+
+/// Bench `SingingSynthesiser::render` (Klatt backend) on a 128-sample block.
+pub fn bench_singer_klatt_block() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let mut s = SingingSynthesiser::new_klatt(sr);
+    s.set_vibrato(5.0, 50.0);
+    s.set_note(SungNote::new(Phoneme::Aa, 69.0, 1000));
+    let mut buf = vec![0.0_f32; 128];
+    for _ in 0..DEFAULT_WARMUP {
+        s.render(&mut buf);
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        s.render(&mut buf);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("singer_klatt_block", samples)
+}
+
+/// Bench `SingingSynthesiser::render` (PSOLA backend, synthetic bank).
+pub fn bench_singer_psola_block() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let bank = super::sing_synth::VoiceBank::synthetic(sr);
+    let mut s = SingingSynthesiser::new_psola(sr, bank);
+    s.set_vibrato(5.0, 50.0);
+    s.set_note(SungNote::new(Phoneme::Aa, 72.0, 1000));
+    let mut buf = vec![0.0_f32; 128];
+    for _ in 0..DEFAULT_WARMUP {
+        s.render(&mut buf);
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        let t = Instant::now();
+        s.render(&mut buf);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("singer_psola_block", samples)
+}
+
+/// Bench `RealtimeVoiceSynthesiser::render_block` over a steady-state speech utterance.
+pub fn bench_tts_pipeline_block() -> BenchResult {
+    let sr = 16_000.0_f32;
+    let mut tts = RealtimeVoiceSynthesiser::new(sr, 128);
+    // Prime: enqueue a long sentence.
+    tts.speak("the quick brown fox jumps over the lazy dog and then keeps going");
+    let mut block = AudioBlock::new(128, sr);
+    // Warm up.
+    for _ in 0..DEFAULT_WARMUP {
+        tts.render_block(&mut block);
+        if tts.is_idle() {
+            tts.speak("the quick brown fox jumps over the lazy dog");
+        }
+    }
+    let mut samples = Vec::with_capacity(DEFAULT_ITERS as usize);
+    for _ in 0..DEFAULT_ITERS {
+        if tts.is_idle() {
+            tts.speak("the quick brown fox jumps over the lazy dog");
+        }
+        let t = Instant::now();
+        tts.render_block(&mut block);
+        samples.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    summarise("tts_pipeline_block", samples)
+}
+
 /// Run all benches and return their results.
 pub fn run_all() -> Vec<BenchResult> {
     vec![
@@ -468,6 +576,11 @@ pub fn run_all() -> Vec<BenchResult> {
         bench_style_top_k(),
         bench_analyzer_block(),
         bench_analyzer_composite(),
+        bench_klatt_render_block(),
+        bench_phonemise_sentence(),
+        bench_singer_klatt_block(),
+        bench_singer_psola_block(),
+        bench_tts_pipeline_block(),
     ]
 }
 
