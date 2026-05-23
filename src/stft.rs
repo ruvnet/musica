@@ -67,34 +67,6 @@ impl TwiddleCache {
     }
 }
 
-/// Thread-local twiddle cache to avoid recomputation across frames.
-/// Keyed by FFT size.
-thread_local! {
-    static TWIDDLE_CACHE: std::cell::RefCell<Option<(usize, TwiddleCache)>> =
-        std::cell::RefCell::new(None);
-}
-
-fn get_or_create_twiddles(n: usize) -> TwiddleCache {
-    TWIDDLE_CACHE.with(|cache| {
-        let mut c = cache.borrow_mut();
-        if let Some((cached_n, _)) = c.as_ref() {
-            if *cached_n == n {
-                // Clone is cheap — just Vecs of f64 tuples, already allocated
-                return c.as_ref().unwrap().1.stages.iter().cloned().collect::<Vec<_>>()
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .collect::<Vec<_>>();
-            }
-        }
-        let tc = TwiddleCache::new(n);
-        *c = Some((n, tc));
-        c.as_ref().unwrap().1.stages.clone()
-    });
-    // Fallback: just create fresh (the thread_local optimization is best-effort)
-    TwiddleCache::new(n)
-}
-
 /// In-place radix-2 Cooley-Tukey FFT with precomputed twiddle factors.
 /// `real` and `imag` must have length that is a power of 2.
 fn fft(real: &mut [f64], imag: &mut [f64]) {
@@ -119,7 +91,6 @@ fn fft(real: &mut [f64], imag: &mut [f64]) {
 
     // Butterfly stages with precomputed twiddles
     let mut len = 2;
-    let mut stage = 0;
     while len <= n {
         let half = len / 2;
         let angle = -2.0 * PI / len as f64;
@@ -148,7 +119,6 @@ fn fft(real: &mut [f64], imag: &mut [f64]) {
             i += len;
         }
         len <<= 1;
-        stage += 1;
     }
 }
 
@@ -259,7 +229,7 @@ pub fn stft(signal: &[f64], window_size: usize, hop_size: usize, sample_rate: f6
 
 /// Inverse FFT (unnormalized — caller divides by N).
 fn ifft(real: &mut [f64], imag: &mut [f64]) {
-    let n = real.len();
+    let _n = real.len();
     // Conjugate
     for v in imag.iter_mut() {
         *v = -*v;
@@ -274,11 +244,7 @@ fn ifft(real: &mut [f64], imag: &mut [f64]) {
 /// Reconstruct a signal from masked STFT bins via overlap-add.
 ///
 /// `mask` is indexed `[frame * num_freq_bins + freq_bin]` and is in [0, 1].
-pub fn istft(
-    stft_result: &StftResult,
-    mask: &[f64],
-    output_len: usize,
-) -> Vec<f64> {
+pub fn istft(stft_result: &StftResult, mask: &[f64], output_len: usize) -> Vec<f64> {
     let n = stft_result.window_size;
     let num_freq = stft_result.num_freq_bins;
     let window = hann_window(n);

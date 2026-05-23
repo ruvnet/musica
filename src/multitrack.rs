@@ -211,7 +211,12 @@ pub fn separate_multitrack(signal: &[f64], config: &MultitrackConfig) -> Multitr
     let start = std::time::Instant::now();
 
     // STFT
-    let stft_result = stft::stft(signal, config.window_size, config.hop_size, config.sample_rate);
+    let stft_result = stft::stft(
+        signal,
+        config.window_size,
+        config.hop_size,
+        config.sample_rate,
+    );
     let num_frames = stft_result.num_frames;
     let num_freq = stft_result.num_freq_bins;
     let total_bins = num_frames * num_freq;
@@ -337,7 +342,7 @@ pub fn separate_multitrack(signal: &[f64], config: &MultitrackConfig) -> Multitr
     }
 
     // Wiener-style normalization: ensure masks sum to ~1 at each TF bin
-    let mut masks = wiener_normalize(&raw_masks, &magnitudes, total_bins);
+    let masks = wiener_normalize(&raw_masks, &magnitudes, total_bins);
 
     // Reconstruct signals
     let mut stems = Vec::new();
@@ -346,7 +351,8 @@ pub fn separate_multitrack(signal: &[f64], config: &MultitrackConfig) -> Multitr
     for (i, (stem, _prior)) in priors.iter().enumerate() {
         let signal_out = stft::istft(&stft_result, &masks[i], signal.len());
 
-        let energy: f64 = signal_out.iter().map(|s| s * s).sum::<f64>() / signal_out.len().max(1) as f64;
+        let energy: f64 =
+            signal_out.iter().map(|s| s * s).sum::<f64>() / signal_out.len().max(1) as f64;
         per_stem_energy.push((*stem, energy));
 
         let confidence = compute_stem_confidence(&masks[i], num_frames, num_freq);
@@ -398,11 +404,7 @@ fn compute_transient_scores(magnitudes: &[f64], num_frames: usize, num_freq: usi
     scores
 }
 
-fn compute_harmonicity_scores(
-    magnitudes: &[f64],
-    num_frames: usize,
-    num_freq: usize,
-) -> Vec<f64> {
+fn compute_harmonicity_scores(magnitudes: &[f64], num_frames: usize, num_freq: usize) -> Vec<f64> {
     let mut scores = vec![0.0; magnitudes.len()];
 
     for frame in 0..num_frames {
@@ -469,7 +471,7 @@ fn build_stem_graph(
     bins: &[(usize, usize)],
     magnitudes: &[f64],
     harmonicity: &[f64],
-    transients: &[f64],
+    _transients: &[f64],
     num_freq: usize,
     prior: &StemPrior,
 ) -> (Vec<(usize, usize, f64)>, usize) {
@@ -477,7 +479,8 @@ fn build_stem_graph(
     let mut edges = Vec::new();
 
     // Build bin -> local index map
-    let bin_map: HashMap<(usize, usize), usize> = bins.iter().enumerate().map(|(i, &b)| (b, i)).collect();
+    let bin_map: HashMap<(usize, usize), usize> =
+        bins.iter().enumerate().map(|(i, &b)| (b, i)).collect();
 
     for (i, &(frame_i, freq_i)) in bins.iter().enumerate() {
         let idx_i = frame_i * num_freq + freq_i;
@@ -590,12 +593,7 @@ fn compute_window_mincut(edges: &[(usize, usize, f64)]) -> f64 {
     }
 }
 
-fn apply_temporal_smoothing(
-    mask: &mut [f64],
-    num_frames: usize,
-    num_freq: usize,
-    alpha: f64,
-) {
+fn apply_temporal_smoothing(mask: &mut [f64], num_frames: usize, num_freq: usize, alpha: f64) {
     for f in 0..num_freq {
         for frame in 1..num_frames {
             let prev = mask[(frame - 1) * num_freq + f];
@@ -605,13 +603,20 @@ fn apply_temporal_smoothing(
     }
 }
 
-fn wiener_normalize(raw_masks: &[Vec<f64>], magnitudes: &[f64], total_bins: usize) -> Vec<Vec<f64>> {
+fn wiener_normalize(
+    raw_masks: &[Vec<f64>],
+    magnitudes: &[f64],
+    total_bins: usize,
+) -> Vec<Vec<f64>> {
     let k = raw_masks.len();
     let mut masks = vec![vec![0.0; total_bins]; k];
 
     for i in 0..total_bins {
         let mag = magnitudes[i];
-        let sum: f64 = raw_masks.iter().map(|m| m[i] * m[i] * mag * mag + 1e-10).sum();
+        let sum: f64 = raw_masks
+            .iter()
+            .map(|m| m[i] * m[i] * mag * mag + 1e-10)
+            .sum();
 
         for s in 0..k {
             masks[s][i] = (raw_masks[s][i] * raw_masks[s][i] * mag * mag + 1e-10) / sum;
@@ -621,7 +626,7 @@ fn wiener_normalize(raw_masks: &[Vec<f64>], magnitudes: &[f64], total_bins: usiz
     masks
 }
 
-fn compute_stem_confidence(mask: &[f64], num_frames: usize, num_freq: usize) -> f64 {
+fn compute_stem_confidence(mask: &[f64], _num_frames: usize, _num_freq: usize) -> f64 {
     if mask.is_empty() {
         return 0.0;
     }
@@ -676,11 +681,16 @@ mod tests {
         assert_eq!(result.stems.len(), 6);
 
         // At least some stems should have non-zero energy
-        let total_energy: f64 = result.stems.iter().map(|s| {
-            s.signal.iter().map(|x| x * x).sum::<f64>()
-        }).sum();
+        let total_energy: f64 = result
+            .stems
+            .iter()
+            .map(|s| s.signal.iter().map(|x| x * x).sum::<f64>())
+            .sum();
 
-        assert!(total_energy > 0.0, "Total reconstructed energy should be > 0");
+        assert!(
+            total_energy > 0.0,
+            "Total reconstructed energy should be > 0"
+        );
     }
 
     #[test]
@@ -756,8 +766,8 @@ mod tests {
 
         // Impulse followed by silence — smoothing should spread energy
         let mut signal = vec![0.0; n];
-        for i in 0..1000 {
-            signal[i] = (2.0 * PI * 440.0 * i as f64 / sr).sin();
+        for (i, s) in signal.iter_mut().enumerate().take(1000) {
+            *s = (2.0 * PI * 440.0 * i as f64 / sr).sin();
         }
 
         let config = MultitrackConfig {
@@ -784,7 +794,7 @@ mod tests {
                 for frame in 1..num_frames {
                     let diff = (vocals_mask[frame * num_freq + f]
                         - vocals_mask[(frame - 1) * num_freq + f])
-                    .abs();
+                        .abs();
                     total_diff += diff;
                     count += 1;
                 }

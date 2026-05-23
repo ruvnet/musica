@@ -235,7 +235,7 @@ mod tests {
         let source: Vec<f32> = (0..num_samples)
             .map(|i| {
                 // Simple pseudo-random using a hash-like function
-                let x = (i as f32 * 0.1234).sin() * 43758.5453;
+                let x = (i as f32 * 0.1234).sin() * 43_758.546_f32;
                 (x - x.floor()) * 2.0 - 1.0
             })
             .collect();
@@ -288,6 +288,9 @@ mod tests {
         fc.reset();
 
         let coeff_energy: f32 = fc.coefficients().iter().map(|c| c * c).sum();
-        assert_eq!(coeff_energy, 0.0, "After reset, coefficients should be zero");
+        assert_eq!(
+            coeff_energy, 0.0,
+            "After reset, coefficients should be zero"
+        );
     }
 }

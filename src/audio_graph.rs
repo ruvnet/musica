@@ -122,9 +122,7 @@ pub fn build_audio_graph(stft: &StftResult, params: &GraphParams) -> AudioGraph 
                 let df = f2 - f1;
 
                 // Weight: geometric mean of magnitudes, decaying with distance
-                let w = params.spectral_weight
-                    * (mag1 * mag2).sqrt()
-                    / (1.0 + df as f64);
+                let w = params.spectral_weight * (mag1 * mag2).sqrt() / (1.0 + df as f64);
 
                 if w > 1e-6 {
                     let _ = graph.insert_edge(n1, n2, w);
@@ -178,9 +176,13 @@ pub fn build_audio_graph(stft: &StftResult, params: &GraphParams) -> AudioGraph 
                 let if_deviation = {
                     let mut d = (bin2.phase - bin1.phase) - expected_phase_advance;
                     // Wrap to [-π, π]
-                    d = d % (2.0 * PI);
-                    if d > PI { d -= 2.0 * PI; }
-                    if d < -PI { d += 2.0 * PI; }
+                    d %= 2.0 * PI;
+                    if d > PI {
+                        d -= 2.0 * PI;
+                    }
+                    if d < -PI {
+                        d += 2.0 * PI;
+                    }
                     d.abs()
                 };
                 // Small IF deviation = stable sinusoidal component → stronger edge
@@ -215,7 +217,9 @@ pub fn build_audio_graph(stft: &StftResult, params: &GraphParams) -> AudioGraph 
                 let f_start = f1.saturating_sub(2);
                 let f_end = (f1 + 3).min(stft.num_freq_bins);
                 for f2 in f_start..f_end {
-                    if f2 == f1 { continue; } // Already handled above
+                    if f2 == f1 {
+                        continue;
+                    } // Already handled above
                     let n2 = match node_map[base2 + f2] {
                         Some(id) => id,
                         None => continue,
@@ -237,8 +241,7 @@ pub fn build_audio_graph(stft: &StftResult, params: &GraphParams) -> AudioGraph 
 
                     // If IFs are within one bin width, these bins track the same component
                     if if_diff < freq_resolution * 2.0 {
-                        let w = params.temporal_weight * 0.5
-                            * (mag1 * mag2).sqrt()
+                        let w = params.temporal_weight * 0.5 * (mag1 * mag2).sqrt()
                             / (1.0 + (f2 as f64 - f1 as f64).abs());
                         if w > 1e-6 {
                             let _ = graph.insert_edge(n1, n2, w);
@@ -275,9 +278,7 @@ pub fn build_audio_graph(stft: &StftResult, params: &GraphParams) -> AudioGraph 
                 };
                 let mag2 = stft.bins[base + f2].magnitude;
 
-                let w = params.harmonic_weight
-                    * (mag1 * mag2).sqrt()
-                    / h as f64; // Decay with harmonic number
+                let w = params.harmonic_weight * (mag1 * mag2).sqrt() / h as f64; // Decay with harmonic number
 
                 if w > 1e-6 {
                     let _ = graph.insert_edge(n1, n2, w);
@@ -405,6 +406,9 @@ mod tests {
         // With a 440 Hz tone, there should be strong temporal edges
         // at the corresponding frequency bin across frames
         assert!(ag.num_frames >= 2, "Need multiple frames");
-        assert!(ag.num_edges > ag.num_frames, "Should have cross-frame edges");
+        assert!(
+            ag.num_edges > ag.num_frames,
+            "Should have cross-frame edges"
+        );
     }
 }

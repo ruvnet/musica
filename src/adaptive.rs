@@ -147,13 +147,19 @@ fn compute_sdr(reference: &[f64], estimated: &[f64]) -> f64 {
 /// Evaluate a set of `GraphParams` on a mixed signal against references.
 ///
 /// Returns the average SDR across all sources.
+#[allow(clippy::needless_range_loop)]
 fn evaluate_params(
     mixed: &[f64],
     references: &[Vec<f64>],
     params: &GraphParams,
     config: &AdaptiveConfig,
 ) -> f64 {
-    let stft_result = stft::stft(mixed, config.window_size, config.hop_size, config.sample_rate);
+    let stft_result = stft::stft(
+        mixed,
+        config.window_size,
+        config.hop_size,
+        config.sample_rate,
+    );
     let ag = build_audio_graph(&stft_result, params);
     let sep = separate(&ag, &config.separator_config);
 
@@ -258,7 +264,10 @@ impl Lcg {
 
     fn next_u64(&mut self) -> u64 {
         // Parameters from Numerical Recipes.
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.state
     }
 
@@ -334,17 +343,18 @@ pub fn random_search(
 /// Picks parameters near the best results so far with exploration noise that
 /// decreases as more results are gathered. Not a full Gaussian Process — just
 /// a practical heuristic that samples around the top-3 results.
-pub fn bayesian_step(
-    results_so_far: &[TrialResult],
-    config: &AdaptiveConfig,
-) -> GraphParams {
+pub fn bayesian_step(results_so_far: &[TrialResult], config: &AdaptiveConfig) -> GraphParams {
     if results_so_far.is_empty() {
         return GraphParams::default();
     }
 
     // Sort by SDR descending and take top 3.
     let mut sorted: Vec<&TrialResult> = results_so_far.iter().collect();
-    sorted.sort_by(|a, b| b.sdr.partial_cmp(&a.sdr).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.sdr
+            .partial_cmp(&a.sdr)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let top_k = sorted.len().min(3);
 
     // Noise scale decreases with number of observations.
@@ -380,10 +390,18 @@ pub fn bayesian_step(
         (rng.next_f64() - 0.5) * 2.0 * span * scale
     };
 
-    sw = config.spectral_weight.clamp(sw + noise(&mut rng, &config.spectral_weight, base_noise));
-    tw = config.temporal_weight.clamp(tw + noise(&mut rng, &config.temporal_weight, base_noise));
-    hw = config.harmonic_weight.clamp(hw + noise(&mut rng, &config.harmonic_weight, base_noise));
-    pt = config.phase_threshold.clamp(pt + noise(&mut rng, &config.phase_threshold, base_noise));
+    sw = config
+        .spectral_weight
+        .clamp(sw + noise(&mut rng, &config.spectral_weight, base_noise));
+    tw = config
+        .temporal_weight
+        .clamp(tw + noise(&mut rng, &config.temporal_weight, base_noise));
+    hw = config
+        .harmonic_weight
+        .clamp(hw + noise(&mut rng, &config.harmonic_weight, base_noise));
+    pt = config
+        .phase_threshold
+        .clamp(pt + noise(&mut rng, &config.phase_threshold, base_noise));
 
     let sr_span = (config.spectral_radius.max - config.spectral_radius.min) as f64;
     let sr_noise = ((rng.next_f64() - 0.5) * 2.0 * sr_span * base_noise).round() as isize;

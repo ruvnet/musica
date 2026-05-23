@@ -24,7 +24,10 @@ impl Lcg {
 
     /// Next value in [0, 1).
     fn next_f64(&mut self) -> f64 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.state >> 33) as f64 / (1u64 << 31) as f64
     }
 
@@ -37,6 +40,7 @@ impl Lcg {
 // ── Signal Generators ───────────────────────────────────────────────────
 
 /// Generate a speech-like signal with harmonics, vibrato, and formant shaping.
+#[allow(clippy::needless_range_loop)]
 pub fn generate_speech_like(
     sample_rate: f64,
     duration: f64,
@@ -160,11 +164,8 @@ pub fn generate_drum_pattern(
 }
 
 /// Generate a bass line with sub-bass and slight harmonics.
-pub fn generate_bass_line(
-    sample_rate: f64,
-    duration: f64,
-    notes: &[f64],
-) -> Vec<f64> {
+#[allow(clippy::needless_range_loop)]
+pub fn generate_bass_line(sample_rate: f64, duration: f64, notes: &[f64]) -> Vec<f64> {
     let n = (sample_rate * duration) as usize;
     let mut signal = vec![0.0; n];
 
@@ -200,18 +201,12 @@ pub enum NoiseType {
 }
 
 /// Generate noise of the specified type.
-pub fn generate_noise(
-    sample_rate: f64,
-    duration: f64,
-    noise_type: NoiseType,
-) -> Vec<f64> {
+pub fn generate_noise(sample_rate: f64, duration: f64, noise_type: NoiseType) -> Vec<f64> {
     let n = (sample_rate * duration) as usize;
     let mut rng = Lcg::new(1337);
 
     match noise_type {
-        NoiseType::White => {
-            (0..n).map(|_| rng.next_signed() * 0.3).collect()
-        }
+        NoiseType::White => (0..n).map(|_| rng.next_signed() * 0.3).collect(),
         NoiseType::Pink => {
             // Leaky integrator filter on white noise → ~1/f
             let alpha = 0.98;
@@ -271,11 +266,7 @@ pub struct TestScenario {
 }
 
 /// Generate a realistic test scenario.
-pub fn generate_scenario(
-    sample_rate: f64,
-    duration: f64,
-    scenario: Scenario,
-) -> TestScenario {
+pub fn generate_scenario(sample_rate: f64, duration: f64, scenario: Scenario) -> TestScenario {
     let (sources, labels) = match scenario {
         Scenario::SpeechInNoise => {
             let speech = generate_speech_like(sample_rate, duration, 150.0, 12, 5.0, 0.02);
@@ -438,11 +429,7 @@ pub fn compute_sar(reference: &[f64], estimate: &[f64]) -> f64 {
 }
 
 /// Compute full BSS metrics for one source.
-pub fn compute_bss(
-    reference: &[f64],
-    estimate: &[f64],
-    interferences: &[&[f64]],
-) -> BssMetrics {
+pub fn compute_bss(reference: &[f64], estimate: &[f64], interferences: &[&[f64]]) -> BssMetrics {
     BssMetrics {
         sdr: compute_sdr(reference, estimate),
         sir: compute_sir(reference, estimate, interferences),
@@ -555,7 +542,10 @@ pub fn run_full_evaluation(sample_rate: f64, duration: f64) -> Vec<EvaluationRes
 
 /// Print a formatted evaluation report.
 pub fn print_evaluation_report(results: &[EvaluationResult]) {
-    println!("  {:<20} {:>8} {:>8} {:>8} {:>10}", "Source", "SDR", "SIR", "SAR", "Time(ms)");
+    println!(
+        "  {:<20} {:>8} {:>8} {:>8} {:>10}",
+        "Source", "SDR", "SIR", "SAR", "Time(ms)"
+    );
     println!("  {}", "-".repeat(60));
 
     for result in results {
@@ -649,7 +639,10 @@ mod tests {
     fn test_sdr_perfect() {
         let signal = vec![1.0, 0.5, -0.3, 0.7];
         let sdr = compute_sdr(&signal, &signal);
-        assert!(sdr > 90.0, "Perfect reconstruction should have very high SDR");
+        assert!(
+            sdr > 90.0,
+            "Perfect reconstruction should have very high SDR"
+        );
     }
 
     #[test]

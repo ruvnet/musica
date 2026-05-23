@@ -54,7 +54,12 @@ impl DelayLine {
     }
 
     /// Process a single channel through the circular buffer delay.
-    fn process_channel(buffer: &mut Vec<f32>, write_pos: &mut usize, samples: &mut [f32], delay: usize) {
+    fn process_channel(
+        buffer: &mut [f32],
+        write_pos: &mut usize,
+        samples: &mut [f32],
+        delay: usize,
+    ) {
         if delay == 0 {
             return;
         }
@@ -140,7 +145,8 @@ mod tests {
         for i in delay_samples..len {
             let expected = input[i - delay_samples];
             assert_eq!(
-                block.left[i], expected,
+                block.left[i],
+                expected,
                 "Sample {} should be input[{}] = {}",
                 i,
                 i - delay_samples,
@@ -161,8 +167,14 @@ mod tests {
 
         dl.process(&mut block);
 
-        assert_eq!(block.left, input, "Zero delay should pass through unchanged");
-        assert_eq!(block.right, input, "Zero delay should pass through unchanged");
+        assert_eq!(
+            block.left, input,
+            "Zero delay should pass through unchanged"
+        );
+        assert_eq!(
+            block.right, input,
+            "Zero delay should pass through unchanged"
+        );
     }
 
     #[test]

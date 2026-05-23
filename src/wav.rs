@@ -31,7 +31,10 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> io::Result<WavData> {
     let mut riff = [0u8; 4];
     reader.read_exact(&mut riff)?;
     if &riff != b"RIFF" {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a RIFF file"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a RIFF file",
+        ));
     }
 
     let mut size_buf = [0u8; 4];
@@ -40,7 +43,10 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> io::Result<WavData> {
     let mut wave = [0u8; 4];
     reader.read_exact(&mut wave)?;
     if &wave != b"WAVE" {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a WAVE file"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a WAVE file",
+        ));
     }
 
     let mut sample_rate = 0u32;
@@ -89,7 +95,10 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> io::Result<WavData> {
     }
 
     if data_bytes.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "No data chunk found"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "No data chunk found",
+        ));
     }
 
     // Parse samples
@@ -111,8 +120,7 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> io::Result<WavData> {
         24 => data_bytes
             .chunks_exact(3)
             .map(|b| {
-                let s = ((b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16))
-                    << 8 >> 8; // Sign extend
+                let s = ((b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16)) << 8 >> 8; // Sign extend
                 s as f64 / 8388608.0
             })
             .collect(),
@@ -328,7 +336,11 @@ mod tests {
         assert_eq!(loaded.channel_data[0].len(), n);
 
         // 16-bit quantization error should be small
-        for (i, (&orig, &loaded_s)) in samples.iter().zip(loaded.channel_data[0].iter()).enumerate() {
+        for (i, (&orig, &loaded_s)) in samples
+            .iter()
+            .zip(loaded.channel_data[0].iter())
+            .enumerate()
+        {
             assert!(
                 (orig - loaded_s).abs() < 0.001,
                 "Sample {i}: orig={orig:.4}, loaded={loaded_s:.4}"
@@ -385,7 +397,10 @@ mod tests {
 
         // Verify samples are in [-1, 1] range
         for &s in &loaded.channel_data[0] {
-            assert!(s >= -1.01 && s <= 1.01, "8-bit sample out of range: {s}");
+            assert!(
+                (-1.01..=1.01).contains(&s),
+                "8-bit sample out of range: {s}"
+            );
         }
 
         fs::remove_file(path).ok();
@@ -394,15 +409,12 @@ mod tests {
     #[test]
     fn test_stereo_wav_roundtrip() {
         let path = "/tmp/musica_test_stereo.wav";
-        generate_binaural_test_wav(
-            path, 16000, 0.1, 300.0, &[800.0, 1200.0], 30.0,
-        )
-        .unwrap();
+        generate_binaural_test_wav(path, 16000, 0.1, 300.0, &[800.0, 1200.0], 30.0).unwrap();
 
         let loaded = read_wav(path).unwrap();
         assert_eq!(loaded.channels, 2);
         assert_eq!(loaded.channel_data.len(), 2);
-        assert!(loaded.channel_data[0].len() > 0);
+        assert!(!loaded.channel_data[0].is_empty());
 
         fs::remove_file(path).ok();
     }

@@ -226,11 +226,7 @@ impl CrowdTracker {
                     let weight = time_sim * freq_sim * dir_sim;
 
                     if weight > 0.01 {
-                        let _ = sensor.local_graph.insert_edge(
-                            i as u64,
-                            j as u64,
-                            weight,
-                        );
+                        let _ = sensor.local_graph.insert_edge(i as u64, j as u64, weight);
                     }
                 }
             }
@@ -247,7 +243,7 @@ impl CrowdTracker {
 
             sensor.local_speakers.clear();
 
-            for (_label, indices) in &clusters {
+            for indices in clusters.values() {
                 if indices.is_empty() {
                     continue;
                 }
@@ -273,8 +269,7 @@ impl CrowdTracker {
 
                 let centroid_freq = sum_freq / count as f64;
                 let avg_direction = sum_dir / count as f64;
-                let confidence =
-                    (count as f64 / sensor.events.len() as f64).min(1.0);
+                let confidence = (count as f64 / sensor.events.len() as f64).min(1.0);
 
                 // Build a simple embedding from cluster statistics.
                 let mut embedding = vec![0.0; embedding_dim];
@@ -352,8 +347,7 @@ impl CrowdTracker {
                     identity.observations,
                 );
                 identity.observations += local.event_count;
-                identity.confidence =
-                    (identity.confidence + local.confidence) / 2.0;
+                identity.confidence = (identity.confidence + local.confidence) / 2.0;
                 identity.last_seen = identity.last_seen.max(local.last_seen);
                 identity.trajectory.push(*pos);
             } else if self.identities.len() < self.config.max_identities {
@@ -402,8 +396,7 @@ impl CrowdTracker {
                     if identity.active {
                         continue;
                     }
-                    let sim =
-                        cosine_similarity(&local.embedding, &identity.embedding);
+                    let sim = cosine_similarity(&local.embedding, &identity.embedding);
                     if sim > self.config.association_threshold {
                         identity.active = true;
                         identity.last_seen = local.last_seen;
@@ -431,11 +424,7 @@ impl CrowdTracker {
             active_speakers: self.identities.iter().filter(|s| s.active).count(),
             sensors: self.sensors.len(),
             total_events: self.sensors.iter().map(|s| s.events.len()).sum(),
-            total_local_speakers: self
-                .sensors
-                .iter()
-                .map(|s| s.local_speakers.len())
-                .sum(),
+            total_local_speakers: self.sensors.iter().map(|s| s.local_speakers.len()).sum(),
         }
     }
 
@@ -461,10 +450,8 @@ impl CrowdTracker {
 
         for (ai, &i) in active.iter().enumerate() {
             for &j in &active[(ai + 1)..] {
-                let sim = cosine_similarity(
-                    &self.identities[i].embedding,
-                    &self.identities[j].embedding,
-                );
+                let sim =
+                    cosine_similarity(&self.identities[i].embedding, &self.identities[j].embedding);
                 if sim > 0.3 {
                     let _ = self.identity_graph.insert_edge(
                         self.identities[i].id,
@@ -539,9 +526,7 @@ fn spectral_bipartition(graph: &DynamicGraph, n: usize) -> Vec<usize> {
         for (j, _eid) in &neighbours {
             let j = *j as usize;
             if j < n {
-                let w = graph
-                    .edge_weight(i as u64, j as u64)
-                    .unwrap_or(0.0);
+                let w = graph.edge_weight(i as u64, j as u64).unwrap_or(0.0);
                 adj[i][j] = w;
                 degree[i] += w;
             }
@@ -566,8 +551,8 @@ fn spectral_bipartition(graph: &DynamicGraph, n: usize) -> Vec<usize> {
     let mut v = vec![0.0_f64; n];
     // Initialise with a non-constant vector so it is not aligned with
     // the trivial eigenvector.
-    for i in 0..n {
-        v[i] = (i as f64) - (n as f64 / 2.0);
+    for (i, vi) in v.iter_mut().enumerate() {
+        *vi = (i as f64) - (n as f64 / 2.0);
     }
 
     for _ in 0..max_iter {
@@ -613,12 +598,7 @@ mod tests {
     use super::*;
 
     /// Helper: create a speech event with reasonable defaults.
-    fn make_event(
-        sensor_id: usize,
-        time: f64,
-        freq: f64,
-        direction: f64,
-    ) -> SpeechEvent {
+    fn make_event(sensor_id: usize, time: f64, freq: f64, direction: f64) -> SpeechEvent {
         SpeechEvent {
             time,
             freq_centroid: freq,

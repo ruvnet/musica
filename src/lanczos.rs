@@ -137,6 +137,7 @@ impl SparseMatrix {
     }
 
     /// Matrix-vector product y = A * x (auto-vectorization friendly).
+    #[allow(clippy::needless_range_loop)]
     pub fn matvec(&self, x: &[f64], y: &mut [f64]) {
         assert!(x.len() >= self.n && y.len() >= self.n);
         for i in 0..self.n {
@@ -235,8 +236,8 @@ fn scale(alpha: f64, x: &mut [f64]) {
         x[base + 2] *= alpha;
         x[base + 3] *= alpha;
     }
-    for i in (chunks * 4)..(chunks * 4 + remainder) {
-        x[i] *= alpha;
+    for xi in x.iter_mut().skip(chunks * 4).take(remainder) {
+        *xi *= alpha;
     }
 }
 
@@ -378,17 +379,21 @@ fn tridiagonal_qr(alpha: &[f64], beta: &[f64], tol: f64) -> (Vec<f64>, Vec<Vec<f
     let mut e: Vec<f64> = (0..n - 1).map(|i| beta[i.min(beta.len() - 1)]).collect();
 
     // Accumulate eigenvectors
-    let mut z: Vec<Vec<f64>> = (0..n).map(|i| {
-        let mut v = vec![0.0; n];
-        v[i] = 1.0;
-        v
-    }).collect();
+    let mut z: Vec<Vec<f64>> = (0..n)
+        .map(|i| {
+            let mut v = vec![0.0; n];
+            v[i] = 1.0;
+            v
+        })
+        .collect();
 
     // QR iteration (Wilkinson shift)
     for _ in 0..n * 30 {
         // Find unreduced submatrix
         let mut bottom = n - 1;
-        while bottom > 0 && e[bottom - 1].abs() < tol * (d[bottom - 1].abs() + d[bottom].abs()).max(tol) {
+        while bottom > 0
+            && e[bottom - 1].abs() < tol * (d[bottom - 1].abs() + d[bottom].abs()).max(tol)
+        {
             bottom -= 1;
         }
         if bottom == 0 {
@@ -426,6 +431,7 @@ fn tridiagonal_qr(alpha: &[f64], beta: &[f64], tol: f64) -> (Vec<f64>, Vec<Vec<f
             e[k] = c * s * (d2 - d1) + (c * c - s * s) * ek;
 
             // Update eigenvectors
+            #[allow(clippy::needless_range_loop)]
             for i in 0..n {
                 let zi_k = z[i][k];
                 let zi_k1 = z[i][k + 1];
@@ -448,9 +454,7 @@ fn tridiagonal_qr(alpha: &[f64], beta: &[f64], tol: f64) -> (Vec<f64>, Vec<Vec<f
     let sorted_eigenvalues: Vec<f64> = indices.iter().map(|&i| d[i]).collect();
     let sorted_eigenvectors: Vec<Vec<f64>> = indices
         .iter()
-        .map(|&idx| {
-            (0..n).map(|i| z[i][idx]).collect()
-        })
+        .map(|&idx| (0..n).map(|i| z[i][idx]).collect())
         .collect();
 
     (sorted_eigenvalues, sorted_eigenvectors)
@@ -563,10 +567,7 @@ pub fn align_eigenvectors(current: &mut [Vec<f64>], previous: &[Vec<f64>]) {
 /// Each `SparseMatrix` in `laplacians` represents one STFT window's graph.
 /// Returns one `EigenResult` per window, with eigenvectors aligned to
 /// the previous window via Procrustes sign consistency.
-pub fn batch_lanczos(
-    laplacians: &[SparseMatrix],
-    config: &LanczosConfig,
-) -> Vec<EigenResult> {
+pub fn batch_lanczos(laplacians: &[SparseMatrix], config: &LanczosConfig) -> Vec<EigenResult> {
     if laplacians.is_empty() {
         return Vec::new();
     }
@@ -665,6 +666,7 @@ mod tests {
         );
 
         // All nodes in each cluster should have same sign
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             assert_eq!(
                 fiedler[i].signum() as i32,
@@ -672,6 +674,7 @@ mod tests {
                 "Node {i} should be in cluster A"
             );
         }
+        #[allow(clippy::needless_range_loop)]
         for i in 3..6 {
             assert_eq!(
                 fiedler[i].signum() as i32,
@@ -684,11 +687,20 @@ mod tests {
     #[test]
     fn test_eigenvalue_ordering() {
         let edges = vec![
-            (0, 1, 1.0), (1, 2, 1.0), (2, 3, 1.0),
-            (3, 4, 1.0), (0, 4, 1.0), (1, 3, 0.5),
+            (0, 1, 1.0),
+            (1, 2, 1.0),
+            (2, 3, 1.0),
+            (3, 4, 1.0),
+            (0, 4, 1.0),
+            (1, 3, 0.5),
         ];
         let lap = SparseMatrix::from_edges(5, &edges);
-        let config = LanczosConfig { k: 3, max_iter: 50, tol: 1e-8, reorthogonalize: true };
+        let config = LanczosConfig {
+            k: 3,
+            max_iter: 50,
+            tol: 1e-8,
+            reorthogonalize: true,
+        };
         let result = lanczos_eigenpairs(&lap, &config);
 
         // Eigenvalues should be non-negative
@@ -698,7 +710,12 @@ mod tests {
 
         // Should be sorted ascending
         for w in result.eigenvalues.windows(2) {
-            assert!(w[1] >= w[0] - 1e-6, "Eigenvalues not sorted: {} > {}", w[0], w[1]);
+            assert!(
+                w[1] >= w[0] - 1e-6,
+                "Eigenvalues not sorted: {} > {}",
+                w[0],
+                w[1]
+            );
         }
 
         // Smallest eigenvalue should be non-negative
@@ -717,7 +734,12 @@ mod tests {
         let lap = SparseMatrix::from_edges(5, &edges);
 
         let power_fiedler = power_iteration_fiedler(&lap, 100);
-        let config = LanczosConfig { k: 2, max_iter: 50, tol: 1e-8, reorthogonalize: true };
+        let config = LanczosConfig {
+            k: 2,
+            max_iter: 50,
+            tol: 1e-8,
+            reorthogonalize: true,
+        };
         let lanczos_result = lanczos_eigenpairs(&lap, &config);
 
         if lanczos_result.eigenvectors.len() >= 2 {

@@ -3,8 +3,8 @@
 //! Implements cascaded refinement, Wiener filtering, multi-resolution
 //! graph fusion, and iterative mask estimation for maximum SDR.
 
-use crate::audio_graph::{build_audio_graph, AudioGraph, GraphParams};
-use crate::separator::{separate, SeparatorConfig, SeparationResult};
+use crate::audio_graph::{build_audio_graph, GraphParams};
+use crate::separator::{separate, SeparatorConfig};
 use crate::stft::{self, StftResult};
 
 /// Configuration for advanced separation.
@@ -114,6 +114,7 @@ fn wiener_refine(
 /// 2. Reconstruct estimated sources
 /// 3. Compute residual = mixed - sum(estimated)
 /// 4. Re-separate residual and blend with previous masks
+#[allow(clippy::needless_range_loop)]
 fn cascade_separate(
     signal: &[f64],
     config: &AdvancedConfig,
@@ -128,7 +129,7 @@ fn cascade_separate(
 
     // Initial separation
     let graph = build_audio_graph(&stft_result, &config.graph_params);
-    let mut stats = vec![(ws, graph.num_nodes)];
+    let stats = vec![(ws, graph.num_nodes)];
     let sep_config = SeparatorConfig {
         num_sources: config.num_sources,
         ..SeparatorConfig::default()
@@ -155,7 +156,8 @@ fn cascade_separate(
         let reconstructed_sum: Vec<f64> = (0..n)
             .map(|i| estimated.iter().map(|s| s[i]).sum())
             .collect();
-        let residual: Vec<f64> = signal.iter()
+        let residual: Vec<f64> = signal
+            .iter()
             .zip(reconstructed_sum.iter())
             .map(|(s, r)| s - r)
             .collect();
@@ -174,12 +176,7 @@ fn cascade_separate(
 
         // Blend residual masks with previous masks
         let alpha = config.cascade_alpha * (0.5f64).powi(iter as i32); // Decay blending weight
-        let res_masks = wiener_refine(
-            &res_stft,
-            &res_sep.masks,
-            config.wiener_exponent,
-            1,
-        );
+        let res_masks = wiener_refine(&res_stft, &res_sep.masks, config.wiener_exponent, 1);
 
         for s in 0..config.num_sources {
             for i in 0..total_tf.min(res_masks[s].len()) {
@@ -219,6 +216,7 @@ fn cascade_separate(
 /// - Large windows (1024): good frequency resolution, captures harmonics
 ///
 /// Masks from all resolutions are averaged for robust separation.
+#[allow(clippy::needless_range_loop, dead_code)]
 fn multi_resolution_separate(
     signal: &[f64],
     config: &AdvancedConfig,
@@ -255,12 +253,7 @@ fn multi_resolution_separate(
         let separation = separate(&graph, &sep_config);
 
         // Wiener-refine this resolution's masks
-        let refined = wiener_refine(
-            &stft_result,
-            &separation.masks,
-            config.wiener_exponent,
-            1,
-        );
+        let refined = wiener_refine(&stft_result, &separation.masks, config.wiener_exponent, 1);
 
         // Interpolate masks to primary resolution
         let this_frames = stft_result.num_frames;
@@ -295,10 +288,14 @@ fn multi_resolution_separate(
             if num_sources == 2 {
                 // Compute correlation: identity vs swapped
                 let corr_identity: f64 = (0..primary_tf)
-                    .map(|i| interp_masks[0][i] * ref_masks[0][i] + interp_masks[1][i] * ref_masks[1][i])
+                    .map(|i| {
+                        interp_masks[0][i] * ref_masks[0][i] + interp_masks[1][i] * ref_masks[1][i]
+                    })
                     .sum();
                 let corr_swapped: f64 = (0..primary_tf)
-                    .map(|i| interp_masks[1][i] * ref_masks[0][i] + interp_masks[0][i] * ref_masks[1][i])
+                    .map(|i| {
+                        interp_masks[1][i] * ref_masks[0][i] + interp_masks[0][i] * ref_masks[1][i]
+                    })
                     .sum();
                 if corr_swapped > corr_identity {
                     interp_masks.swap(0, 1);
@@ -360,7 +357,10 @@ fn separation_quality(mixed: &[f64], sources: &[Vec<f64>]) -> f64 {
     let mixed_energy: f64 = mixed.iter().map(|x| x * x).sum::<f64>().max(1e-12);
     let recon_err: f64 = (0..n)
         .map(|i| {
-            let sum: f64 = sources.iter().map(|s| s.get(i).copied().unwrap_or(0.0)).sum();
+            let sum: f64 = sources
+                .iter()
+                .map(|s| s.get(i).copied().unwrap_or(0.0))
+                .sum();
             (mixed[i] - sum).powi(2)
         })
         .sum::<f64>();
@@ -368,11 +368,13 @@ fn separation_quality(mixed: &[f64], sources: &[Vec<f64>]) -> f64 {
 
     // 3. Energy balance: sources should have reasonable energy relative to mix
     //    Penalize solutions where one source has near-zero energy
-    let source_energies: Vec<f64> = sources.iter()
+    let source_energies: Vec<f64> = sources
+        .iter()
         .map(|s| s.iter().map(|x| x * x).sum::<f64>())
         .collect();
     let total_source_energy = source_energies.iter().sum::<f64>().max(1e-12);
-    let min_ratio = source_energies.iter()
+    let min_ratio = source_energies
+        .iter()
         .map(|&e| e / total_source_energy)
         .fold(f64::MAX, f64::min);
     // Ideal: each source has 1/N of total energy. min_ratio near 1/N is good.
@@ -394,17 +396,28 @@ fn source_cross_correlation(sources: &[Vec<f64>]) -> f64 {
     for i in 0..sources.len() {
         for j in (i + 1)..sources.len() {
             let n = sources[i].len().min(sources[j].len());
-            if n == 0 { continue; }
+            if n == 0 {
+                continue;
+            }
             let ei: f64 = sources[i][..n].iter().map(|x| x * x).sum::<f64>().sqrt();
             let ej: f64 = sources[j][..n].iter().map(|x| x * x).sum::<f64>().sqrt();
-            if ei < 1e-12 || ej < 1e-12 { continue; }
-            let dot: f64 = sources[i][..n].iter().zip(sources[j][..n].iter())
-                .map(|(a, b)| a * b).sum();
+            if ei < 1e-12 || ej < 1e-12 {
+                continue;
+            }
+            let dot: f64 = sources[i][..n]
+                .iter()
+                .zip(sources[j][..n].iter())
+                .map(|(a, b)| a * b)
+                .sum();
             total += (dot / (ei * ej)).abs();
             count += 1;
         }
     }
-    if count > 0 { total / count as f64 } else { 0.0 }
+    if count > 0 {
+        total / count as f64
+    } else {
+        0.0
+    }
 }
 
 // ── Full Advanced Pipeline ──────────────────────────────────────────────
@@ -446,7 +459,9 @@ pub fn advanced_separate(
         let initial = separate(&graph, &sep_config);
 
         // Raw masks
-        let raw_sources: Vec<Vec<f64>> = initial.masks.iter()
+        let raw_sources: Vec<Vec<f64>> = initial
+            .masks
+            .iter()
             .map(|mask| stft::istft(&stft_result, mask, n))
             .collect();
         let raw_quality = separation_quality(signal, &raw_sources);
@@ -458,13 +473,10 @@ pub fn advanced_separate(
 
         // Try Wiener with multiple exponents: soft (1.5), standard (2.0), sharp (3.0)
         for &exp in &[1.5, config.wiener_exponent, 3.0] {
-            let wiener_masks = wiener_refine(
-                &stft_result,
-                &initial.masks,
-                exp,
-                config.wiener_iterations,
-            );
-            let wiener_sources: Vec<Vec<f64>> = wiener_masks.iter()
+            let wiener_masks =
+                wiener_refine(&stft_result, &initial.masks, exp, config.wiener_iterations);
+            let wiener_sources: Vec<Vec<f64>> = wiener_masks
+                .iter()
                 .map(|mask| stft::istft(&stft_result, mask, n))
                 .collect();
             let wiener_quality = separation_quality(signal, &wiener_sources);
@@ -487,10 +499,16 @@ pub fn advanced_separate(
         if num_sources == 2 && cascade_sources.len() == 2 && best_sources.len() == 2 {
             let n_min = best_sources[0].len().min(cascade_sources[0].len());
             let corr_id: f64 = (0..n_min)
-                .map(|i| best_sources[0][i] * cascade_sources[0][i] + best_sources[1][i] * cascade_sources[1][i])
+                .map(|i| {
+                    best_sources[0][i] * cascade_sources[0][i]
+                        + best_sources[1][i] * cascade_sources[1][i]
+                })
                 .sum();
             let corr_sw: f64 = (0..n_min)
-                .map(|i| best_sources[0][i] * cascade_sources[1][i] + best_sources[1][i] * cascade_sources[0][i])
+                .map(|i| {
+                    best_sources[0][i] * cascade_sources[1][i]
+                        + best_sources[1][i] * cascade_sources[0][i]
+                })
                 .sum();
             if corr_sw > corr_id {
                 cascade_sources.swap(0, 1);
@@ -522,7 +540,10 @@ fn best_permutation_sdr(references: &[Vec<f64>], estimates: &[Vec<f64>]) -> (Vec
         return (vec![], vec![]);
     }
     if n == 1 {
-        return (vec![compute_sdr_clamped(&references[0], &estimates[0])], vec![0]);
+        return (
+            vec![compute_sdr_clamped(&references[0], &estimates[0])],
+            vec![0],
+        );
     }
 
     // For 2 sources, try both assignments
@@ -580,11 +601,16 @@ pub fn compare_basic_vs_advanced(
     let basic_start = std::time::Instant::now();
     let stft_result = stft::stft(mixed, 256, 128, sample_rate);
     let graph = build_audio_graph(&stft_result, &GraphParams::default());
-    let basic_sep = separate(&graph, &SeparatorConfig {
-        num_sources,
-        ..SeparatorConfig::default()
-    });
-    let basic_sources: Vec<Vec<f64>> = basic_sep.masks.iter()
+    let basic_sep = separate(
+        &graph,
+        &SeparatorConfig {
+            num_sources,
+            ..SeparatorConfig::default()
+        },
+    );
+    let basic_sources: Vec<Vec<f64>> = basic_sep
+        .masks
+        .iter()
         .map(|m| stft::istft(&stft_result, m, n))
         .collect();
     let basic_ms = basic_start.elapsed().as_secs_f64() * 1000.0;
@@ -602,10 +628,14 @@ pub fn compare_basic_vs_advanced(
     let (basic_sdrs, _) = best_permutation_sdr(references, &basic_sources);
     let (advanced_sdrs, _) = best_permutation_sdr(references, &adv_result.sources);
 
-    let basic_avg = if basic_sdrs.is_empty() { -60.0 } else {
+    let basic_avg = if basic_sdrs.is_empty() {
+        -60.0
+    } else {
         basic_sdrs.iter().sum::<f64>() / basic_sdrs.len() as f64
     };
-    let advanced_avg = if advanced_sdrs.is_empty() { -60.0 } else {
+    let advanced_avg = if advanced_sdrs.is_empty() {
+        -60.0
+    } else {
         advanced_sdrs.iter().sum::<f64>() / advanced_sdrs.len() as f64
     };
 
@@ -640,7 +670,9 @@ mod tests {
     use std::f64::consts::PI;
 
     fn sine(freq: f64, sr: f64, n: usize, amp: f64) -> Vec<f64> {
-        (0..n).map(|i| amp * (2.0 * PI * freq * i as f64 / sr).sin()).collect()
+        (0..n)
+            .map(|i| amp * (2.0 * PI * freq * i as f64 / sr).sin())
+            .collect()
     }
 
     #[test]
@@ -650,17 +682,18 @@ mod tests {
         let stft_result = stft::stft(&signal, 256, 128, 8000.0);
         let total_tf = stft_result.num_frames * stft_result.num_freq_bins;
 
-        let masks = vec![
-            vec![0.7; total_tf],
-            vec![0.3; total_tf],
-        ];
+        let masks = vec![vec![0.7; total_tf], vec![0.3; total_tf]];
 
         let refined = wiener_refine(&stft_result, &masks, 2.0, 2);
 
         // Should sum to ~1.0 per bin
         for i in 0..total_tf {
             let sum: f64 = refined.iter().map(|m| m[i]).sum();
-            assert!((sum - 1.0).abs() < 0.01, "Wiener masks should sum to 1, got {}", sum);
+            assert!(
+                (sum - 1.0).abs() < 0.01,
+                "Wiener masks should sum to 1, got {}",
+                sum
+            );
         }
     }
 

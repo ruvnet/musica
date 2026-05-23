@@ -69,6 +69,7 @@ impl Rng {
 /// - `sample_rate`: sample rate
 /// - `output_len`: desired output signal length
 /// - `config`: algorithm parameters
+#[allow(clippy::too_many_arguments)]
 pub fn griffin_lim(
     magnitudes: &[f64],
     num_frames: usize,

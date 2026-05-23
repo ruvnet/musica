@@ -122,9 +122,9 @@ pub struct MusicaProfile {
 impl Default for MusicaProfile {
     fn default() -> Self {
         Self {
-            well_separated_sdr: 5.0,  // Typical for well-separated tones
-            close_tone_sdr: 3.0,      // Typical for close tones with advanced pipeline
-            harmonic_noise_sdr: 1.5,  // Typical for harmonic + noise
+            well_separated_sdr: 5.0, // Typical for well-separated tones
+            close_tone_sdr: 3.0,     // Typical for close tones with advanced pipeline
+            harmonic_noise_sdr: 1.5, // Typical for harmonic + noise
             real_time: true,
             params_millions: 0.0,
             latency_ms: 8.0,
@@ -142,9 +142,15 @@ impl Default for MusicaProfile {
 
 /// Print comparison table.
 pub fn print_comparison_table(musica: &MusicaProfile) {
-    println!("  ┌─────────────────────┬──────┬────────┬───────┬────────┬───────┬────────┬──────────┐");
-    println!("  │ Method              │ Year │ Vocals │ Drums │ Bass   │ Other │ Avg    │ RT │ Params │");
-    println!("  ├─────────────────────┼──────┼────────┼───────┼────────┼───────┼────────┼──────────┤");
+    println!(
+        "  ┌─────────────────────┬──────┬────────┬───────┬────────┬───────┬────────┬──────────┐"
+    );
+    println!(
+        "  │ Method              │ Year │ Vocals │ Drums │ Bass   │ Other │ Avg    │ RT │ Params │"
+    );
+    println!(
+        "  ├─────────────────────┼──────┼────────┼───────┼────────┼───────┼────────┼──────────┤"
+    );
 
     for r in sota_results() {
         println!(
@@ -156,7 +162,9 @@ pub fn print_comparison_table(musica: &MusicaProfile) {
         );
     }
 
-    println!("  ├─────────────────────┼──────┼────────┼───────┼────────┼───────┼────────┼──────────┤");
+    println!(
+        "  ├─────────────────────┼──────┼────────┼───────┼────────┼───────┼────────┼──────────┤"
+    );
     println!(
         "  │ {:<19} │ 2026 │ {:>5.1}* │ {:>4.1}* │ {:>5.1}* │ {:>4.1}* │ {:>5.1}* │ {}  │ {:>5.1}M │",
         "Musica (graph)",
@@ -169,7 +177,9 @@ pub fn print_comparison_table(musica: &MusicaProfile) {
         if musica.real_time { "Y" } else { "N" },
         musica.params_millions,
     );
-    println!("  └─────────────────────┴──────┴────────┴───────┴────────┴───────┴────────┴──────────┘");
+    println!(
+        "  └─────────────────────┴──────┴────────┴───────┴────────┴───────┴────────┴──────────┘"
+    );
     println!("  * Musica SDR measured on synthetic signals, not MUSDB18 test set");
     println!();
 
@@ -187,7 +197,8 @@ pub fn print_comparison_table(musica: &MusicaProfile) {
 
 /// Gap analysis: what SDR improvement is needed to match each SOTA method.
 pub fn gap_analysis(musica_avg_sdr: f64) -> Vec<(String, f64)> {
-    sota_results().iter()
+    sota_results()
+        .iter()
         .map(|r| (r.method.to_string(), r.avg_sdr - musica_avg_sdr))
         .collect()
 }

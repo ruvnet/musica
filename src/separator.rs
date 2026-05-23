@@ -10,7 +10,7 @@
 //! approximate the normalized cut objective, then mincut refines boundaries.
 
 use crate::audio_graph::AudioGraph;
-use crate::lanczos::{LanczosConfig, SparseMatrix, lanczos_eigenpairs};
+use crate::lanczos::{lanczos_eigenpairs, LanczosConfig, SparseMatrix};
 use crate::stft::TfBin;
 use ruvector_mincut::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -95,7 +95,10 @@ pub fn separate(audio_graph: &AudioGraph, config: &SeparatorConfig) -> Separatio
     let mut windows = Vec::new();
     let mut cut_values = Vec::new();
 
-    let step = config.window_frames.saturating_sub(config.window_overlap).max(1);
+    let step = config
+        .window_frames
+        .saturating_sub(config.window_overlap)
+        .max(1);
     let mut frame_start = 0;
 
     while frame_start < num_frames {
@@ -130,10 +133,11 @@ pub fn separate(audio_graph: &AudioGraph, config: &SeparatorConfig) -> Separatio
         cut_values.push(cut_value);
 
         // Compute spectral centroids per partition for soft masking
-        let centroids = compute_partition_centroids(&assignments, &node_bins, config.num_sources, num_freq);
+        let centroids =
+            compute_partition_centroids(&assignments, &node_bins, config.num_sources, num_freq);
 
         // Update soft masks using distance-weighted assignment
-        for (local_idx, &nid) in node_ids.iter().enumerate() {
+        for &nid in node_ids.iter() {
             if let Some(bin) = audio_graph.node_bins.get(nid as usize) {
                 let tf_idx = bin.frame * num_freq + bin.freq_bin;
                 if tf_idx < total_tf {
@@ -209,7 +213,11 @@ fn spectral_cluster(
     }
 
     // Build node ID -> local index map
-    let id_to_idx: HashMap<u64, usize> = node_ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let id_to_idx: HashMap<u64, usize> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, i))
+        .collect();
 
     // Build degree vector and adjacency
     let mut degree = vec![0.0f64; n];
@@ -259,7 +267,8 @@ fn spectral_cluster(
     } else {
         // Multi-eigenvector spectral embedding via Lanczos
         // Compute first num_sources eigenvectors and run k-means in that space
-        let edges_for_lanczos: Vec<(usize, usize, f64)> = edges.iter()
+        let edges_for_lanczos: Vec<(usize, usize, f64)> = edges
+            .iter()
             .filter_map(|&(u, v, w)| {
                 let ui = id_to_idx.get(&u)?;
                 let vi = id_to_idx.get(&v)?;
@@ -295,11 +304,7 @@ fn spectral_cluster(
 
 /// Compute the Fiedler vector (2nd smallest eigenvector of Laplacian)
 /// via power iteration on the random-walk normalized Laplacian.
-fn compute_fiedler_vector(
-    degree: &[f64],
-    adj: &[Vec<(usize, f64)>],
-    n: usize,
-) -> Vec<f64> {
+fn compute_fiedler_vector(degree: &[f64], adj: &[Vec<(usize, f64)>], n: usize) -> Vec<f64> {
     if n <= 1 {
         return vec![0.0; n];
     }
@@ -308,18 +313,23 @@ fn compute_fiedler_vector(
     // then deflate to get the Fiedler vector.
 
     // First eigenvector of D^{-1}A is always uniform (stationary distribution)
-    let d_inv: Vec<f64> = degree.iter().map(|&d| if d > 1e-12 { 1.0 / d } else { 0.0 }).collect();
+    let d_inv: Vec<f64> = degree
+        .iter()
+        .map(|&d| if d > 1e-12 { 1.0 / d } else { 0.0 })
+        .collect();
 
     // Initialize with deterministic non-uniform vector (seeded for reproducibility).
     // Uses frequency-proportional init: higher freq bins get larger values.
     // This biases the Fiedler vector toward a frequency-based partition,
     // which is the natural separation axis for audio.
-    let mut v: Vec<f64> = (0..n).map(|i| {
-        let base = (i as f64 / n as f64) - 0.5;
-        // Add deterministic perturbation to break symmetry
-        let perturb = ((i * 7 + 3) % n) as f64 / n as f64 * 0.01;
-        base + perturb
-    }).collect();
+    let mut v: Vec<f64> = (0..n)
+        .map(|i| {
+            let base = (i as f64 / n as f64) - 0.5;
+            // Add deterministic perturbation to break symmetry
+            let perturb = ((i * 7 + 3) % n) as f64 / n as f64 * 0.01;
+            base + perturb
+        })
+        .collect();
 
     // Orthogonalize against constant vector
     let sum: f64 = v.iter().sum();
@@ -362,6 +372,7 @@ fn compute_fiedler_vector(
 }
 
 /// K-means clustering on multi-dimensional spectral embedding.
+#[allow(clippy::needless_range_loop)]
 fn spectral_kmeans(embedding: &[Vec<f64>], k: usize) -> Vec<usize> {
     let n = embedding.len();
     if n == 0 || k == 0 {
@@ -378,7 +389,8 @@ fn spectral_kmeans(embedding: &[Vec<f64>], k: usize) -> Vec<usize> {
         let mut best_idx = 0;
         let mut best_dist = 0.0f64;
         for (i, point) in embedding.iter().enumerate() {
-            let min_dist: f64 = centroids.iter()
+            let min_dist: f64 = centroids
+                .iter()
                 .map(|c| (0..dim).map(|d| (point[d] - c[d]).powi(2)).sum::<f64>())
                 .fold(f64::MAX, f64::min);
             if min_dist > best_dist {
@@ -395,7 +407,9 @@ fn spectral_kmeans(embedding: &[Vec<f64>], k: usize) -> Vec<usize> {
         // Assign each point to nearest centroid
         let mut changed = false;
         for (i, point) in embedding.iter().enumerate() {
-            let nearest = centroids.iter().enumerate()
+            let nearest = centroids
+                .iter()
+                .enumerate()
                 .min_by(|(_, a), (_, b)| {
                     let da: f64 = (0..dim).map(|d| (point[d] - a[d]).powi(2)).sum();
                     let db: f64 = (0..dim).map(|d| (point[d] - b[d]).powi(2)).sum();
@@ -408,7 +422,9 @@ fn spectral_kmeans(embedding: &[Vec<f64>], k: usize) -> Vec<usize> {
                 changed = true;
             }
         }
-        if !changed { break; }
+        if !changed {
+            break;
+        }
 
         // Update centroids
         for c in 0..k {
@@ -434,11 +450,8 @@ fn spectral_kmeans(embedding: &[Vec<f64>], k: usize) -> Vec<usize> {
 }
 
 /// K-means clustering on frequency bin positions.
-fn frequency_kmeans(
-    node_bins: &[&TfBin],
-    k: usize,
-    num_freq_bins: usize,
-) -> Vec<usize> {
+#[allow(clippy::needless_range_loop)]
+fn frequency_kmeans(node_bins: &[&TfBin], k: usize, num_freq_bins: usize) -> Vec<usize> {
     let n = node_bins.len();
     if n == 0 || k == 0 {
         return vec![0; n];
@@ -460,7 +473,10 @@ fn frequency_kmeans(
                 .iter()
                 .enumerate()
                 .min_by(|(_, a), (_, b)| {
-                    (freq - *a).abs().partial_cmp(&(freq - *b).abs()).unwrap_or(std::cmp::Ordering::Equal)
+                    (freq - *a)
+                        .abs()
+                        .partial_cmp(&(freq - *b).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
@@ -577,6 +593,7 @@ fn soft_assignment(
 }
 
 /// Normalize masks so they sum to 1.0 at each TF point.
+#[allow(clippy::needless_range_loop)]
 fn normalize_masks(
     mask_accum: &[Vec<f64>],
     mask_count: &[f64],
@@ -679,7 +696,10 @@ mod tests {
 
         assert_eq!(result.num_sources, 2);
         assert_eq!(result.masks.len(), 2);
-        assert!(result.stats.num_windows > 0, "Should have processed windows");
+        assert!(
+            result.stats.num_windows > 0,
+            "Should have processed windows"
+        );
 
         // Masks should sum to ~1.0 at each TF point
         let total_tf = stft_result.num_frames * stft_result.num_freq_bins;

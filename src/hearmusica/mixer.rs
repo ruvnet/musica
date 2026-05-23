@@ -67,8 +67,16 @@ impl AudioProcessor for Mixer {
     }
 
     fn process(&mut self, block: &mut AudioBlock) {
-        let lg = if self.per_channel { self.left_gain } else { self.weight };
-        let rg = if self.per_channel { self.right_gain } else { self.weight };
+        let lg = if self.per_channel {
+            self.left_gain
+        } else {
+            self.weight
+        };
+        let rg = if self.per_channel {
+            self.right_gain
+        } else {
+            self.weight
+        };
 
         for s in block.left.iter_mut() {
             *s *= lg;

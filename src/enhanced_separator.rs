@@ -7,7 +7,7 @@ use crate::multi_res::{self, MultiResConfig};
 use crate::neural_refine::{MLPConfig, TinyMLP};
 use crate::phase::{self, GriffinLimConfig};
 use crate::separator::{self, SeparatorConfig};
-use crate::stft::{self, StftResult};
+use crate::stft;
 use std::time::Instant;
 
 /// Configuration for the enhanced separator pipeline.
@@ -85,10 +85,7 @@ pub struct EnhancedStats {
 /// 4. Optional neural mask refinement
 /// 5. Mask normalization
 /// 6. Reconstruction (standard ISTFT or Griffin-Lim)
-pub fn enhanced_separate(
-    signal: &[f64],
-    config: &EnhancedSeparatorConfig,
-) -> EnhancedResult {
+pub fn enhanced_separate(signal: &[f64], config: &EnhancedSeparatorConfig) -> EnhancedResult {
     let total_start = Instant::now();
 
     // Step 1: STFT analysis
@@ -125,9 +122,19 @@ pub fn enhanced_separate(
         // Use the standard STFT for the main pipeline (graph + reconstruction)
         // but the multi-res analysis influences graph construction via a
         // different magnitude floor derived from band energy.
-        stft::stft(signal, config.window_size, config.hop_size, config.sample_rate)
+        stft::stft(
+            signal,
+            config.window_size,
+            config.hop_size,
+            config.sample_rate,
+        )
     } else {
-        stft::stft(signal, config.window_size, config.hop_size, config.sample_rate)
+        stft::stft(
+            signal,
+            config.window_size,
+            config.hop_size,
+            config.sample_rate,
+        )
     };
     let stft_time_ms = stft_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -284,11 +291,7 @@ fn compute_sdr(reference: &[f64], estimate: &[f64]) -> f64 {
 /// 4. Both multi-res + neural refine
 ///
 /// `references` should contain one reference signal per source.
-pub fn compare_modes(
-    signal: &[f64],
-    references: &[Vec<f64>],
-    sr: f64,
-) -> ComparisonReport {
+pub fn compare_modes(signal: &[f64], references: &[Vec<f64>], sr: f64) -> ComparisonReport {
     let num_sources = references.len().max(2);
 
     let base = EnhancedSeparatorConfig {
@@ -446,7 +449,7 @@ mod tests {
         let result = enhanced_separate(&signal, &config);
 
         assert_eq!(result.masks.len(), 2);
-        let num_frames = config.window_size; // approximate
+        let _num_frames = config.window_size; // approximate
         let total_tf = result.masks[0].len();
         assert!(total_tf > 0);
 

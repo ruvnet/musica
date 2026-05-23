@@ -42,7 +42,11 @@ fn now_us() -> u64 {
 ///
 /// Each mask has length `num_frames * num_freq_bins` as produced by the STFT.
 /// The total returned length is `num_sources * num_frames * num_freq_bins`.
-pub(crate) fn run_pipeline(samples: &[f64], sample_rate: f64, num_sources: usize) -> (Vec<f64>, u64) {
+pub(crate) fn run_pipeline(
+    samples: &[f64],
+    sample_rate: f64,
+    num_sources: usize,
+) -> (Vec<f64>, u64) {
     let start = now_us();
 
     let window_size = 256usize;
@@ -163,7 +167,11 @@ mod tests {
         let (masks, latency_us) = run_pipeline(&signal, sr, num_sources);
 
         // The mask length must be a multiple of num_sources
-        assert_eq!(masks.len() % num_sources, 0, "mask length not divisible by num_sources");
+        assert_eq!(
+            masks.len() % num_sources,
+            0,
+            "mask length not divisible by num_sources"
+        );
         // Should have non-zero output
         assert!(!masks.is_empty(), "pipeline returned empty masks");
         // Latency should be recorded

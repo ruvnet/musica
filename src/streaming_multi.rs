@@ -99,6 +99,7 @@ impl StreamingMultiState {
     ///
     /// `samples` should be one hop's worth of audio (config.hop_size samples).
     /// Internally the rolling buffer accumulates enough context for STFT analysis.
+    #[allow(clippy::needless_range_loop)]
     pub fn process_frame(&mut self, samples: &[f64], config: &StreamingMultiConfig) -> MultiFrame {
         let start = std::time::Instant::now();
         let num_freq = config.window_size / 2 + 1;
@@ -110,10 +111,19 @@ impl StreamingMultiState {
         }
 
         // Flatten rolling buffer into a contiguous signal for STFT
-        let rolling_signal: Vec<f64> = self.rolling_buffer.iter().flat_map(|f| f.iter().copied()).collect();
+        let rolling_signal: Vec<f64> = self
+            .rolling_buffer
+            .iter()
+            .flat_map(|f| f.iter().copied())
+            .collect();
 
         // 2. Run STFT on rolling buffer
-        let stft_result = stft::stft(&rolling_signal, config.window_size, config.hop_size, config.sample_rate);
+        let stft_result = stft::stft(
+            &rolling_signal,
+            config.window_size,
+            config.hop_size,
+            config.sample_rate,
+        );
         let num_frames = stft_result.num_frames;
         let stft_num_freq = stft_result.num_freq_bins;
         let total_bins = num_frames * stft_num_freq;
@@ -129,8 +139,10 @@ impl StreamingMultiState {
         let mut raw_masks: Vec<Vec<f64>> = Vec::with_capacity(self.priors.len());
 
         for (_stem, prior) in &self.priors {
-            let freq_bin_min = freq_to_bin(prior.freq_range.0, config.sample_rate, config.window_size);
-            let freq_bin_max = freq_to_bin(prior.freq_range.1, config.sample_rate, config.window_size);
+            let freq_bin_min =
+                freq_to_bin(prior.freq_range.0, config.sample_rate, config.window_size);
+            let freq_bin_max =
+                freq_to_bin(prior.freq_range.1, config.sample_rate, config.window_size);
 
             let mut mask = vec![0.0f64; total_bins];
 
@@ -160,13 +172,21 @@ impl StreamingMultiState {
 
             // 4. Build per-stem graph over rolling window
             let window_bins = collect_active_bins(
-                &magnitudes, num_frames, stft_num_freq, freq_bin_min, freq_bin_max,
+                &magnitudes,
+                num_frames,
+                stft_num_freq,
+                freq_bin_min,
+                freq_bin_max,
             );
 
             if window_bins.len() >= 4 {
                 let (edges, num_nodes) = build_stem_graph(
-                    &window_bins, &magnitudes, &harmonicity_scores, &transient_scores,
-                    stft_num_freq, prior,
+                    &window_bins,
+                    &magnitudes,
+                    &harmonicity_scores,
+                    &transient_scores,
+                    stft_num_freq,
+                    prior,
                 );
 
                 // 5. Compute Fiedler vector for coherence grouping
@@ -174,13 +194,18 @@ impl StreamingMultiState {
                     let fiedler = compute_fiedler(num_nodes, &edges);
                     let median = {
                         let mut sorted = fiedler.clone();
-                        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                        sorted
+                            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                         sorted[sorted.len() / 2]
                     };
 
                     for (local_i, &(frame, freq)) in window_bins.iter().enumerate() {
                         let idx = frame * stft_num_freq + freq;
-                        let fiedler_val = if local_i < fiedler.len() { fiedler[local_i] } else { 0.0 };
+                        let fiedler_val = if local_i < fiedler.len() {
+                            fiedler[local_i]
+                        } else {
+                            0.0
+                        };
                         let boost = if fiedler_val > median { 1.2 } else { 0.8 };
                         mask[idx] *= boost;
                     }
@@ -202,7 +227,11 @@ impl StreamingMultiState {
             let mut frame_mask = vec![0.0; num_freq];
             for f in 0..num_freq.min(stft_num_freq) {
                 let src = frame_offset + f;
-                frame_mask[f] = if src < normalized[s].len() { normalized[s][src] } else { 0.0 };
+                frame_mask[f] = if src < normalized[s].len() {
+                    normalized[s][src]
+                } else {
+                    0.0
+                };
             }
 
             // 7. Temporal smoothing (EMA with previous frame's mask)
@@ -215,8 +244,10 @@ impl StreamingMultiState {
             // (done below after collecting all stems)
 
             // Confidence: average mask in primary frequency range
-            let freq_bin_min = freq_to_bin(prior.freq_range.0, config.sample_rate, config.window_size);
-            let freq_bin_max = freq_to_bin(prior.freq_range.1, config.sample_rate, config.window_size);
+            let freq_bin_min =
+                freq_to_bin(prior.freq_range.0, config.sample_rate, config.window_size);
+            let freq_bin_max =
+                freq_to_bin(prior.freq_range.1, config.sample_rate, config.window_size);
             let range_len = (freq_bin_max - freq_bin_min + 1).max(1);
             let confidence: f64 = (freq_bin_min..=freq_bin_max.min(num_freq - 1))
                 .map(|f| frame_mask[f])
@@ -350,7 +381,7 @@ fn build_stem_graph(
     bins: &[(usize, usize)],
     magnitudes: &[f64],
     harmonicity: &[f64],
-    transients: &[f64],
+    _transients: &[f64],
     num_freq: usize,
     prior: &StemPrior,
 ) -> (Vec<(usize, usize, f64)>, usize) {
@@ -460,19 +491,34 @@ fn compute_fiedler(n: usize, edges: &[(usize, usize, f64)]) -> Vec<f64> {
     v
 }
 
-fn wiener_normalize(raw_masks: &[Vec<f64>], magnitudes: &[f64], total_bins: usize) -> Vec<Vec<f64>> {
+fn wiener_normalize(
+    raw_masks: &[Vec<f64>],
+    magnitudes: &[f64],
+    total_bins: usize,
+) -> Vec<Vec<f64>> {
     let k = raw_masks.len();
     let mut masks = vec![vec![0.0; total_bins]; k];
 
     for i in 0..total_bins {
-        let mag = if i < magnitudes.len() { magnitudes[i] } else { 0.0 };
-        let sum: f64 = raw_masks.iter().map(|m| {
-            let v = if i < m.len() { m[i] } else { 0.0 };
-            v * v * mag * mag + 1e-10
-        }).sum();
+        let mag = if i < magnitudes.len() {
+            magnitudes[i]
+        } else {
+            0.0
+        };
+        let sum: f64 = raw_masks
+            .iter()
+            .map(|m| {
+                let v = if i < m.len() { m[i] } else { 0.0 };
+                v * v * mag * mag + 1e-10
+            })
+            .sum();
 
         for s in 0..k {
-            let v = if i < raw_masks[s].len() { raw_masks[s][i] } else { 0.0 };
+            let v = if i < raw_masks[s].len() {
+                raw_masks[s][i]
+            } else {
+                0.0
+            };
             masks[s][i] = (v * v * mag * mag + 1e-10) / sum;
         }
     }

@@ -61,6 +61,7 @@ impl BiquadState {
     }
 
     /// Reset filter state.
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.z1 = 0.0;
         self.z2 = 0.0;
@@ -181,12 +182,8 @@ impl GainProcessor {
         // Frequency-dependent correction
         let correction = if freq_hz <= 375.0 {
             1.0 // ~250 Hz region
-        } else if freq_hz <= 750.0 {
-            0.0 // 500 Hz
-        } else if freq_hz <= 1500.0 {
-            0.0 // 1000 Hz
         } else if freq_hz <= 3000.0 {
-            0.0 // 2000 Hz
+            0.0 // 500–2000 Hz
         } else if freq_hz <= 5000.0 {
             -1.0 // 4000 Hz
         } else {
@@ -228,8 +225,10 @@ impl GainProcessor {
             self.band_gains.push(gain_db);
 
             let q = 1.0;
-            self.band_filters_l.push(BiquadState::peaking_eq(freq, gain_db, q, self.sample_rate));
-            self.band_filters_r.push(BiquadState::peaking_eq(freq, gain_db, q, self.sample_rate));
+            self.band_filters_l
+                .push(BiquadState::peaking_eq(freq, gain_db, q, self.sample_rate));
+            self.band_filters_r
+                .push(BiquadState::peaking_eq(freq, gain_db, q, self.sample_rate));
         }
     }
 }
@@ -356,18 +355,12 @@ mod tests {
         gp.process(&mut block_low);
 
         // Compute RMS of output for each — skip transient startup (first 128 samples)
-        let rms_high: f32 = block_high.left[128..]
-            .iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            / (n - 128) as f32;
+        let rms_high: f32 =
+            block_high.left[128..].iter().map(|x| x * x).sum::<f32>() / (n - 128) as f32;
         let rms_high = rms_high.sqrt();
 
-        let rms_low: f32 = block_low.left[128..]
-            .iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            / (n - 128) as f32;
+        let rms_low: f32 =
+            block_low.left[128..].iter().map(|x| x * x).sum::<f32>() / (n - 128) as f32;
         let rms_low = rms_low.sqrt();
 
         // High-frequency loss is greater (60 dB vs 10 dB), so the boost should be larger
@@ -436,8 +429,18 @@ mod tests {
         // All gains should be positive and under 50 dB for this audiogram
         for freq in [250.0, 500.0, 1000.0, 2000.0, 4000.0, 6000.0] {
             let g = GainProcessor::nal_r_gain(&audiogram, freq);
-            assert!(g >= 0.0, "NAL-R gain at {} Hz should be non-negative: {}", freq, g);
-            assert!(g < 50.0, "NAL-R gain at {} Hz should be < 50 dB: {}", freq, g);
+            assert!(
+                g >= 0.0,
+                "NAL-R gain at {} Hz should be non-negative: {}",
+                freq,
+                g
+            );
+            assert!(
+                g < 50.0,
+                "NAL-R gain at {} Hz should be < 50 dB: {}",
+                freq,
+                g
+            );
         }
 
         // Verify it constructs without panicking and the flag is set

@@ -58,6 +58,7 @@ pub struct SpatialResult {
 }
 
 /// Compute inter-channel phase difference between left and right STFT.
+#[allow(clippy::needless_range_loop)]
 fn compute_ipd(left: &StftResult, right: &StftResult) -> Vec<f64> {
     let total = left.num_frames * left.num_freq_bins;
     let mut ipd = vec![0.0; total];
@@ -65,14 +66,19 @@ fn compute_ipd(left: &StftResult, right: &StftResult) -> Vec<f64> {
     for i in 0..total {
         // IPD = phase_left - phase_right, wrapped to [-pi, pi]
         let mut diff = left.bins[i].phase - right.bins[i].phase;
-        while diff > PI { diff -= 2.0 * PI; }
-        while diff < -PI { diff += 2.0 * PI; }
+        while diff > PI {
+            diff -= 2.0 * PI;
+        }
+        while diff < -PI {
+            diff += 2.0 * PI;
+        }
         ipd[i] = diff;
     }
     ipd
 }
 
 /// Compute inter-channel level difference between left and right STFT.
+#[allow(clippy::needless_range_loop)]
 fn compute_ild(left: &StftResult, right: &StftResult) -> Vec<f64> {
     let total = left.num_frames * left.num_freq_bins;
     let mut ild = vec![0.0; total];
@@ -94,8 +100,12 @@ fn expected_ipd(direction_deg: f64, freq_hz: f64, mic_spacing: f64) -> f64 {
     let ipd = 2.0 * PI * freq_hz * mic_spacing * theta.sin() / c;
     // Wrap to [-pi, pi]
     let mut wrapped = ipd % (2.0 * PI);
-    if wrapped > PI { wrapped -= 2.0 * PI; }
-    if wrapped < -PI { wrapped += 2.0 * PI; }
+    if wrapped > PI {
+        wrapped -= 2.0 * PI;
+    }
+    if wrapped < -PI {
+        wrapped += 2.0 * PI;
+    }
     wrapped
 }
 
@@ -107,17 +117,24 @@ fn expected_ild(direction_deg: f64) -> f64 {
 }
 
 /// Separate stereo signal using spatial cues.
-pub fn spatial_separate(
-    left: &[f64],
-    right: &[f64],
-    config: &SpatialConfig,
-) -> SpatialResult {
+#[allow(clippy::needless_range_loop)]
+pub fn spatial_separate(left: &[f64], right: &[f64], config: &SpatialConfig) -> SpatialResult {
     let start = std::time::Instant::now();
     let n = left.len().min(right.len());
     let num_sources = config.source_directions.len();
 
-    let left_stft = stft::stft(left, config.window_size, config.hop_size, config.sample_rate);
-    let right_stft = stft::stft(right, config.window_size, config.hop_size, config.sample_rate);
+    let left_stft = stft::stft(
+        left,
+        config.window_size,
+        config.hop_size,
+        config.sample_rate,
+    );
+    let right_stft = stft::stft(
+        right,
+        config.window_size,
+        config.hop_size,
+        config.sample_rate,
+    );
 
     let ipd_map = compute_ipd(&left_stft, &right_stft);
     let ild_map = compute_ild(&left_stft, &right_stft);
@@ -140,11 +157,12 @@ pub fn spatial_separate(
 
             // IPD likelihood: Gaussian around expected IPD
             let ipd_diff = ipd_map[i] - expected_ipd_val;
-            let ipd_score = (-ipd_diff * ipd_diff / (2.0 * config.ipd_sigma * config.ipd_sigma)).exp();
+            let ipd_score =
+                (-ipd_diff * ipd_diff / (2.0 * config.ipd_sigma * config.ipd_sigma)).exp();
 
             // ILD likelihood: sigmoid around expected ILD
             let ild_diff = ild_map[i] - expected_ild_val;
-            let ild_score = 1.0 / (1.0 + (-ild_diff / config.ild_sigma).exp());
+            let _ild_score = 1.0 / (1.0 + (-ild_diff / config.ild_sigma).exp());
             // Symmetric: closer to expected ILD = higher score
             let ild_proximity = (-ild_diff.abs() / config.ild_sigma).exp();
 
@@ -185,7 +203,8 @@ pub fn spatial_separate(
         sample_rate: left_stft.sample_rate,
     };
 
-    let sources: Vec<Vec<f64>> = masks.iter()
+    let sources: Vec<Vec<f64>> = masks
+        .iter()
         .map(|mask| stft::istft(&mono_stft, mask, n))
         .collect();
 
@@ -217,21 +236,31 @@ mod tests {
         };
 
         // Speech from left (-30 deg): louder in left ear
-        let speech: Vec<f64> = (0..n).map(|i| {
-            let t = i as f64 / sr;
-            0.5 * (2.0 * PI * 200.0 * t).sin() + 0.2 * (2.0 * PI * 400.0 * t).sin()
-        }).collect();
+        let speech: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                0.5 * (2.0 * PI * 200.0 * t).sin() + 0.2 * (2.0 * PI * 400.0 * t).sin()
+            })
+            .collect();
 
         // Noise from right (+30 deg): louder in right ear
-        let noise: Vec<f64> = (0..n).map(|i| {
-            let t = i as f64 / sr;
-            0.3 * (2.0 * PI * 1500.0 * t).sin()
-        }).collect();
+        let noise: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                0.3 * (2.0 * PI * 1500.0 * t).sin()
+            })
+            .collect();
 
-        let left: Vec<f64> = speech.iter().zip(noise.iter())
-            .map(|(s, n)| s * 1.2 + n * 0.5).collect();
-        let right: Vec<f64> = speech.iter().zip(noise.iter())
-            .map(|(s, n)| s * 0.5 + n * 1.2).collect();
+        let left: Vec<f64> = speech
+            .iter()
+            .zip(noise.iter())
+            .map(|(s, n)| s * 1.2 + n * 0.5)
+            .collect();
+        let right: Vec<f64> = speech
+            .iter()
+            .zip(noise.iter())
+            .map(|(s, n)| s * 0.5 + n * 1.2)
+            .collect();
 
         let result = spatial_separate(&left, &right, &config);
 
@@ -256,7 +285,10 @@ mod tests {
 
         let ipd = compute_ipd(&left, &right);
         let max_ipd = ipd.iter().map(|x| x.abs()).fold(0.0f64, f64::max);
-        assert!(max_ipd < 0.01, "Same signal IPD should be ~0, got {max_ipd}");
+        assert!(
+            max_ipd < 0.01,
+            "Same signal IPD should be ~0, got {max_ipd}"
+        );
     }
 
     #[test]
@@ -265,7 +297,9 @@ mod tests {
         let spacing = 0.15;
         let ipd_left = expected_ipd(-30.0, freq, spacing);
         let ipd_right = expected_ipd(30.0, freq, spacing);
-        assert!((ipd_left + ipd_right).abs() < 0.01,
-            "IPD should be antisymmetric: {ipd_left} vs {ipd_right}");
+        assert!(
+            (ipd_left + ipd_right).abs() < 0.01,
+            "IPD should be antisymmetric: {ipd_left} vs {ipd_right}"
+        );
     }
 }

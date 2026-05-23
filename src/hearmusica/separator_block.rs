@@ -41,10 +41,8 @@ impl GraphSeparatorBlock {
 
     /// Create a block with a specific configuration.
     pub fn with_config(config: HearingAidConfig) -> Self {
-        let frame_samples =
-            (config.sample_rate * config.frame_size_ms / 1000.0) as usize;
-        let hop_samples =
-            (config.sample_rate * config.hop_size_ms / 1000.0) as usize;
+        let frame_samples = (config.sample_rate * config.frame_size_ms / 1000.0) as usize;
+        let hop_samples = (config.sample_rate * config.hop_size_ms / 1000.0) as usize;
 
         Self {
             speech_mask: vec![0.5; config.num_bands],
@@ -91,10 +89,8 @@ impl GraphSeparatorBlock {
 
         // Convert the first `frame_samples` of the buffer to f64.
         let n = self.frame_samples.min(self.frame_buffer_l.len());
-        let left_f64: Vec<f64> =
-            self.frame_buffer_l[..n].iter().map(|&s| s as f64).collect();
-        let right_f64: Vec<f64> =
-            self.frame_buffer_r[..n].iter().map(|&s| s as f64).collect();
+        let left_f64: Vec<f64> = self.frame_buffer_l[..n].iter().map(|&s| s as f64).collect();
+        let right_f64: Vec<f64> = self.frame_buffer_r[..n].iter().map(|&s| s as f64).collect();
 
         let result = state.process_frame(&left_f64, &right_f64, &self.config);
 
@@ -122,8 +118,7 @@ impl AudioProcessor for GraphSeparatorBlock {
         // Recompute frame/hop sizes from (possibly updated) config.
         self.frame_samples =
             (self.config.sample_rate * self.config.frame_size_ms / 1000.0) as usize;
-        self.hop_samples =
-            (self.config.sample_rate * self.config.hop_size_ms / 1000.0) as usize;
+        self.hop_samples = (self.config.sample_rate * self.config.hop_size_ms / 1000.0) as usize;
 
         // (Re)create streaming state.
         self.state = Some(StreamingState::new(&self.config));

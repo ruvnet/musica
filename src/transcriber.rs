@@ -6,8 +6,6 @@
 //! Without the feature, provides a stub API that simulates transcription
 //! for benchmarking the separation quality improvement.
 
-use std::f64::consts::PI;
-
 // ── Configuration ───────────────────────────────────────────────────────
 
 /// Whisper model size.
@@ -280,7 +278,11 @@ impl SimulatedTranscriber {
                 segments.push(Segment {
                     start: seg_start,
                     end: seg_end,
-                    text: format!("[speech segment {}, energy={:.3}]", i + 1, seg_energy.sqrt()),
+                    text: format!(
+                        "[speech segment {}, energy={:.3}]",
+                        i + 1,
+                        seg_energy.sqrt()
+                    ),
                     confidence: speech_ratio.min(0.95),
                 });
             }
@@ -351,9 +353,11 @@ pub mod candle_whisper {
             // let tokenizer_path = repo.get("tokenizer.json")?;
             // let config_path = repo.get("config.json")?;
 
-            Err("Model loading requires network access and HuggingFace hub. \
+            Err(
+                "Model loading requires network access and HuggingFace hub. \
                  Use SimulatedTranscriber for offline benchmarking."
-                .to_string())
+                    .to_string(),
+            )
         }
 
         /// Transcribe audio samples.
@@ -368,7 +372,10 @@ pub mod candle_whisper {
             // 4. Autoregressive decoding with language/task tokens
             // 5. Collect segments with timestamps
 
-            Err("Model not loaded. Call load_model() first, or use SimulatedTranscriber.".to_string())
+            Err(
+                "Model not loaded. Call load_model() first, or use SimulatedTranscriber."
+                    .to_string(),
+            )
         }
     }
 }
@@ -384,7 +391,7 @@ pub fn benchmark_separation_for_transcription(
     labels: &[&str],
     sample_rate: f64,
 ) -> SeparateAndTranscribeResult {
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
 
     // Create mixed signal
     let n = sources[0].len();
@@ -498,6 +505,7 @@ pub fn benchmark_separation_for_transcription(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::consts::PI;
 
     fn sine(freq: f64, sr: f64, n: usize, amp: f64) -> Vec<f64> {
         (0..n)
@@ -548,11 +556,19 @@ mod tests {
     fn test_wer_estimation_curve() {
         // High SNR → low WER
         let wer_clean = estimate_wer_from_snr(40.0);
-        assert!(wer_clean < 10.0, "Clean speech WER should be <10%, got {}", wer_clean);
+        assert!(
+            wer_clean < 10.0,
+            "Clean speech WER should be <10%, got {}",
+            wer_clean
+        );
 
         // Low SNR → high WER
         let wer_noisy = estimate_wer_from_snr(-5.0);
-        assert!(wer_noisy > 40.0, "Very noisy WER should be >40%, got {}", wer_noisy);
+        assert!(
+            wer_noisy > 40.0,
+            "Very noisy WER should be >40%, got {}",
+            wer_noisy
+        );
 
         // Monotonic: more noise = higher WER
         let wer_20 = estimate_wer_from_snr(20.0);
@@ -583,11 +599,8 @@ mod tests {
         let src1 = sine(200.0, sr, n, 1.0);
         let src2 = sine(2000.0, sr, n, 0.8);
 
-        let result = benchmark_separation_for_transcription(
-            &[src1, src2],
-            &["speaker1", "speaker2"],
-            sr,
-        );
+        let result =
+            benchmark_separation_for_transcription(&[src1, src2], &["speaker1", "speaker2"], sr);
 
         // Should have transcriptions for separated sources
         assert!(!result.transcriptions.is_empty());
@@ -605,7 +618,8 @@ mod tests {
         assert!(
             result.quality.estimated_wer_separated <= result.quality.estimated_wer_mixed + 15.0,
             "WER should not dramatically increase after separation: separated={:.1}%, mixed={:.1}%",
-            result.quality.estimated_wer_separated, result.quality.estimated_wer_mixed
+            result.quality.estimated_wer_separated,
+            result.quality.estimated_wer_mixed
         );
 
         assert!(result.separation_ms > 0.0);

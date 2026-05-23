@@ -197,6 +197,7 @@ impl BiquadFilter {
 
     /// Process a single sample (Direct Form II Transposed).
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn process_sample(
         b0: f64,
         b1: f64,
