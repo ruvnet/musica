@@ -14,7 +14,7 @@ pub mod mixer;
 pub mod presets;
 pub mod separator_block;
 
-pub use block::{AudioBlock, AudioProcessor, BlockMetadata};
+pub use block::{AudioBlock, AudioProcessor};
 pub use compressor::WDRCompressor;
 pub use delay::DelayLine;
 pub use feedback::FeedbackCanceller;
@@ -22,6 +22,7 @@ pub use filter::{BiquadFilter, FilterType};
 pub use gain::GainProcessor;
 pub use limiter::Limiter;
 pub use mixer::Mixer;
+#[allow(unused_imports)]
 pub use presets::*;
 pub use separator_block::GraphSeparatorBlock;
 
@@ -116,8 +117,8 @@ mod tests {
     #[test]
     fn pipeline_latency_sums_correctly() {
         let mut pipeline = Pipeline::new(16000.0, 128);
-        pipeline.add(Box::new(DelayLine::new(2.0)));  // 2 ms
-        pipeline.add(Box::new(DelayLine::new(4.0)));  // 4 ms
+        pipeline.add(Box::new(DelayLine::new(2.0))); // 2 ms
+        pipeline.add(Box::new(DelayLine::new(4.0))); // 4 ms
         pipeline.add(Box::new(GainProcessor::new(0.0)));
         pipeline.prepare();
 
@@ -132,13 +133,20 @@ mod tests {
     #[test]
     fn block_names_match_added_blocks() {
         let mut pipeline = Pipeline::new(48000.0, 256);
-        pipeline.add(Box::new(BiquadFilter::new(FilterType::HighPass, 100.0, 0.707)));
+        pipeline.add(Box::new(BiquadFilter::new(
+            FilterType::HighPass,
+            100.0,
+            0.707,
+        )));
         pipeline.add(Box::new(WDRCompressor::new(-30.0, 2.0)));
         pipeline.add(Box::new(GainProcessor::new(10.0)));
         pipeline.add(Box::new(Limiter::new(-1.0)));
 
         let names = pipeline.block_names();
-        assert_eq!(names, vec!["BiquadFilter", "WDRCompressor", "Gain", "Limiter"]);
+        assert_eq!(
+            names,
+            vec!["BiquadFilter", "WDRCompressor", "Gain", "Limiter"]
+        );
     }
 
     #[test]

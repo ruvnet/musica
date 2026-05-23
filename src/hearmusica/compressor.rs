@@ -25,6 +25,7 @@ struct BiquadCoeffs {
 }
 
 impl BiquadCoeffs {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             b0: 1.0,
@@ -206,8 +207,7 @@ impl CompressorBand {
         } else {
             // In the knee — quadratic interpolation
             let x = level_db - t + half_w;
-            let gain = (1.0 / r - 1.0) * x * x / (2.0 * w);
-            gain
+            (1.0 / r - 1.0) * x * x / (2.0 * w)
         }
     }
 
@@ -218,11 +218,9 @@ impl CompressorBand {
 
         // Envelope follower
         if abs_x > self.envelope {
-            self.envelope =
-                self.attack_coeff * self.envelope + (1.0 - self.attack_coeff) * abs_x;
+            self.envelope = self.attack_coeff * self.envelope + (1.0 - self.attack_coeff) * abs_x;
         } else {
-            self.envelope =
-                self.release_coeff * self.envelope + (1.0 - self.release_coeff) * abs_x;
+            self.envelope = self.release_coeff * self.envelope + (1.0 - self.release_coeff) * abs_x;
         }
 
         // Convert to dB
@@ -482,9 +480,8 @@ mod tests {
         let mut block = make_block(&samples, sr);
         comp.process(&mut block);
 
-        let output_rms: f32 = (block.left.iter().map(|s| s * s).sum::<f32>()
-            / block.left.len() as f32)
-            .sqrt();
+        let output_rms: f32 =
+            (block.left.iter().map(|s| s * s).sum::<f32>() / block.left.len() as f32).sqrt();
 
         // Output should be quieter than input
         assert!(

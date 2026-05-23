@@ -7,7 +7,7 @@
 //!
 //! This module runs multiple STFTs in parallel and merges the results.
 
-use crate::stft::{self, StftResult, TfBin};
+use crate::stft::{self, StftResult};
 
 /// Frequency band definition for multi-resolution analysis.
 #[derive(Debug, Clone)]
@@ -144,12 +144,11 @@ pub fn merge_multi_res_masks(
     assert_eq!(multi_res.bands.len(), band_masks.len());
 
     let target_num_freq = target_window_size / 2 + 1;
-    let num_target_frames =
-        if multi_res.signal_len >= target_window_size {
-            (multi_res.signal_len - target_window_size) / target_hop_size + 1
-        } else {
-            0
-        };
+    let num_target_frames = if multi_res.signal_len >= target_window_size {
+        (multi_res.signal_len - target_window_size) / target_hop_size + 1
+    } else {
+        0
+    };
 
     let mut merged = vec![0.0; num_target_frames * target_num_freq];
 
@@ -157,8 +156,7 @@ pub fn merge_multi_res_masks(
         let target_time_sample = target_frame * target_hop_size;
 
         for target_bin in 0..target_num_freq {
-            let freq_hz =
-                target_bin as f64 * multi_res.sample_rate / target_window_size as f64;
+            let freq_hz = target_bin as f64 * multi_res.sample_rate / target_window_size as f64;
 
             // Find owning band
             let band_idx = multi_res

@@ -181,12 +181,7 @@ pub fn benchmark_mincut(
     let separation_ms = t_sep.elapsed().as_secs_f64() * 1000.0;
 
     // Reconstruct sources
-    let quality = evaluate_separation(
-        &stft_result,
-        &sep_result,
-        mixed.len(),
-        ground_truth,
-    );
+    let quality = evaluate_separation(&stft_result, &sep_result, mixed.len(), ground_truth);
 
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -229,12 +224,7 @@ pub fn benchmark_freq_baseline(
     }
 
     // Reconstruct and evaluate
-    let quality = evaluate_with_masks(
-        &stft_result,
-        &masks,
-        mixed.len(),
-        ground_truth,
-    );
+    let quality = evaluate_with_masks(&stft_result, &masks, mixed.len(), ground_truth);
 
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -310,10 +300,15 @@ pub fn print_comparison(results: &[BenchmarkResult]) {
     for result in results {
         println!("\n  Method: {}", result.method);
         println!("  {:-<60}", "");
-        println!("  Time:  total={:.1}ms  graph={:.1}ms  sep={:.1}ms",
-            result.elapsed_ms, result.graph_build_ms, result.separation_ms);
+        println!(
+            "  Time:  total={:.1}ms  graph={:.1}ms  sep={:.1}ms",
+            result.elapsed_ms, result.graph_build_ms, result.separation_ms
+        );
         if result.num_nodes > 0 {
-            println!("  Graph: {} nodes, {} edges", result.num_nodes, result.num_edges);
+            println!(
+                "  Graph: {} nodes, {} edges",
+                result.num_nodes, result.num_edges
+            );
         }
 
         for (i, q) in result.quality.iter().enumerate() {
@@ -335,10 +330,7 @@ pub fn print_comparison(results: &[BenchmarkResult]) {
         for i in 0..n {
             let dsdr = mc.quality[i].sdr - bl.quality[i].sdr;
             let dsir = mc.quality[i].sir - bl.quality[i].sir;
-            println!(
-                "  Source {}: dSDR={:+.1}dB  dSIR={:+.1}dB",
-                i, dsdr, dsir
-            );
+            println!("  Source {}: dSDR={:+.1}dB  dSIR={:+.1}dB", i, dsdr, dsir);
         }
     }
 
@@ -367,11 +359,7 @@ mod tests {
 
     #[test]
     fn test_generate_test_signal() {
-        let (mixed, sources) = generate_test_signal(
-            8000.0, 0.5,
-            &[200.0, 1000.0],
-            &[1.0, 0.8],
-        );
+        let (mixed, sources) = generate_test_signal(8000.0, 0.5, &[200.0, 1000.0], &[1.0, 0.8]);
         assert_eq!(sources.len(), 2);
         assert_eq!(mixed.len(), 4000);
         assert_eq!(sources[0].len(), 4000);

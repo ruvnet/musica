@@ -20,7 +20,10 @@ impl Lcg {
 
     fn next_u64(&mut self) -> u64 {
         // Knuth's LCG parameters
-        self.state = self.state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         self.state
     }
 
@@ -108,7 +111,13 @@ impl TinyMLP {
             .collect();
         let b2 = vec![0.0; config.output_dim];
 
-        Self { config, w1, b1, w2, b2 }
+        Self {
+            config,
+            w1,
+            b1,
+            w2,
+            b2,
+        }
     }
 
     /// Total number of learnable parameters.
@@ -120,6 +129,7 @@ impl TinyMLP {
 
     /// Forward pass: input -> ReLU hidden -> linear output -> sigmoid.
     #[inline]
+    #[allow(clippy::needless_range_loop)]
     pub fn forward(&self, input: &[f64]) -> Vec<f64> {
         // Layer 1: z1 = W1 * x + b1, h = relu(z1)
         // Manual loop for better auto-vectorization
@@ -151,6 +161,7 @@ impl TinyMLP {
     }
 
     /// Single gradient descent step on a batch of examples. Returns MSE loss.
+    #[allow(clippy::needless_range_loop)]
     pub fn train_step(&mut self, examples: &[TrainingExample]) -> f64 {
         if examples.is_empty() {
             return 0.0;
@@ -171,7 +182,12 @@ impl TinyMLP {
             // Layer 1
             let z1: Vec<f64> = (0..self.config.hidden_dim)
                 .map(|i| {
-                    self.w1[i].iter().zip(ex.input.iter()).map(|(w, x)| w * x).sum::<f64>() + self.b1[i]
+                    self.w1[i]
+                        .iter()
+                        .zip(ex.input.iter())
+                        .map(|(w, x)| w * x)
+                        .sum::<f64>()
+                        + self.b1[i]
                 })
                 .collect();
             let h: Vec<f64> = z1.iter().map(|&z| relu(z)).collect();
@@ -179,15 +195,23 @@ impl TinyMLP {
             // Layer 2
             let z2: Vec<f64> = (0..self.config.output_dim)
                 .map(|i| {
-                    self.w2[i].iter().zip(h.iter()).map(|(w, hv)| w * hv).sum::<f64>() + self.b2[i]
+                    self.w2[i]
+                        .iter()
+                        .zip(h.iter())
+                        .map(|(w, hv)| w * hv)
+                        .sum::<f64>()
+                        + self.b2[i]
                 })
                 .collect();
             let out: Vec<f64> = z2.iter().map(|&z| sigmoid(z)).collect();
 
             // --- Loss: MSE ---
-            let loss: f64 = out.iter().zip(ex.target.iter())
+            let loss: f64 = out
+                .iter()
+                .zip(ex.target.iter())
                 .map(|(o, t)| (o - t) * (o - t))
-                .sum::<f64>() / self.config.output_dim as f64;
+                .sum::<f64>()
+                / self.config.output_dim as f64;
             total_loss += loss;
 
             // --- Backward pass ---
@@ -212,7 +236,9 @@ impl TinyMLP {
             // Backprop to hidden: dL/dh = W2^T * dz2
             let dh: Vec<f64> = (0..self.config.hidden_dim)
                 .map(|j| {
-                    (0..self.config.output_dim).map(|i| self.w2[i][j] * dz2[i]).sum::<f64>()
+                    (0..self.config.output_dim)
+                        .map(|i| self.w2[i][j] * dz2[i])
+                        .sum::<f64>()
                 })
                 .collect();
 
@@ -313,7 +339,11 @@ impl TinyMLP {
 
 #[inline]
 fn relu(x: f64) -> f64 {
-    if x > 0.0 { x } else { 0.0 }
+    if x > 0.0 {
+        x
+    } else {
+        0.0
+    }
 }
 
 #[inline]
@@ -400,7 +430,9 @@ mod tests {
         // Random-ish raw mask and magnitudes
         let mut rng = Lcg::new(77);
         let raw_mask: Vec<f64> = (0..total).map(|_| (rng.next_f64() + 1.0) / 2.0).collect();
-        let magnitudes: Vec<f64> = (0..total).map(|_| (rng.next_f64() + 1.0) / 2.0 * 10.0).collect();
+        let magnitudes: Vec<f64> = (0..total)
+            .map(|_| (rng.next_f64() + 1.0) / 2.0 * 10.0)
+            .collect();
 
         let refined = mlp.refine_mask(&raw_mask, &magnitudes, num_frames, num_freq);
 

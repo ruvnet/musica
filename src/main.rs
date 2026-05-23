@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 //! Musica — Dynamic MinCut Audio Source Separation
 //!
 //! Full benchmark suite: basic separation, hearing aid streaming,
@@ -7,9 +8,9 @@ mod adaptive;
 mod advanced_separator;
 mod audio_graph;
 mod benchmark;
+mod crowd;
 mod enhanced_separator;
 mod evaluation;
-mod crowd;
 mod hearing_aid;
 mod hearmusica;
 mod lanczos;
@@ -19,19 +20,21 @@ mod multitrack;
 mod musdb_compare;
 mod neural_refine;
 mod phase;
+mod real_audio;
 mod separator;
 mod spatial;
 mod stft;
 mod streaming_multi;
-mod real_audio;
 mod transcriber;
+mod visualizer;
 #[cfg(feature = "wasm")]
 mod wasm_bridge;
-mod visualizer;
 mod wav;
 
 use audio_graph::GraphParams;
-use benchmark::{benchmark_freq_baseline, benchmark_mincut, generate_test_signal, print_comparison};
+use benchmark::{
+    benchmark_freq_baseline, benchmark_mincut, generate_test_signal, print_comparison,
+};
 use separator::SeparatorConfig;
 
 fn main() {
@@ -141,9 +144,16 @@ fn run_basic_benchmarks() {
         println!("\n-- {label}: {} samples", mixed.len());
 
         let mc = benchmark_mincut(
-            &mixed, &sources, sr, ws, hs,
+            &mixed,
+            &sources,
+            sr,
+            ws,
+            hs,
             &GraphParams::default(),
-            &SeparatorConfig { num_sources: sources.len(), ..SeparatorConfig::default() },
+            &SeparatorConfig {
+                num_sources: sources.len(),
+                ..SeparatorConfig::default()
+            },
         );
         let bl = benchmark_freq_baseline(&mixed, &sources, sr, ws, hs, sources.len());
         print_comparison(&[mc, bl]);
@@ -198,17 +208,29 @@ fn run_hearing_aid_benchmark() {
     speech_mask_avg /= num_frames as f64;
 
     println!("  Frames processed: {num_frames}");
-    println!("  Avg latency:      {avg_latency_us} us ({:.2} ms)", avg_latency_us as f64 / 1000.0);
-    println!("  Max latency:      {max_latency_us} us ({:.2} ms)", max_latency_us as f64 / 1000.0);
+    println!(
+        "  Avg latency:      {avg_latency_us} us ({:.2} ms)",
+        avg_latency_us as f64 / 1000.0
+    );
+    println!(
+        "  Max latency:      {max_latency_us} us ({:.2} ms)",
+        max_latency_us as f64 / 1000.0
+    );
     println!("  Avg speech mask:  {speech_mask_avg:.3}");
-    println!("  Latency budget:   {} (target <8ms)",
-        if max_latency_us < 8000 { "PASS" } else { "OVER BUDGET" });
+    println!(
+        "  Latency budget:   {} (target <8ms)",
+        if max_latency_us < 8000 {
+            "PASS"
+        } else {
+            "OVER BUDGET"
+        }
+    );
 }
 
 // ── Part 3 ──────────────────────────────────────────────────────────────
 
 fn run_multitrack_benchmark() {
-    use multitrack::{separate_multitrack, MultitrackConfig, Stem};
+    use multitrack::{separate_multitrack, MultitrackConfig};
     use std::f64::consts::PI;
 
     let sr = 44100.0;
@@ -224,11 +246,9 @@ fn run_multitrack_benchmark() {
                 + 0.15 * (2.0 * PI * 400.0 * t).sin()
                 + 0.08 * (2.0 * PI * 600.0 * t).sin();
             // Bass: 80 Hz
-            let bass = 0.3 * (2.0 * PI * 80.0 * t).sin()
-                + 0.1 * (2.0 * PI * 160.0 * t).sin();
+            let bass = 0.3 * (2.0 * PI * 80.0 * t).sin() + 0.1 * (2.0 * PI * 160.0 * t).sin();
             // Guitar: 330 Hz + harmonics
-            let guitar = 0.2 * (2.0 * PI * 330.0 * t).sin()
-                + 0.08 * (2.0 * PI * 660.0 * t).sin();
+            let guitar = 0.2 * (2.0 * PI * 330.0 * t).sin() + 0.08 * (2.0 * PI * 660.0 * t).sin();
             // Simple drum: periodic transient
             let drum = if (t * 4.0).fract() < 0.01 { 0.5 } else { 0.0 };
 
@@ -248,8 +268,14 @@ fn run_multitrack_benchmark() {
 
     let result = separate_multitrack(&signal, &config);
 
-    println!("  Processing time:  {:.1} ms", result.stats.processing_time_ms);
-    println!("  Graph:            {} nodes, {} edges", result.stats.graph_nodes, result.stats.graph_edges);
+    println!(
+        "  Processing time:  {:.1} ms",
+        result.stats.processing_time_ms
+    );
+    println!(
+        "  Graph:            {} nodes, {} edges",
+        result.stats.graph_nodes, result.stats.graph_edges
+    );
     println!("  STFT frames:      {}", result.stats.total_frames);
     println!("  Replay entries:   {}", result.replay_log.len());
     println!();
@@ -304,14 +330,23 @@ fn run_lanczos_validation() {
 
     // Lanczos
     let start = std::time::Instant::now();
-    let config = LanczosConfig { k: 4, max_iter: 50, tol: 1e-8, reorthogonalize: true };
+    let config = LanczosConfig {
+        k: 4,
+        max_iter: 50,
+        tol: 1e-8,
+        reorthogonalize: true,
+    };
     let lanczos_result = lanczos_eigenpairs(&lap, &config);
     let lanczos_time = start.elapsed();
 
     println!("  Graph: 20 nodes, 2 clusters connected by weak bridge");
     println!("  Power iteration: {:.1}us", pi_time.as_micros());
-    println!("  Lanczos (k=4):   {:.1}us ({} iterations, converged={})",
-        lanczos_time.as_micros(), lanczos_result.iterations, lanczos_result.converged);
+    println!(
+        "  Lanczos (k=4):   {:.1}us ({} iterations, converged={})",
+        lanczos_time.as_micros(),
+        lanczos_result.iterations,
+        lanczos_result.converged
+    );
 
     // Check cluster separation
     let cluster_a: Vec<f64> = fiedler_pi[..10].to_vec();
@@ -320,11 +355,20 @@ fn run_lanczos_validation() {
     let b_sign = cluster_b[0].signum();
     let clean_split = a_sign != b_sign;
 
-    println!("  Fiedler clean split: {}", if clean_split { "YES" } else { "NO" });
+    println!(
+        "  Fiedler clean split: {}",
+        if clean_split { "YES" } else { "NO" }
+    );
 
     if !lanczos_result.eigenvalues.is_empty() {
-        println!("  Eigenvalues: {:?}",
-            lanczos_result.eigenvalues.iter().map(|v| format!("{:.3}", v)).collect::<Vec<_>>());
+        println!(
+            "  Eigenvalues: {:?}",
+            lanczos_result
+                .eigenvalues
+                .iter()
+                .map(|v| format!("{:.3}", v))
+                .collect::<Vec<_>>()
+        );
     }
 }
 
@@ -384,7 +428,10 @@ fn run_crowd_benchmark() {
     println!("  Local speakers:   {}", stats.total_local_speakers);
     println!("  Global identities:{}", stats.total_identities);
     println!("  Active speakers:  {}", stats.active_speakers);
-    println!("  Processing time:  {:.1} ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Processing time:  {:.1} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
 }
 
 // ── Part 6 ──────────────────────────────────────────────────────────────
@@ -401,37 +448,43 @@ fn run_wav_validation() {
         .collect();
 
     match wav::write_wav(path, &samples, sr, 1) {
-        Ok(()) => {
-            match wav::read_wav(path) {
-                Ok(loaded) => {
-                    let max_err: f64 = samples.iter()
-                        .zip(loaded.channel_data[0].iter())
-                        .map(|(a, b)| (a - b).abs())
-                        .fold(0.0f64, f64::max);
+        Ok(()) => match wav::read_wav(path) {
+            Ok(loaded) => {
+                let max_err: f64 = samples
+                    .iter()
+                    .zip(loaded.channel_data[0].iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f64, f64::max);
 
-                    println!("  WAV roundtrip:    {} samples, max error = {:.6}", n, max_err);
-                    println!("  Sample rate:      {} Hz", loaded.sample_rate);
-                    println!("  Channels:         {}", loaded.channels);
-                    println!("  Status:           {}", if max_err < 0.001 { "PASS" } else { "FAIL" });
-                }
-                Err(e) => println!("  WAV read error: {e}"),
+                println!(
+                    "  WAV roundtrip:    {} samples, max error = {:.6}",
+                    n, max_err
+                );
+                println!("  Sample rate:      {} Hz", loaded.sample_rate);
+                println!("  Channels:         {}", loaded.channels);
+                println!(
+                    "  Status:           {}",
+                    if max_err < 0.001 { "PASS" } else { "FAIL" }
+                );
             }
-        }
+            Err(e) => println!("  WAV read error: {e}"),
+        },
         Err(e) => println!("  WAV write error: {e}"),
     }
 
     // Binaural test
     let stereo_path = "/tmp/musica_binaural_test.wav";
     match wav::generate_binaural_test_wav(stereo_path, sr, 0.5, 300.0, &[800.0, 1200.0], 30.0) {
-        Ok(()) => {
-            match wav::read_wav(stereo_path) {
-                Ok(loaded) => {
-                    println!("  Binaural WAV:     {} channels, {} samples/ch",
-                        loaded.channels, loaded.channel_data[0].len());
-                }
-                Err(e) => println!("  Binaural read error: {e}"),
+        Ok(()) => match wav::read_wav(stereo_path) {
+            Ok(loaded) => {
+                println!(
+                    "  Binaural WAV:     {} channels, {} samples/ch",
+                    loaded.channels,
+                    loaded.channel_data[0].len()
+                );
             }
-        }
+            Err(e) => println!("  Binaural read error: {e}"),
+        },
         Err(e) => println!("  Binaural write error: {e}"),
     }
 }
@@ -439,16 +492,18 @@ fn run_wav_validation() {
 // ── Part 7 ──────────────────────────────────────────────────────────────
 
 fn run_hearmusica_benchmark() {
-    use hearmusica::{AudioBlock, Pipeline};
-    use hearmusica::presets;
     use hearing_aid::Audiogram;
+    use hearmusica::presets;
+    use hearmusica::{AudioBlock, Pipeline};
 
     let audiogram = Audiogram::default();
     let sr = 16000.0f32;
     let block_size = 128usize;
     let num_blocks = 200;
 
-    let presets_list: Vec<(&str, fn(&Audiogram, f32, usize) -> Pipeline)> = vec![
+    type PresetFn = fn(&Audiogram, f32, usize) -> Pipeline;
+    #[allow(clippy::type_complexity)]
+    let presets_list: Vec<(&str, PresetFn)> = vec![
         ("Standard HA", presets::standard_hearing_aid),
         ("Speech-in-Noise", presets::speech_in_noise),
         ("Music Mode", presets::music_mode),
@@ -484,10 +539,15 @@ fn run_hearmusica_benchmark() {
         let avg_block_ms = total_ms / num_blocks as f64;
         let latency_ms = pipeline.total_latency_ms();
 
-        println!("  {:<18} blocks={:>3}  avg={:.3}ms  max={:.3}ms  latency={:.2}ms  chain={}",
-            name, num_blocks, avg_block_ms,
-            max_block_us as f64 / 1000.0, latency_ms,
-            pipeline.block_names().join("→"));
+        println!(
+            "  {:<18} blocks={:>3}  avg={:.3}ms  max={:.3}ms  latency={:.2}ms  chain={}",
+            name,
+            num_blocks,
+            avg_block_ms,
+            max_block_us as f64 / 1000.0,
+            latency_ms,
+            pipeline.block_names().join("→")
+        );
     }
 }
 
@@ -527,8 +587,14 @@ fn run_streaming_multitrack_benchmark() {
 
     let avg_latency_us = total_latency_us / num_frames as u64;
     println!("  Frames:           {num_frames}");
-    println!("  Avg latency:      {avg_latency_us} us ({:.2} ms)", avg_latency_us as f64 / 1000.0);
-    println!("  Max latency:      {max_latency_us} us ({:.2} ms)", max_latency_us as f64 / 1000.0);
+    println!(
+        "  Avg latency:      {avg_latency_us} us ({:.2} ms)",
+        avg_latency_us as f64 / 1000.0
+    );
+    println!(
+        "  Max latency:      {max_latency_us} us ({:.2} ms)",
+        max_latency_us as f64 / 1000.0
+    );
 
     let stems = state.get_accumulated_stems();
     for (stem, signal) in &stems {
@@ -539,6 +605,7 @@ fn run_streaming_multitrack_benchmark() {
 
 // ── Part 9 ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::needless_range_loop)]
 fn run_adaptive_tuning() {
     use adaptive::{default_search_ranges, random_search};
     use std::f64::consts::PI;
@@ -563,7 +630,12 @@ fn run_adaptive_tuning() {
     let config = default_search_ranges();
     let default_params = GraphParams::default();
 
-    let stft_result = stft::stft(&mixed, config.window_size, config.hop_size, config.sample_rate);
+    let stft_result = stft::stft(
+        &mixed,
+        config.window_size,
+        config.hop_size,
+        config.sample_rate,
+    );
     let ag = audio_graph::build_audio_graph(&stft_result, &default_params);
     let sep = separator::separate(&ag, &config.separator_config);
 
@@ -601,13 +673,31 @@ fn run_adaptive_tuning() {
     println!("  Optimized SDR:    {:.2} dB", result.best_score);
     println!("  Improvement:      {:+.2} dB", improvement);
     println!("  Trials:           {}", result.trials.len());
-    println!("  Search time:      {:.1} ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Search time:      {:.1} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
     println!("  Best params:");
-    println!("    spectral_weight:  {:.3}", result.best_params.spectral_weight);
-    println!("    temporal_weight:  {:.3}", result.best_params.temporal_weight);
-    println!("    harmonic_weight:  {:.3}", result.best_params.harmonic_weight);
-    println!("    phase_threshold:  {:.3}", result.best_params.phase_threshold);
-    println!("    spectral_radius:  {}", result.best_params.spectral_radius);
+    println!(
+        "    spectral_weight:  {:.3}",
+        result.best_params.spectral_weight
+    );
+    println!(
+        "    temporal_weight:  {:.3}",
+        result.best_params.temporal_weight
+    );
+    println!(
+        "    harmonic_weight:  {:.3}",
+        result.best_params.harmonic_weight
+    );
+    println!(
+        "    phase_threshold:  {:.3}",
+        result.best_params.phase_threshold
+    );
+    println!(
+        "    spectral_radius:  {}",
+        result.best_params.spectral_radius
+    );
     println!("    max_harmonics:    {}", result.best_params.max_harmonics);
 }
 
@@ -620,8 +710,12 @@ fn run_enhanced_comparison() {
     let duration = 0.25;
     let n = (sr * duration) as usize;
 
-    let src1: Vec<f64> = (0..n).map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin()).collect();
-    let src2: Vec<f64> = (0..n).map(|i| 0.8 * (2.0 * PI * 2000.0 * i as f64 / sr).sin()).collect();
+    let src1: Vec<f64> = (0..n)
+        .map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin())
+        .collect();
+    let src2: Vec<f64> = (0..n)
+        .map(|i| 0.8 * (2.0 * PI * 2000.0 * i as f64 / sr).sin())
+        .collect();
     let mixed: Vec<f64> = src1.iter().zip(src2.iter()).map(|(a, b)| a + b).collect();
     let references = vec![src1, src2];
 
@@ -629,9 +723,21 @@ fn run_enhanced_comparison() {
 
     let report = enhanced_separator::compare_modes(&mixed, &references, sr);
     println!("  Basic (Fiedler only):    {:+.2} dB", report.basic_sdr);
-    println!("  + Multi-Resolution:      {:+.2} dB  ({:+.2} dB)", report.multires_sdr, report.multires_sdr - report.basic_sdr);
-    println!("  + Neural Refinement:     {:+.2} dB  ({:+.2} dB)", report.neural_sdr, report.neural_sdr - report.basic_sdr);
-    println!("  + Both (full pipeline):  {:+.2} dB  ({:+.2} dB)", report.both_sdr, report.both_sdr - report.basic_sdr);
+    println!(
+        "  + Multi-Resolution:      {:+.2} dB  ({:+.2} dB)",
+        report.multires_sdr,
+        report.multires_sdr - report.basic_sdr
+    );
+    println!(
+        "  + Neural Refinement:     {:+.2} dB  ({:+.2} dB)",
+        report.neural_sdr,
+        report.neural_sdr - report.basic_sdr
+    );
+    println!(
+        "  + Both (full pipeline):  {:+.2} dB  ({:+.2} dB)",
+        report.both_sdr,
+        report.both_sdr - report.basic_sdr
+    );
 }
 
 // ── Part 11 ─────────────────────────────────────────────────────────────
@@ -644,12 +750,12 @@ fn run_real_audio_evaluation() {
 // ── Part 12 ─────────────────────────────────────────────────────────────
 
 fn run_transcription_benchmark() {
-    use evaluation::{generate_speech_like, generate_noise, NoiseType};
-    use transcriber::{benchmark_separation_for_transcription, estimate_wer_from_snr, compute_snr};
+    use evaluation::{generate_noise, generate_speech_like, NoiseType};
+    use transcriber::benchmark_separation_for_transcription;
 
     let sr = 8000.0;
     let duration = 1.0;
-    let n = (sr * duration) as usize;
+    let _n = (sr * duration) as usize;
 
     println!("  candle-whisper integration: pure Rust transcription pipeline");
     println!("  Model: Whisper tiny (39M params) | Feature: --features transcribe");
@@ -693,7 +799,10 @@ fn run_transcription_benchmark() {
 
     // Summary table
     println!("\n  ── Summary: Before vs After Musica Separation ──");
-    println!("  {:<25} {:>10} {:>10} {:>10} {:>10}", "Scenario", "SNR(mix)", "SNR(sep)", "WER(mix)", "WER(sep)");
+    println!(
+        "  {:<25} {:>10} {:>10} {:>10} {:>10}",
+        "Scenario", "SNR(mix)", "SNR(sep)", "WER(mix)", "WER(sep)"
+    );
     println!("  {}", "-".repeat(70));
     for (name, result) in [
         ("Two Speakers", &result_a),
@@ -703,7 +812,11 @@ fn run_transcription_benchmark() {
         let q = &result.quality;
         println!(
             "  {:<25} {:>+9.1}dB {:>+9.1}dB {:>9.1}% {:>9.1}%",
-            name, q.mixed_snr_db, q.separated_snr_db, q.estimated_wer_mixed, q.estimated_wer_separated
+            name,
+            q.mixed_snr_db,
+            q.separated_snr_db,
+            q.estimated_wer_mixed,
+            q.estimated_wer_separated
         );
     }
 }
@@ -714,12 +827,27 @@ fn print_transcription_quality(prefix: &str, result: &transcriber::SeparateAndTr
     println!("{}    SNR:           {:+.1} dB", prefix, q.mixed_snr_db);
     println!("{}    Est. WER:      {:.1}%", prefix, q.estimated_wer_mixed);
     println!("{}  AFTER Musica separation:", prefix);
-    println!("{}    SNR:           {:+.1} dB  ({:+.1} dB improvement)", prefix, q.separated_snr_db, q.snr_improvement_db);
-    println!("{}    Est. WER:      {:.1}%  ({:.1}x reduction)", prefix, q.estimated_wer_separated, q.wer_reduction_factor);
-    println!("{}  Separation time: {:.1} ms | Transcription time: {:.1} ms", prefix, result.separation_ms, result.transcription_ms);
+    println!(
+        "{}    SNR:           {:+.1} dB  ({:+.1} dB improvement)",
+        prefix, q.separated_snr_db, q.snr_improvement_db
+    );
+    println!(
+        "{}    Est. WER:      {:.1}%  ({:.1}x reduction)",
+        prefix, q.estimated_wer_separated, q.wer_reduction_factor
+    );
+    println!(
+        "{}  Separation time: {:.1} ms | Transcription time: {:.1} ms",
+        prefix, result.separation_ms, result.transcription_ms
+    );
 
     for (label, trans) in &result.transcriptions {
-        println!("{}  Track '{}': {} segments, {:.1}ms", prefix, label, trans.segments.len(), trans.processing_ms);
+        println!(
+            "{}  Track '{}': {} segments, {:.1}ms",
+            prefix,
+            label,
+            trans.segments.len(),
+            trans.processing_ms
+        );
     }
 }
 
@@ -739,34 +867,47 @@ fn run_advanced_sota_benchmark() {
     let duration = 0.5;
     let n = (sr * duration) as usize;
 
+    #[allow(clippy::type_complexity)]
     let scenarios: Vec<(&str, Vec<f64>, Vec<Vec<f64>>)> = vec![
         {
             // Well-separated tones
-            let s1: Vec<f64> = (0..n).map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin()).collect();
-            let s2: Vec<f64> = (0..n).map(|i| 0.8 * (2.0 * PI * 2000.0 * i as f64 / sr).sin()).collect();
+            let s1: Vec<f64> = (0..n)
+                .map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin())
+                .collect();
+            let s2: Vec<f64> = (0..n)
+                .map(|i| 0.8 * (2.0 * PI * 2000.0 * i as f64 / sr).sin())
+                .collect();
             let mix: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
             ("Well-separated (200Hz+2000Hz)", mix, vec![s1, s2])
         },
         {
             // Close tones (harder)
-            let s1: Vec<f64> = (0..n).map(|i| (2.0 * PI * 400.0 * i as f64 / sr).sin()).collect();
-            let s2: Vec<f64> = (0..n).map(|i| (2.0 * PI * 600.0 * i as f64 / sr).sin()).collect();
+            let s1: Vec<f64> = (0..n)
+                .map(|i| (2.0 * PI * 400.0 * i as f64 / sr).sin())
+                .collect();
+            let s2: Vec<f64> = (0..n)
+                .map(|i| (2.0 * PI * 600.0 * i as f64 / sr).sin())
+                .collect();
             let mix: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
             ("Close tones (400Hz+600Hz)", mix, vec![s1, s2])
         },
         {
             // Harmonic + noise
-            let s1: Vec<f64> = (0..n).map(|i| {
-                let t = i as f64 / sr;
-                0.5 * (2.0 * PI * 300.0 * t).sin()
-                    + 0.25 * (2.0 * PI * 600.0 * t).sin()
-                    + 0.12 * (2.0 * PI * 900.0 * t).sin()
-            }).collect();
-            let s2: Vec<f64> = (0..n).map(|i| {
-                // Pseudo-noise via high-frequency sum
-                let t = i as f64 / sr;
-                0.3 * ((t * 7919.0).sin() + (t * 6271.0).sin() + (t * 3571.0).sin()) / 3.0
-            }).collect();
+            let s1: Vec<f64> = (0..n)
+                .map(|i| {
+                    let t = i as f64 / sr;
+                    0.5 * (2.0 * PI * 300.0 * t).sin()
+                        + 0.25 * (2.0 * PI * 600.0 * t).sin()
+                        + 0.12 * (2.0 * PI * 900.0 * t).sin()
+                })
+                .collect();
+            let s2: Vec<f64> = (0..n)
+                .map(|i| {
+                    // Pseudo-noise via high-frequency sum
+                    let t = i as f64 / sr;
+                    0.3 * ((t * 7919.0).sin() + (t * 6271.0).sin() + (t * 3571.0).sin()) / 3.0
+                })
+                .collect();
             let mix: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
             ("Harmonic + broadband noise", mix, vec![s1, s2])
         },
@@ -775,8 +916,10 @@ fn run_advanced_sota_benchmark() {
     println!("  Techniques: Wiener filtering + Cascaded refinement + Multi-resolution fusion");
     println!("  Wiener exponent: 2.0 | Cascade iters: 3 | Resolutions: 256/512/1024");
     println!();
-    println!("  {:<35} {:>10} {:>10} {:>10} {:>10} {:>10}",
-        "Scenario", "Basic", "Advanced", "Δ SDR", "Basic ms", "Adv ms");
+    println!(
+        "  {:<35} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Scenario", "Basic", "Advanced", "Δ SDR", "Basic ms", "Adv ms"
+    );
     println!("  {}", "-".repeat(85));
 
     for (label, mixed, refs) in &scenarios {
@@ -801,14 +944,16 @@ fn run_advanced_sota_benchmark() {
     for (ws, nodes) in &adv_result.resolution_stats {
         println!("    Window {}: {} nodes", ws, nodes);
     }
-    println!("  Total time: {:.1} ms | Iterations: {}",
-        adv_result.processing_ms, adv_result.iterations_used);
+    println!(
+        "  Total time: {:.1} ms | Iterations: {}",
+        adv_result.processing_ms, adv_result.iterations_used
+    );
 }
 
 // ── Part 15 ─────────────────────────────────────────────────────────────
 
 fn run_longer_benchmarks() {
-    use advanced_separator::{compare_basic_vs_advanced, AdvancedConfig};
+    use advanced_separator::compare_basic_vs_advanced;
     use std::f64::consts::PI;
 
     println!("  Testing separation on longer signals (real-world duration)");
@@ -821,25 +966,33 @@ fn run_longer_benchmarks() {
     ] {
         let sr = 8000.0;
         let n = (sr * duration) as usize;
-        let s1: Vec<f64> = (0..n).map(|i| {
-            let t = i as f64 / sr;
-            // Add harmonics and amplitude modulation for realism
-            (2.0 * PI * f1 * t).sin() * (1.0 + 0.3 * (2.0 * PI * 3.0 * t).sin())
-                + 0.3 * (2.0 * PI * f1 * 2.0 * t).sin()
-                + 0.15 * (2.0 * PI * f1 * 3.0 * t).sin()
-        }).collect();
-        let s2: Vec<f64> = (0..n).map(|i| {
-            let t = i as f64 / sr;
-            0.8 * (2.0 * PI * f2 * t).sin() * (1.0 + 0.2 * (2.0 * PI * 5.0 * t).sin())
-                + 0.2 * (2.0 * PI * f2 * 1.5 * t).sin()
-        }).collect();
+        let s1: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                // Add harmonics and amplitude modulation for realism
+                (2.0 * PI * f1 * t).sin() * (1.0 + 0.3 * (2.0 * PI * 3.0 * t).sin())
+                    + 0.3 * (2.0 * PI * f1 * 2.0 * t).sin()
+                    + 0.15 * (2.0 * PI * f1 * 3.0 * t).sin()
+            })
+            .collect();
+        let s2: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                0.8 * (2.0 * PI * f2 * t).sin() * (1.0 + 0.2 * (2.0 * PI * 5.0 * t).sin())
+                    + 0.2 * (2.0 * PI * f2 * 1.5 * t).sin()
+            })
+            .collect();
         let mixed: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
 
         let result = compare_basic_vs_advanced(&mixed, &[s1, s2], sr);
         println!(
             "  {:<30} basic={:>+6.1}dB  adv={:>+6.1}dB  Δ={:>+5.1}dB  ({:.0}ms/{:.0}ms)",
-            label, result.basic_avg_sdr, result.advanced_avg_sdr,
-            result.improvement_db, result.basic_ms, result.advanced_ms
+            label,
+            result.basic_avg_sdr,
+            result.advanced_avg_sdr,
+            result.improvement_db,
+            result.basic_ms,
+            result.advanced_ms
         );
     }
 }
@@ -861,28 +1014,42 @@ fn run_spatial_benchmark() {
     };
 
     // Generate stereo signal: speech from left, noise from right
-    let speech: Vec<f64> = (0..n).map(|i| {
-        let t = i as f64 / sr;
-        0.5 * (2.0 * PI * 200.0 * t).sin()
-            + 0.2 * (2.0 * PI * 400.0 * t).sin()
-            + 0.1 * (2.0 * PI * 600.0 * t).sin()
-    }).collect();
+    let speech: Vec<f64> = (0..n)
+        .map(|i| {
+            let t = i as f64 / sr;
+            0.5 * (2.0 * PI * 200.0 * t).sin()
+                + 0.2 * (2.0 * PI * 400.0 * t).sin()
+                + 0.1 * (2.0 * PI * 600.0 * t).sin()
+        })
+        .collect();
 
-    let noise: Vec<f64> = (0..n).map(|i| {
-        let t = i as f64 / sr;
-        0.3 * (2.0 * PI * 1200.0 * t).sin()
-            + 0.2 * (2.0 * PI * 1800.0 * t).sin()
-    }).collect();
+    let noise: Vec<f64> = (0..n)
+        .map(|i| {
+            let t = i as f64 / sr;
+            0.3 * (2.0 * PI * 1200.0 * t).sin() + 0.2 * (2.0 * PI * 1800.0 * t).sin()
+        })
+        .collect();
 
     // Apply spatial cues: ILD and ITD
-    let left: Vec<f64> = speech.iter().zip(noise.iter())
-        .map(|(s, n)| s * 1.3 + n * 0.4).collect();
-    let right: Vec<f64> = speech.iter().zip(noise.iter())
-        .map(|(s, n)| s * 0.4 + n * 1.3).collect();
+    let left: Vec<f64> = speech
+        .iter()
+        .zip(noise.iter())
+        .map(|(s, n)| s * 1.3 + n * 0.4)
+        .collect();
+    let right: Vec<f64> = speech
+        .iter()
+        .zip(noise.iter())
+        .map(|(s, n)| s * 0.4 + n * 1.3)
+        .collect();
 
     let result = spatial_separate(&left, &right, &config);
 
-    println!("  Sources: {} | Signal: {}ms at {:.0}Hz", result.sources.len(), n as f64 / sr * 1000.0, sr);
+    println!(
+        "  Sources: {} | Signal: {}ms at {:.0}Hz",
+        result.sources.len(),
+        n as f64 / sr * 1000.0,
+        sr
+    );
     println!("  Processing time: {:.1} ms", result.processing_ms);
 
     for (i, source) in result.sources.iter().enumerate() {
@@ -896,22 +1063,33 @@ fn run_spatial_benchmark() {
     let mask_sharpness: f64 = (0..total)
         .map(|i| {
             let m = result.masks[0][i];
-            if m > 0.01 && m < 0.99 { 0.0 } else { 1.0 }
+            if m > 0.01 && m < 0.99 {
+                0.0
+            } else {
+                1.0
+            }
         })
-        .sum::<f64>() / total as f64;
-    println!("  Mask sharpness: {:.1}% of bins are hard-assigned", mask_sharpness * 100.0);
+        .sum::<f64>()
+        / total as f64;
+    println!(
+        "  Mask sharpness: {:.1}% of bins are hard-assigned",
+        mask_sharpness * 100.0
+    );
 }
 
 // ── Part 17 ─────────────────────────────────────────────────────────────
 
 fn run_musdb_comparison() {
-    use musdb_compare::{MusicaProfile, print_comparison_table, gap_analysis};
+    use musdb_compare::{gap_analysis, print_comparison_table, MusicaProfile};
 
     let profile = MusicaProfile::default();
     print_comparison_table(&profile);
 
-    let musica_avg = (profile.well_separated_sdr + profile.close_tone_sdr
-        + profile.harmonic_noise_sdr + profile.close_tone_sdr) / 4.0;
+    let musica_avg = (profile.well_separated_sdr
+        + profile.close_tone_sdr
+        + profile.harmonic_noise_sdr
+        + profile.close_tone_sdr)
+        / 4.0;
 
     println!("  Gap analysis (SDR needed to match each method):");
     for (method, gap) in gap_analysis(musica_avg) {
@@ -922,19 +1100,30 @@ fn run_musdb_comparison() {
 // ── Part 18 ─────────────────────────────────────────────────────────────
 
 fn run_visualizer_demo() {
-    use visualizer::{DisplayConfig, render_waveform, render_spectrum, render_masks,
-                     render_separation_comparison, render_lissajous};
     use std::f64::consts::PI;
+    use visualizer::{
+        render_lissajous, render_masks, render_separation_comparison, render_spectrum,
+        render_waveform, DisplayConfig,
+    };
 
     let sr = 8000.0;
     let n = 4000; // 0.5s
 
     // Generate a mixed signal: 200Hz + 1500Hz
-    let s1: Vec<f64> = (0..n).map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin()).collect();
-    let s2: Vec<f64> = (0..n).map(|i| 0.6 * (2.0 * PI * 1500.0 * i as f64 / sr).sin()).collect();
+    let s1: Vec<f64> = (0..n)
+        .map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin())
+        .collect();
+    let s2: Vec<f64> = (0..n)
+        .map(|i| 0.6 * (2.0 * PI * 1500.0 * i as f64 / sr).sin())
+        .collect();
     let mixed: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
 
-    let config = DisplayConfig { width: 72, height: 10, color: true, unicode_blocks: true };
+    let config = DisplayConfig {
+        width: 72,
+        height: 10,
+        color: true,
+        unicode_blocks: true,
+    };
 
     // 1. Waveform
     let wf = render_waveform(&mixed, "Mixed: 200Hz + 1500Hz", &config);
@@ -948,20 +1137,33 @@ fn run_visualizer_demo() {
 
     // 3. Separation + mask visualization
     let graph = audio_graph::build_audio_graph(&stft_result, &GraphParams::default());
-    let sep_config = SeparatorConfig { num_sources: 2, ..SeparatorConfig::default() };
+    let sep_config = SeparatorConfig {
+        num_sources: 2,
+        ..SeparatorConfig::default()
+    };
     let result = separator::separate(&graph, &sep_config);
 
     let masks_viz = render_masks(
-        &result.masks, stft_result.num_frames, stft_result.num_freq_bins,
-        "Separation Masks (Source 0)", &config,
+        &result.masks,
+        stft_result.num_frames,
+        stft_result.num_freq_bins,
+        "Separation Masks (Source 0)",
+        &config,
     );
     print!("{masks_viz}");
 
     // 4. Full comparison view
-    let sources: Vec<Vec<f64>> = result.masks.iter()
+    let sources: Vec<Vec<f64>> = result
+        .masks
+        .iter()
         .map(|m| stft::istft(&stft_result, m, n))
         .collect();
-    let compact = DisplayConfig { width: 72, height: 8, color: true, unicode_blocks: true };
+    let compact = DisplayConfig {
+        width: 72,
+        height: 8,
+        color: true,
+        unicode_blocks: true,
+    };
     let comp = render_separation_comparison(&mixed, &sources, sr, &compact);
     print!("{comp}");
 
@@ -977,7 +1179,7 @@ fn run_visualizer_demo() {
 // ── Part 19 ─────────────────────────────────────────────────────────────
 
 fn run_weight_optimization() {
-    use learned_weights::{TrainingSample, optimize_weights};
+    use learned_weights::{optimize_weights, TrainingSample};
     use std::f64::consts::PI;
 
     let sr = 8000.0;
@@ -992,10 +1194,18 @@ fn run_weight_optimization() {
 
     let mut samples = Vec::new();
     for (label, f1, f2) in &scenarios {
-        let s1: Vec<f64> = (0..n).map(|i| (2.0 * PI * f1 * i as f64 / sr).sin()).collect();
-        let s2: Vec<f64> = (0..n).map(|i| 0.8 * (2.0 * PI * f2 * i as f64 / sr).sin()).collect();
+        let s1: Vec<f64> = (0..n)
+            .map(|i| (2.0 * PI * f1 * i as f64 / sr).sin())
+            .collect();
+        let s2: Vec<f64> = (0..n)
+            .map(|i| 0.8 * (2.0 * PI * f2 * i as f64 / sr).sin())
+            .collect();
         let mixed: Vec<f64> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
-        samples.push(TrainingSample { mixed, references: vec![s1, s2], sample_rate: sr });
+        samples.push(TrainingSample {
+            mixed,
+            references: vec![s1, s2],
+            sample_rate: sr,
+        });
         println!("  Training scenario: {} ({}Hz + {}Hz)", label, f1, f2);
     }
 
@@ -1003,35 +1213,60 @@ fn run_weight_optimization() {
     let result = optimize_weights(&samples, 30, 256, 128);
     let elapsed = start.elapsed();
 
-    println!("  Optimization: {} iterations in {:.1}ms", result.iterations, elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Optimization: {} iterations in {:.1}ms",
+        result.iterations,
+        elapsed.as_secs_f64() * 1000.0
+    );
     println!("  Best SDR: {:.2} dB", result.best_sdr);
     println!("  Optimized params:");
-    println!("    spectral_weight:  {:.4}", result.best_params.spectral_weight);
-    println!("    temporal_weight:  {:.4}", result.best_params.temporal_weight);
-    println!("    harmonic_weight:  {:.4}", result.best_params.harmonic_weight);
-    println!("    phase_threshold:  {:.4}", result.best_params.phase_threshold);
-    println!("    onset_weight:     {:.4}", result.best_params.onset_weight);
-    println!("    magnitude_floor:  {:.4}", result.best_params.magnitude_floor);
+    println!(
+        "    spectral_weight:  {:.4}",
+        result.best_params.spectral_weight
+    );
+    println!(
+        "    temporal_weight:  {:.4}",
+        result.best_params.temporal_weight
+    );
+    println!(
+        "    harmonic_weight:  {:.4}",
+        result.best_params.harmonic_weight
+    );
+    println!(
+        "    phase_threshold:  {:.4}",
+        result.best_params.phase_threshold
+    );
+    println!(
+        "    onset_weight:     {:.4}",
+        result.best_params.onset_weight
+    );
+    println!(
+        "    magnitude_floor:  {:.4}",
+        result.best_params.magnitude_floor
+    );
 
     // Compare default vs optimized on each scenario
     println!("  Per-scenario comparison (default → optimized):");
     for (i, (label, _, _)) in scenarios.iter().enumerate() {
-        let default_sdr = learned_weights::evaluate_params_public(
-            &GraphParams::default(), &samples[i], 256, 128,
-        );
-        let opt_sdr = learned_weights::evaluate_params_public(
-            &result.best_params, &samples[i], 256, 128,
-        );
+        let default_sdr =
+            learned_weights::evaluate_params_public(&GraphParams::default(), &samples[i], 256, 128);
+        let opt_sdr =
+            learned_weights::evaluate_params_public(&result.best_params, &samples[i], 256, 128);
         let delta = opt_sdr - default_sdr;
-        println!("    {:<16} {:.2} → {:.2} dB ({:+.2})", label, default_sdr, opt_sdr, delta);
+        println!(
+            "    {:<16} {:.2} → {:.2} dB ({:+.2})",
+            label, default_sdr, opt_sdr, delta
+        );
     }
 
     // SDR history
     if result.history.len() > 3 {
-        println!("  SDR trajectory: {:.2} → {:.2} → ... → {:.2}",
+        println!(
+            "  SDR trajectory: {:.2} → {:.2} → ... → {:.2}",
             result.history[0],
             result.history[1],
-            result.history.last().unwrap());
+            result.history.last().unwrap()
+        );
     }
 }
 
@@ -1044,9 +1279,15 @@ fn run_multi_source_benchmark() {
     let n = 4000;
 
     // 3-source separation
-    let s1: Vec<f64> = (0..n).map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin()).collect();
-    let s2: Vec<f64> = (0..n).map(|i| 0.7 * (2.0 * PI * 800.0 * i as f64 / sr).sin()).collect();
-    let s3: Vec<f64> = (0..n).map(|i| 0.5 * (2.0 * PI * 2500.0 * i as f64 / sr).sin()).collect();
+    let s1: Vec<f64> = (0..n)
+        .map(|i| (2.0 * PI * 200.0 * i as f64 / sr).sin())
+        .collect();
+    let s2: Vec<f64> = (0..n)
+        .map(|i| 0.7 * (2.0 * PI * 800.0 * i as f64 / sr).sin())
+        .collect();
+    let s3: Vec<f64> = (0..n)
+        .map(|i| 0.5 * (2.0 * PI * 2500.0 * i as f64 / sr).sin())
+        .collect();
     let mixed: Vec<f64> = (0..n).map(|i| s1[i] + s2[i] + s3[i]).collect();
 
     println!("  3-source test: 200Hz + 800Hz + 2500Hz");
@@ -1054,17 +1295,25 @@ fn run_multi_source_benchmark() {
     let stft_result = stft::stft(&mixed, 512, 256, sr);
     let graph = audio_graph::build_audio_graph(&stft_result, &GraphParams::default());
 
-    let config3 = SeparatorConfig { num_sources: 3, ..SeparatorConfig::default() };
+    let config3 = SeparatorConfig {
+        num_sources: 3,
+        ..SeparatorConfig::default()
+    };
     let start = std::time::Instant::now();
     let result = separator::separate(&graph, &config3);
     let elapsed = start.elapsed();
 
-    println!("  Separation time: {:.1} ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Separation time: {:.1} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
     println!("  Partitions: {}", result.masks.len());
 
     // Reconstruct and measure energy distribution
-    let references = vec![&s1, &s2, &s3];
-    let sources: Vec<Vec<f64>> = result.masks.iter()
+    let references = [&s1, &s2, &s3];
+    let sources: Vec<Vec<f64>> = result
+        .masks
+        .iter()
         .map(|m| stft::istft(&stft_result, m, n))
         .collect();
 
@@ -1075,7 +1324,12 @@ fn run_multi_source_benchmark() {
 
     // Compute SDR for best permutation (3! = 6 permutations)
     let perms: Vec<[usize; 3]> = vec![
-        [0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0],
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
     ];
     let mut best_avg_sdr = f64::MIN;
     let mut best_perm = [0usize; 3];
@@ -1097,7 +1351,9 @@ fn run_multi_source_benchmark() {
     println!("  Average SDR (3 sources): {:.2} dB", best_avg_sdr);
 
     // 4-source separation
-    let s4: Vec<f64> = (0..n).map(|i| 0.4 * (2.0 * PI * 1500.0 * i as f64 / sr).sin()).collect();
+    let s4: Vec<f64> = (0..n)
+        .map(|i| 0.4 * (2.0 * PI * 1500.0 * i as f64 / sr).sin())
+        .collect();
     let mixed4: Vec<f64> = (0..n).map(|i| s1[i] + s2[i] + s3[i] + s4[i]).collect();
 
     println!("\n  4-source test: 200Hz + 800Hz + 1500Hz + 2500Hz");
@@ -1105,15 +1361,23 @@ fn run_multi_source_benchmark() {
     let stft4 = stft::stft(&mixed4, 512, 256, sr);
     let graph4 = audio_graph::build_audio_graph(&stft4, &GraphParams::default());
 
-    let config4 = SeparatorConfig { num_sources: 4, ..SeparatorConfig::default() };
+    let config4 = SeparatorConfig {
+        num_sources: 4,
+        ..SeparatorConfig::default()
+    };
     let start4 = std::time::Instant::now();
     let result4 = separator::separate(&graph4, &config4);
     let elapsed4 = start4.elapsed();
 
-    println!("  Separation time: {:.1} ms", elapsed4.as_secs_f64() * 1000.0);
+    println!(
+        "  Separation time: {:.1} ms",
+        elapsed4.as_secs_f64() * 1000.0
+    );
     println!("  Partitions: {}", result4.masks.len());
 
-    let sources4: Vec<Vec<f64>> = result4.masks.iter()
+    let sources4: Vec<Vec<f64>> = result4
+        .masks
+        .iter()
         .map(|m| stft::istft(&stft4, m, n))
         .collect();
 
@@ -1125,11 +1389,20 @@ fn run_multi_source_benchmark() {
 
 fn compute_sdr_main(reference: &[f64], estimate: &[f64]) -> f64 {
     let n = reference.len().min(estimate.len());
-    if n == 0 { return -60.0; }
+    if n == 0 {
+        return -60.0;
+    }
     let ref_e: f64 = reference[..n].iter().map(|x| x * x).sum();
-    let noise_e: f64 = reference[..n].iter().zip(estimate[..n].iter())
-        .map(|(r, e)| (r - e).powi(2)).sum();
-    if ref_e < 1e-12 { return -60.0; }
-    if noise_e < 1e-12 { return 100.0; }
+    let noise_e: f64 = reference[..n]
+        .iter()
+        .zip(estimate[..n].iter())
+        .map(|(r, e)| (r - e).powi(2))
+        .sum();
+    if ref_e < 1e-12 {
+        return -60.0;
+    }
+    if noise_e < 1e-12 {
+        return 100.0;
+    }
     (10.0 * (ref_e / noise_e).log10()).clamp(-60.0, 100.0)
 }

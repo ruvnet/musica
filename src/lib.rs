@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! # Musica — Structure-First Audio Source Separation
 //!
 //! Audio source separation via dynamic mincut graph partitioning.
@@ -24,14 +25,15 @@
 //! - `wav` — WAV file I/O (16/24-bit PCM)
 //! - `benchmark` — SDR/SIR/SAR evaluation
 
-pub mod advanced_separator;
-pub mod enhanced_separator;
-pub mod hearmusica;
 pub mod adaptive;
+pub mod advanced_separator;
 pub mod audio_graph;
 pub mod benchmark;
 pub mod crowd;
+pub mod enhanced_separator;
+pub mod evaluation;
 pub mod hearing_aid;
+pub mod hearmusica;
 pub mod lanczos;
 pub mod learned_weights;
 pub mod multi_res;
@@ -39,14 +41,13 @@ pub mod multitrack;
 pub mod musdb_compare;
 pub mod neural_refine;
 pub mod phase;
+pub mod real_audio;
 pub mod separator;
 pub mod spatial;
 pub mod stft;
 pub mod streaming_multi;
-pub mod evaluation;
-pub mod real_audio;
 pub mod transcriber;
+pub mod visualizer;
 #[cfg(any(feature = "wasm", test))]
 pub mod wasm_bridge;
-pub mod visualizer;
 pub mod wav;

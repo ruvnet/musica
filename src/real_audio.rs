@@ -5,7 +5,7 @@
 //! with Musica's graph mincut, and measures SDR/SIR/SAR.
 
 use crate::audio_graph::{build_audio_graph, GraphParams};
-use crate::evaluation::{compute_sdr, compute_sir, compute_sar};
+use crate::evaluation::compute_sdr;
 use crate::separator::{separate, SeparatorConfig};
 use crate::stft;
 use crate::wav;
@@ -40,11 +40,7 @@ fn load_mono(path: &str) -> Option<(Vec<f64>, u32)> {
                 let n = data.channel_data[0].len();
                 (0..n)
                     .map(|i| {
-                        data.channel_data
-                            .iter()
-                            .map(|ch| ch[i])
-                            .sum::<f64>()
-                            / data.channels as f64
+                        data.channel_data.iter().map(|ch| ch[i]).sum::<f64>() / data.channels as f64
                     })
                     .collect()
             };
@@ -141,12 +137,20 @@ fn evaluate_mix(
     for s in 0..num {
         let recovered = stft::istft(&stft_result, &separation.masks[s], mixed.len());
         let sdr = compute_sdr(&sources[s], &recovered);
-        let label = if s < labels.len() { labels[s] } else { "unknown" };
+        let label = if s < labels.len() {
+            labels[s]
+        } else {
+            "unknown"
+        };
         source_sdr.push((label.to_string(), sdr));
         total_sdr += sdr;
     }
 
-    let avg_sdr = if num > 0 { total_sdr / num as f64 } else { f64::NEG_INFINITY };
+    let avg_sdr = if num > 0 {
+        total_sdr / num as f64
+    } else {
+        f64::NEG_INFINITY
+    };
 
     RealAudioResult {
         name: labels.join(" + "),
@@ -192,7 +196,13 @@ pub fn run_real_audio_benchmarks(audio_dir: &str) -> Vec<RealAudioResult> {
             let resampled = resample(&samples, sr, target_sr);
             let fitted = fit_length(&resampled, target_samples);
             loaded.insert(name, fitted);
-            println!("    Loaded {}: {} samples at {}Hz → resampled to {}Hz", name, samples.len(), sr, target_sr);
+            println!(
+                "    Loaded {}: {} samples at {}Hz → resampled to {}Hz",
+                name,
+                samples.len(),
+                sr,
+                target_sr
+            );
         }
     }
 
@@ -265,9 +275,13 @@ pub fn run_real_audio_benchmarks(audio_dir: &str) -> Vec<RealAudioResult> {
         println!("  {:<35} {:>8} {:>10}", "Scenario", "Avg SDR", "Time(ms)");
         println!("  {}", "-".repeat(55));
         for r in &results {
-            println!("  {:<35} {:>+7.2}dB {:>9.1}", r.name, r.avg_sdr, r.processing_ms);
+            println!(
+                "  {:<35} {:>+7.2}dB {:>9.1}",
+                r.name, r.avg_sdr, r.processing_ms
+            );
         }
-        let overall_avg: f64 = results.iter().map(|r| r.avg_sdr).sum::<f64>() / results.len() as f64;
+        let overall_avg: f64 =
+            results.iter().map(|r| r.avg_sdr).sum::<f64>() / results.len() as f64;
         println!("  {}", "-".repeat(55));
         println!("  {:<35} {:>+7.2}dB", "OVERALL AVERAGE", overall_avg);
     }
@@ -279,7 +293,10 @@ fn print_result(result: &RealAudioResult) {
     for (label, sdr) in &result.source_sdr {
         println!("    {:<12} SDR: {:+.2} dB", label, sdr);
     }
-    println!("    Average:     {:+.2} dB | {:.1}ms | {} nodes", result.avg_sdr, result.processing_ms, result.graph_nodes);
+    println!(
+        "    Average:     {:+.2} dB | {:.1}ms | {} nodes",
+        result.avg_sdr, result.processing_ms, result.graph_nodes
+    );
 }
 
 /// Download script content for test audio files.
@@ -356,7 +373,11 @@ mod tests {
 
         // At 10dB SNR, noise should be ~0.316x the signal
         let noise_rms: f64 = (sources[1].iter().map(|x| x * x).sum::<f64>() / 100.0).sqrt();
-        assert!(noise_rms < 0.5, "Noise at 10dB SNR should be attenuated: {}", noise_rms);
+        assert!(
+            noise_rms < 0.5,
+            "Noise at 10dB SNR should be attenuated: {}",
+            noise_rms
+        );
     }
 
     #[test]

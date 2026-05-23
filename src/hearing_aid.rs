@@ -46,8 +46,8 @@ impl Audiogram {
 
         for i in 0..self.frequencies.len() - 1 {
             if freq >= self.frequencies[i] && freq <= self.frequencies[i + 1] {
-                let t = (freq - self.frequencies[i])
-                    / (self.frequencies[i + 1] - self.frequencies[i]);
+                let t =
+                    (freq - self.frequencies[i]) / (self.frequencies[i + 1] - self.frequencies[i]);
                 return self.gains_db[i] + t * (self.gains_db[i + 1] - self.gains_db[i]);
             }
         }
@@ -155,8 +155,10 @@ pub struct StreamingState {
     /// Band center frequencies.
     band_freqs: Vec<f64>,
     /// FFT frame size in samples.
+    #[allow(dead_code)]
     frame_samples: usize,
     /// Hop size in samples.
+    #[allow(dead_code)]
     hop_samples: usize,
 }
 
@@ -362,14 +364,14 @@ fn extract_binaural_features(
             };
 
             // Voicing: simple energy-based proxy
-            let voicing = if cf >= 80.0 && cf <= 3000.0 {
+            let voicing = if (80.0..=3000.0).contains(&cf) {
                 ((mag_l + mag_r) * 2.0).min(1.0)
             } else {
                 ((mag_l + mag_r) * 0.5).min(1.0)
             };
 
             // Harmonicity: high IC + speech band -> likely harmonic
-            let harmonicity = if cf >= 100.0 && cf <= 4000.0 {
+            let harmonicity = if (100.0..=4000.0).contains(&cf) {
                 ic * voicing
             } else {
                 ic * 0.3
@@ -454,7 +456,8 @@ fn spectral_similarity(a: &BinauralFeatures, b: &BinauralFeatures) -> f64 {
 
 /// Temporal similarity between same band across frames.
 fn temporal_similarity(a: &BinauralFeatures, b: &BinauralFeatures) -> f64 {
-    let mag_sim = 1.0 - ((a.magnitude_l - b.magnitude_l).abs() + (a.magnitude_r - b.magnitude_r).abs()).min(1.0);
+    let mag_sim = 1.0
+        - ((a.magnitude_l - b.magnitude_l).abs() + (a.magnitude_r - b.magnitude_r).abs()).min(1.0);
     let phase_sim = 1.0 - (a.ipd - b.ipd).abs() / PI;
     let ic_sim = 1.0 - (a.ic - b.ic).abs();
     0.4 * mag_sim + 0.3 * phase_sim.max(0.0) + 0.3 * ic_sim
@@ -484,16 +487,13 @@ fn compute_speech_scores(
             let ic_score = feat.ic;
             let frontness = 1.0 - (feat.ild.abs() / 20.0).min(1.0);
 
-            let speech_prior = 0.3 * voicing_score
-                + 0.25 * harmonic_score
-                + 0.25 * ic_score
-                + 0.2 * frontness;
+            let speech_prior =
+                0.3 * voicing_score + 0.25 * harmonic_score + 0.25 * ic_score + 0.2 * frontness;
 
             // Fiedler contribution (for the most recent frame's nodes)
             let fiedler_score = if b < fiedler.len() {
                 // Use sign of Fiedler vector — speech partition gets positive score
-                fiedler[fiedler.len().saturating_sub(num_bands) + b.min(fiedler.len() - 1)]
-                    .signum()
+                fiedler[fiedler.len().saturating_sub(num_bands) + b.min(fiedler.len() - 1)].signum()
                     * 0.2
             } else {
                 0.0
@@ -761,10 +761,8 @@ mod tests {
         let result = state.process_frame(&speech_l, &speech_r, &config);
 
         // Speech bands should have higher mask values
-        let speech_band_avg: f64 = result.mask[..config.num_bands / 2]
-            .iter()
-            .sum::<f64>()
-            / (config.num_bands / 2) as f64;
+        let speech_band_avg: f64 =
+            result.mask[..config.num_bands / 2].iter().sum::<f64>() / (config.num_bands / 2) as f64;
 
         assert!(
             speech_band_avg > 0.1,
@@ -785,7 +783,10 @@ mod tests {
 
         // Interpolation
         let gain_625 = audiogram.gain_at(625.0);
-        assert!(gain_625 > 0.0 && gain_625 < 20.0, "Interpolated gain: {gain_625}");
+        assert!(
+            gain_625 > 0.0 && gain_625 < 20.0,
+            "Interpolated gain: {gain_625}"
+        );
     }
 
     #[test]
@@ -793,11 +794,19 @@ mod tests {
         let freqs = erb_frequencies(32, 100.0, 8000.0);
         assert_eq!(freqs.len(), 32);
         assert!(freqs[0] > 100.0, "First band should be above minimum");
-        assert!(*freqs.last().unwrap() < 8000.0, "Last band should be below maximum");
+        assert!(
+            *freqs.last().unwrap() < 8000.0,
+            "Last band should be below maximum"
+        );
 
         // Should be monotonically increasing
         for w in freqs.windows(2) {
-            assert!(w[1] > w[0], "ERB frequencies should increase: {} vs {}", w[0], w[1]);
+            assert!(
+                w[1] > w[0],
+                "ERB frequencies should increase: {} vs {}",
+                w[0],
+                w[1]
+            );
         }
     }
 }

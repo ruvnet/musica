@@ -16,7 +16,11 @@ pub fn standard_hearing_aid(
     block_size: usize,
 ) -> Pipeline {
     let mut pipeline = Pipeline::new(sample_rate, block_size);
-    pipeline.add(Box::new(BiquadFilter::new(FilterType::HighPass, 100.0, 0.707)));
+    pipeline.add(Box::new(BiquadFilter::new(
+        FilterType::HighPass,
+        100.0,
+        0.707,
+    )));
     pipeline.add(Box::new(WDRCompressor::new(-30.0, 2.0)));
     pipeline.add(Box::new(GainProcessor::new(mid_gain_db(audiogram))));
     pipeline.add(Box::new(Limiter::new(-1.0)));
@@ -25,13 +29,13 @@ pub fn standard_hearing_aid(
 }
 
 /// Speech-in-noise: prefilter -> feedback cancel -> graph separator -> WDRC -> gain -> limiter.
-pub fn speech_in_noise(
-    audiogram: &Audiogram,
-    sample_rate: f32,
-    block_size: usize,
-) -> Pipeline {
+pub fn speech_in_noise(audiogram: &Audiogram, sample_rate: f32, block_size: usize) -> Pipeline {
     let mut pipeline = Pipeline::new(sample_rate, block_size);
-    pipeline.add(Box::new(BiquadFilter::new(FilterType::HighPass, 100.0, 0.707)));
+    pipeline.add(Box::new(BiquadFilter::new(
+        FilterType::HighPass,
+        100.0,
+        0.707,
+    )));
     pipeline.add(Box::new(FeedbackCanceller::new(128, 0.01)));
     pipeline.add(Box::new(GraphSeparatorBlock::new()));
     pipeline.add(Box::new(WDRCompressor::new(-30.0, 2.0)));
@@ -42,11 +46,7 @@ pub fn speech_in_noise(
 }
 
 /// Music mode: gentle wideband compression -> gain -> limiter.
-pub fn music_mode(
-    audiogram: &Audiogram,
-    sample_rate: f32,
-    block_size: usize,
-) -> Pipeline {
+pub fn music_mode(audiogram: &Audiogram, sample_rate: f32, block_size: usize) -> Pipeline {
     let mut pipeline = Pipeline::new(sample_rate, block_size);
     pipeline.add(Box::new(WDRCompressor::new(-15.0, 1.5)));
     let gain = mid_gain_db(audiogram) * 0.75;
@@ -57,13 +57,13 @@ pub fn music_mode(
 }
 
 /// Maximum clarity: all blocks including feedback cancel and graph separation.
-pub fn maximum_clarity(
-    audiogram: &Audiogram,
-    sample_rate: f32,
-    block_size: usize,
-) -> Pipeline {
+pub fn maximum_clarity(audiogram: &Audiogram, sample_rate: f32, block_size: usize) -> Pipeline {
     let mut pipeline = Pipeline::new(sample_rate, block_size);
-    pipeline.add(Box::new(BiquadFilter::new(FilterType::HighPass, 80.0, 0.707)));
+    pipeline.add(Box::new(BiquadFilter::new(
+        FilterType::HighPass,
+        80.0,
+        0.707,
+    )));
     pipeline.add(Box::new(FeedbackCanceller::new(256, 0.005)));
     pipeline.add(Box::new(GraphSeparatorBlock::new()));
     pipeline.add(Box::new(DelayLine::new(2.0)));

@@ -51,7 +51,9 @@ fn evaluate_params(
     let n = sample.mixed.len();
 
     // Compute SDR with best permutation (for 2 sources)
-    let sources: Vec<Vec<f64>> = result.masks.iter()
+    let sources: Vec<Vec<f64>> = result
+        .masks
+        .iter()
         .map(|m| stft::istft(&stft_result, m, n))
         .collect();
 
@@ -61,27 +63,40 @@ fn evaluate_params(
 /// Compute average SDR with best permutation for 2 sources.
 fn best_permutation_avg_sdr(references: &[Vec<f64>], estimates: &[Vec<f64>]) -> f64 {
     let k = references.len().min(estimates.len());
-    if k == 0 { return -60.0; }
+    if k == 0 {
+        return -60.0;
+    }
     if k == 1 {
         return compute_sdr(&references[0], &estimates[0]);
     }
 
     // Try both permutations
     let sdr_id = (compute_sdr(&references[0], &estimates[0])
-        + compute_sdr(&references[1], &estimates[1])) / 2.0;
+        + compute_sdr(&references[1], &estimates[1]))
+        / 2.0;
     let sdr_sw = (compute_sdr(&references[0], &estimates[1])
-        + compute_sdr(&references[1], &estimates[0])) / 2.0;
+        + compute_sdr(&references[1], &estimates[0]))
+        / 2.0;
     sdr_id.max(sdr_sw)
 }
 
 fn compute_sdr(reference: &[f64], estimate: &[f64]) -> f64 {
     let n = reference.len().min(estimate.len());
-    if n == 0 { return -60.0; }
+    if n == 0 {
+        return -60.0;
+    }
     let ref_e: f64 = reference[..n].iter().map(|x| x * x).sum();
-    let noise_e: f64 = reference[..n].iter().zip(estimate[..n].iter())
-        .map(|(r, e)| (r - e).powi(2)).sum();
-    if ref_e < 1e-12 { return -60.0; }
-    if noise_e < 1e-12 { return 100.0; }
+    let noise_e: f64 = reference[..n]
+        .iter()
+        .zip(estimate[..n].iter())
+        .map(|(r, e)| (r - e).powi(2))
+        .sum();
+    if ref_e < 1e-12 {
+        return -60.0;
+    }
+    if noise_e < 1e-12 {
+        return 100.0;
+    }
     (10.0 * (ref_e / noise_e).log10()).clamp(-60.0, 100.0)
 }
 
@@ -111,6 +126,7 @@ fn vec_to_params(v: &[f64]) -> GraphParams {
 }
 
 /// Optimize graph weights using Nelder-Mead simplex search.
+#[allow(clippy::needless_range_loop)]
 pub fn optimize_weights(
     samples: &[TrainingSample],
     max_iterations: usize,
@@ -150,8 +166,8 @@ pub fn optimize_weights(
     // Nelder-Mead iterations
     let alpha = 1.0; // reflection
     let gamma = 2.0; // expansion
-    let rho = 0.5;   // contraction
-    let sigma = 0.5;  // shrink
+    let rho = 0.5; // contraction
+    let sigma = 0.5; // shrink
 
     for iter in 0..max_iterations {
         // Sort by objective (higher = better, so sort descending)
@@ -240,7 +256,9 @@ mod tests {
     use std::f64::consts::PI;
 
     fn sine(freq: f64, sr: f64, n: usize) -> Vec<f64> {
-        (0..n).map(|i| (2.0 * PI * freq * i as f64 / sr).sin()).collect()
+        (0..n)
+            .map(|i| (2.0 * PI * freq * i as f64 / sr).sin())
+            .collect()
     }
 
     #[test]
@@ -300,8 +318,11 @@ mod tests {
         let result = optimize_weights(&samples, 15, 256, 128);
 
         // Should not get worse (may not always improve on simple scenarios)
-        assert!(result.best_sdr >= default_sdr - 1.0,
+        assert!(
+            result.best_sdr >= default_sdr - 1.0,
             "Optimized {:.2} should be >= default {:.2} - 1.0",
-            result.best_sdr, default_sdr);
+            result.best_sdr,
+            default_sdr
+        );
     }
 }
