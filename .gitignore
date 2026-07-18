@@ -1,6 +1,17 @@
 /target
 Cargo.lock
+!/Cargo.lock
 *.wav
 *.mp3
 *.flac
 test_audio/*.wav
+apps/musica-vj/node_modules/
+apps/musica-vj/dist/
+apps/musica-vj/.vite/
+apps/musica-vj/coverage/
+apps/musica-vj/src-tauri/icons/*
+!apps/musica-vj/src-tauri/icons/32x32.png
+!apps/musica-vj/src-tauri/icons/128x128.png
+!apps/musica-vj/src-tauri/icons/128x128@2x.png
+!apps/musica-vj/src-tauri/icons/icon.icns
+!apps/musica-vj/src-tauri/icons/icon.ico

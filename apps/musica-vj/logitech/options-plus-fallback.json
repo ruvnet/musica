@@ -1,0 +1,23 @@
+{
+  "profile": "Musica VJ F13-F24 fallback",
+  "applicationBundle": "one.cognitum.musica.vj",
+  "note": "Assign these keystrokes in Options+ when the Actions SDK plugin is unavailable.",
+  "bindings": [
+    { "key": "F13", "action": "transport.toggle", "label": "Play / Pause" },
+    { "key": "F14", "action": "transport.record", "label": "Record" },
+    { "key": "F15", "action": "track.previous", "label": "Previous Track" },
+    { "key": "F16", "action": "track.next", "label": "Next Track" },
+    { "key": "F17", "action": "track.mute", "label": "Mute Track" },
+    { "key": "F18", "action": "track.solo", "label": "Solo Track" },
+    { "key": "F19", "action": "visual.previous", "label": "Previous Visual" },
+    { "key": "F20", "action": "visual.next", "label": "Next Visual" },
+    { "key": "F21", "action": "visual.intensity.delta", "value": -1, "label": "Visual Intensity Down" },
+    { "key": "F22", "action": "visual.intensity.delta", "value": 1, "label": "Visual Intensity Up" },
+    { "key": "F23", "action": "master.delta", "value": -1, "label": "Master Down" },
+    { "key": "F24", "action": "master.delta", "value": 1, "label": "Master Up" }
+  ],
+  "additionalInAppKeys": [
+    { "key": "Enter", "action": "track.trigger", "label": "Trigger Track" },
+    { "key": "T", "action": "tempo.tap", "label": "Tap Tempo" }
+  ]
+}

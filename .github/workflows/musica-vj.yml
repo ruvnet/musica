@@ -1,0 +1,419 @@
+name: Musica VJ
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create or update when publishing artifacts"
+        required: true
+        default: "musica-vj-v0.1.0"
+  pull_request:
+    paths:
+      - "apps/musica-vj/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/adr/ADR-16*.md"
+      - "docs/specs/musica-lyria-3-pro-integration.md"
+      - ".github/workflows/musica-vj.yml"
+  push:
+    branches: [main]
+    tags:
+      - "musica-vj-v*"
+    paths:
+      - "apps/musica-vj/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/adr/ADR-16*.md"
+      - "docs/specs/musica-lyria-3-pro-integration.md"
+      - ".github/workflows/musica-vj.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/musica-vj
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/musica-vj/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:run
+      - run: npm run verify:assets
+      - run: npm run build
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - run: npm run verify:no-secrets
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - name: Install, validate, and record FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          binary_version="$(ffmpeg -version | sed -n '1s/^ffmpeg version \([^ ]*\).*/\1/p')"
+          package_version="$(dpkg-query --show --showformat='${Version}' ffmpeg)"
+          test -n "$binary_version"
+          test -n "$package_version"
+          case "$binary_version" in
+            6.*) ;;
+            *)
+              echo "Expected the Ubuntu 24.04 FFmpeg 6 release, got $binary_version"
+              exit 1
+              ;;
+          esac
+          {
+            echo "runner=ubuntu-24.04"
+            echo "binary_version=$binary_version"
+            echo "package_version=$package_version"
+            sha256sum "$(command -v ffmpeg)"
+            ffmpeg -version
+          } | tee ../../ffmpeg-version.txt
+      - run: npm run verify:samples
+      - run: npm run verify:samples:reproducible
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-ffmpeg-version
+          path: ffmpeg-version.txt
+          if-no-files-found: error
+
+  wasm-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo build --target wasm32-unknown-unknown --features wasm --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-core-wasm
+          path: target/wasm32-unknown-unknown/release/musica.wasm
+          if-no-files-found: error
+
+  macos-app:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/musica-vj
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/musica-vj/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: npm ci
+      - run: npm run verify:assets
+      - run: dotnet test apps/musica-vj/logitech/tests/MusicaVj.Logitech.Core.Tests/MusicaVj.Logitech.Core.Tests.csproj --configuration Release
+        working-directory: .
+      - run: cargo generate-lockfile
+        working-directory: .
+      - run: cargo fmt --all
+        working-directory: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-rust-bootstrap
+          path: |
+            Cargo.lock
+            apps/musica-vj/src-tauri/src/*.rs
+          if-no-files-found: error
+      - run: cargo test -p musica --lib
+        working-directory: .
+      - run: cargo clippy -p musica-vj --all-targets -- -D warnings
+        working-directory: .
+      - run: cargo test -p musica-vj
+        working-directory: .
+      - run: npm run build
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - run: npm run verify:no-secrets
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - name: Generate native icon bundles from the tracked source PNG
+        run: npm run tauri icon src-tauri/icons/128x128@2x.png
+      - run: npm run tauri build -- --bundles app,dmg
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+      - name: Verify provider canaries are absent from the packaged app
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+        run: |
+          if grep -R -a -F "$GEMINI_API_KEY" target/release/bundle/macos; then
+            echo "Gemini credential canary leaked into the macOS bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$VITE_GEMINI_API_KEY" target/release/bundle/macos; then
+            echo "Vite credential canary leaked into the macOS bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_CREATIVE_API_TOKEN" target/release/bundle/macos; then
+            echo "Creative provider credential canary leaked into the macOS bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_META_LLM_API_TOKEN" target/release/bundle/macos; then
+            echo "Meta-LLM credential canary leaked into the macOS bundle"
+            exit 1
+          fi
+        working-directory: .
+      - name: Archive macOS app with metadata preserved
+        run: |
+          apps=(target/release/bundle/macos/*.app)
+          if [ "${#apps[@]}" -ne 1 ] || [ ! -d "${apps[0]}" ]; then
+            echo "Expected exactly one packaged macOS app"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent \
+            "${apps[0]}" \
+            target/release/bundle/macos/musica-vj-macos-app.zip
+        working-directory: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-macos-app
+          path: target/release/bundle/macos/musica-vj-macos-app.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-macos-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  linux-app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/musica-vj
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/musica-vj/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            patchelf \
+            pkg-config
+      - run: npm ci
+      - run: npm run verify:assets
+      - name: Generate native icon bundles from the tracked source PNG
+        run: npm run tauri icon src-tauri/icons/128x128@2x.png
+      - run: cargo clippy -p musica-vj --all-targets -- -D warnings
+        working-directory: .
+      - run: cargo test -p musica-vj
+        working-directory: .
+      - run: npm run build
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - run: npm run verify:no-secrets
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - name: Generate native icon bundles from the tracked source PNG
+        run: npm run tauri icon src-tauri/icons/128x128@2x.png
+      - run: npm run tauri build -- --bundles deb,appimage
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - name: Verify provider canaries are absent from Linux bundles
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+        run: |
+          if grep -R -a -F "$GEMINI_API_KEY" target/release/bundle; then
+            echo "Gemini credential canary leaked into a Linux bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$VITE_GEMINI_API_KEY" target/release/bundle; then
+            echo "Vite credential canary leaked into a Linux bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_CREATIVE_API_TOKEN" target/release/bundle; then
+            echo "Creative provider credential canary leaked into a Linux bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_META_LLM_API_TOKEN" target/release/bundle; then
+            echo "Meta-LLM credential canary leaked into a Linux bundle"
+            exit 1
+          fi
+        working-directory: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-linux-deb
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-linux-appimage
+          path: target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  windows-app:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/musica-vj
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/musica-vj/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: npm ci
+      - run: npm run verify:assets
+      - run: cargo clippy -p musica-vj --all-targets -- -D warnings
+        working-directory: .
+      - run: cargo test -p musica-vj
+        working-directory: .
+      - run: npm run build
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - run: npm run verify:no-secrets
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - run: npm run tauri build -- --bundles nsis
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+      - name: Verify provider canaries are absent from Windows bundles
+        shell: bash
+        env:
+          GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
+          VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
+          MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+        run: |
+          if grep -R -a -F "$GEMINI_API_KEY" target/release/bundle; then
+            echo "Gemini credential canary leaked into a Windows bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$VITE_GEMINI_API_KEY" target/release/bundle; then
+            echo "Vite credential canary leaked into a Windows bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_CREATIVE_API_TOKEN" target/release/bundle; then
+            echo "Creative provider credential canary leaked into a Windows bundle"
+            exit 1
+          fi
+          if grep -R -a -F "$MUSICA_META_LLM_API_TOKEN" target/release/bundle; then
+            echo "Meta-LLM credential canary leaked into a Windows bundle"
+            exit 1
+          fi
+        working-directory: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-windows-nsis
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  ci-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - frontend
+      - wasm-core
+      - macos-app
+      - linux-app
+      - windows-app
+    steps:
+      - run: |
+          echo "Musica VJ CI guard passed: frontend, WASM core, macOS, Linux, and Windows builds are green."
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/musica-vj-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: ci-guard
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+      - name: List release artifacts
+        run: find release-artifacts -type f -maxdepth 3 -print
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          draft: true
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/**/*.zip
+            release-artifacts/**/*.dmg
+            release-artifacts/**/*.deb
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.exe

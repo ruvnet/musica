@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14151b"/>
+      <stop offset="1" stop-color="#050609"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff4f86"/>
+      <stop offset="0.52" stop-color="#b889ff"/>
+      <stop offset="1" stop-color="#75f4c5"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="24" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="920" height="920" rx="224" fill="url(#bg)"/>
+  <circle cx="512" cy="512" r="330" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="4"/>
+  <circle cx="512" cy="512" r="266" fill="none" stroke="url(#signal)" stroke-width="18" stroke-linecap="round" stroke-dasharray="980 700" transform="rotate(-48 512 512)" filter="url(#glow)"/>
+  <path d="M282 674V350h69l161 197 161-197h69v324h-86V482L512 658 368 482v192z" fill="url(#signal)" filter="url(#glow)"/>
+  <path d="M214 512h72l35-84 55 170 48-245 65 319 50-242 46 164 53-82h72" fill="none" stroke="#f8f8f6" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+</svg>

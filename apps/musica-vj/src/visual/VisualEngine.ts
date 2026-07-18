@@ -1,0 +1,981 @@
+import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import type { AudioEngine } from "../audio/AudioEngine";
+import type { AudioAnalysisResult, MeasuredSectionType } from "../audio/audioAnalysis";
+import { DEFAULT_TEMPORAL_CONTROLS, visualSceneById } from "../core/presets";
+import type { AudioMetrics, TrackId, VisualSceneId, VisualTemporalControls } from "../core/types";
+
+export interface RenderStats {
+  fps: number;
+  frameTimeMs: number;
+  pixelRatio: number;
+  quality: "adaptive" | "export";
+}
+
+type StatsListener = (stats: RenderStats) => void;
+type SceneListener = (scene: VisualSceneId) => void;
+const PARTICLE_COUNT = 7_000;
+const TERRAIN_SEGMENTS = 64;
+const SPECTRAL_TRAIL_COUNT = 18;
+const SPECTRAL_POINTS = 128;
+const WAVEFORM_POINTS = 256;
+const ATMOSPHERE_PARTICLES = 1_600;
+const FLOOR_Y = -3.45;
+
+export interface VisualAudioResponse {
+  cameraDisplacement: number;
+  radialPulse: number;
+  particleCount: number;
+  spectralHeight: number;
+  waveformAmplitude: number;
+  hazeOpacity: number;
+}
+
+export interface VisualArtDirection {
+  sculpture: number;
+  motion: number;
+  atmosphere: number;
+  ribbon: number;
+}
+
+export const DEFAULT_ART_DIRECTION: Readonly<VisualArtDirection> = Object.freeze({
+  sculpture: 0.78,
+  motion: 0.46,
+  atmosphere: 0.62,
+  ribbon: 0.72,
+});
+
+export function normalizeArtDirection(direction: VisualArtDirection): VisualArtDirection {
+  const bounded = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
+  return {
+    sculpture: bounded(direction.sculpture),
+    motion: bounded(direction.motion),
+    atmosphere: bounded(direction.atmosphere),
+    ribbon: bounded(direction.ribbon),
+  };
+}
+
+export function normalizeTemporalControls(controls: VisualTemporalControls): VisualTemporalControls {
+  const bounded = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
+  return {
+    speed: bounded(controls.speed),
+    strobe: bounded(controls.strobe),
+    trail: bounded(controls.trail),
+    morph: bounded(controls.morph),
+    camera: bounded(controls.camera),
+    phase: bounded(controls.phase),
+  };
+}
+
+export function frequencyBandEnergy(
+  frequency: Uint8Array,
+  sampleRateHz: number,
+  lowerHz: number,
+  upperHz: number,
+): number {
+  if (frequency.length === 0 || sampleRateHz <= 0 || upperHz <= lowerHz) return 0;
+  const nyquist = sampleRateHz / 2;
+  const from = Math.max(0, Math.min(frequency.length - 1, Math.floor((lowerHz / nyquist) * frequency.length)));
+  const to = Math.max(from + 1, Math.min(frequency.length, Math.ceil((upperHz / nyquist) * frequency.length)));
+  let sum = 0;
+  for (let index = from; index < to; index += 1) sum += frequency[index];
+  return sum / (to - from) / 255;
+}
+
+export function mapVisualAudioResponse(
+  bassEnergy: number,
+  highEnergy: number,
+  beatPulse: number,
+  intensity: number,
+): VisualAudioResponse {
+  const boundedIntensity = Math.max(0.05, Math.min(1, intensity));
+  const bass = Math.max(0, Math.min(1, bassEnergy));
+  const high = Math.max(0, Math.min(1, highEnergy));
+  const beat = Math.max(0, Math.min(1, beatPulse));
+  return {
+    cameraDisplacement: bass * 1.15 * boundedIntensity,
+    radialPulse: beat * 1.6 * boundedIntensity,
+    particleCount: Math.round(PARTICLE_COUNT * (0.25 + high * 0.75)),
+    spectralHeight: (0.32 + bass * 0.88) * boundedIntensity,
+    waveformAmplitude: (0.16 + beat * 0.84) * boundedIntensity,
+    hazeOpacity: (0.1 + high * 0.42) * boundedIntensity,
+  };
+}
+
+export function sceneForMeasuredSection(type: MeasuredSectionType, sectionIndex: number): VisualSceneId {
+  switch (type) {
+    case "intro":
+    case "outro":
+      return "terrain";
+    case "build":
+    case "breakdown":
+      return "bloom";
+    case "drop":
+      return "tunnel";
+    case "groove":
+      return sectionIndex % 2 === 0 ? "tunnel" : "bloom";
+  }
+}
+
+export class VisualEngine {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly composer: EffectComposer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.PerspectiveCamera(55, 1, 0.1, 120);
+  private readonly overlayScene = new THREE.Scene();
+  private readonly overlayCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 10);
+  private readonly clock = new THREE.Clock();
+  private readonly tunnelGroup = new THREE.Group();
+  private readonly bloomGroup = new THREE.Group();
+  private readonly terrainGroup = new THREE.Group();
+  private readonly signalBloomGroup = new THREE.Group();
+  private readonly atmosphereGroup = new THREE.Group();
+  private readonly floorGroup = new THREE.Group();
+  private readonly tunnelRings: THREE.Mesh[] = [];
+  private readonly spectralTrails: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
+  private readonly spectralReflections: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
+  private readonly bloomMaterial: THREE.ShaderMaterial;
+  private readonly hazeMaterial: THREE.ShaderMaterial;
+  private readonly atmosphereMaterial: THREE.PointsMaterial;
+  private bloomPoints?: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private readonly waveformRibbon: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private readonly waveformGlow: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private readonly waveformReflection: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private readonly terrain: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private readonly core: THREE.Mesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial>;
+  private readonly brandingTexture: THREE.CanvasTexture;
+  private readonly branding: THREE.Sprite;
+  private readonly resizeObserver: ResizeObserver;
+  private readonly statsListeners = new Set<StatsListener>();
+  private readonly sceneListeners = new Set<SceneListener>();
+  private animationFrame?: number;
+  private currentScene: VisualSceneId = "bloom";
+  private intensity = 0.72;
+  private artDirection: VisualArtDirection = { ...DEFAULT_ART_DIRECTION };
+  private temporal: VisualTemporalControls = { ...DEFAULT_TEMPORAL_CONTROLS };
+  private pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
+  private frameTimeEma = 16.67;
+  private lastFrameAt = performance.now();
+  private statsAt = performance.now();
+  private framesSinceStats = 0;
+  private stableFrames = 0;
+  private exportLock?: { width: number; height: number };
+  private analyzedTrack?: { trackId: TrackId; analysis: AudioAnalysisResult; sectionIndex: number };
+
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly audio: AudioEngine,
+  ) {
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: "high-performance",
+    });
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.setPixelRatio(this.pixelRatio);
+    this.renderer.autoClear = false;
+
+    const branding = this.createBranding();
+    this.brandingTexture = branding.texture;
+    this.branding = branding.sprite;
+    this.branding.visible = false;
+    this.overlayCamera.position.z = 1;
+    this.overlayScene.add(this.branding);
+
+    this.scene.background = new THREE.Color(0x020107);
+    this.scene.fog = new THREE.FogExp2(0x05010d, 0.021);
+    this.camera.position.set(0, 0.35, 9);
+    this.camera.lookAt(0, 0, -10);
+
+    this.scene.add(new THREE.AmbientLight(0x755dff, 0.28));
+    const key = new THREE.PointLight(0xff3f91, 45, 45);
+    key.position.set(4, 5, 4);
+    this.scene.add(key);
+    const fill = new THREE.PointLight(0x44ffd1, 35, 40);
+    fill.position.set(-5, -2, 1);
+    this.scene.add(fill);
+
+    this.bloomMaterial = this.createBloomMaterial();
+    this.hazeMaterial = this.createHazeMaterial();
+    this.atmosphereMaterial = this.createAtmosphere();
+    const waveform = this.createWaveformRibbon();
+    this.waveformRibbon = waveform.ribbon;
+    this.waveformGlow = waveform.glow;
+    this.waveformReflection = waveform.reflection;
+    this.terrain = this.createTerrain();
+    this.core = this.createCore();
+    this.createTunnel();
+    this.createBloom();
+    this.createSignalBloom();
+    this.createFloor();
+    this.terrainGroup.add(this.terrain);
+    this.scene.add(
+      this.floorGroup,
+      this.tunnelGroup,
+      this.bloomGroup,
+      this.terrainGroup,
+      this.signalBloomGroup,
+      this.atmosphereGroup,
+      this.core,
+    );
+
+    const size = new THREE.Vector2(Math.max(1, canvas.clientWidth), Math.max(1, canvas.clientHeight));
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.setPixelRatio(this.pixelRatio);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.composer.addPass(new UnrealBloomPass(size, 1.18, 0.76, 0.09));
+
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(canvas.parentElement ?? canvas);
+    this.setScene(this.currentScene);
+    this.resize();
+  }
+
+  start(): void {
+    if (this.animationFrame !== undefined) return;
+    this.clock.start();
+    this.lastFrameAt = performance.now();
+    const frame = () => {
+      this.animationFrame = requestAnimationFrame(frame);
+      this.render();
+    };
+    frame();
+  }
+
+  stop(): void {
+    if (this.animationFrame !== undefined) cancelAnimationFrame(this.animationFrame);
+    this.animationFrame = undefined;
+  }
+
+  dispose(): void {
+    this.stop();
+    this.resizeObserver.disconnect();
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.Line) {
+        object.geometry?.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) material?.dispose();
+      }
+    });
+    this.composer.dispose();
+    this.branding.material.dispose();
+    this.brandingTexture.dispose();
+    this.renderer.dispose();
+  }
+
+  setScene(scene: VisualSceneId): void {
+    const changed = scene !== this.currentScene;
+    this.currentScene = scene;
+    const theme = visualSceneById(scene);
+    this.tunnelGroup.visible = theme.mode === "tunnel";
+    this.bloomGroup.visible = theme.mode === "bloom";
+    this.terrainGroup.visible = theme.mode === "terrain";
+    this.core.visible = theme.mode !== "terrain";
+    this.signalBloomGroup.visible = true;
+    this.atmosphereGroup.visible = true;
+    this.floorGroup.visible = true;
+    for (const trail of this.spectralTrails) {
+      trail.visible = theme.mode === "bloom";
+      trail.material.opacity = 0.68;
+    }
+    for (const reflection of this.spectralReflections) reflection.visible = theme.mode === "bloom";
+    this.applySceneTheme(scene);
+    this.drawBranding(scene);
+    if (changed) for (const listener of this.sceneListeners) listener(scene);
+  }
+
+  getScene(): VisualSceneId {
+    return this.currentScene;
+  }
+
+  setIntensity(value: number): void {
+    this.intensity = Math.min(1, Math.max(0.05, value));
+  }
+
+  getIntensity(): number {
+    return this.intensity;
+  }
+
+  setArtDirection(direction: VisualArtDirection): void {
+    this.artDirection = normalizeArtDirection(direction);
+  }
+
+  getArtDirection(): VisualArtDirection {
+    return { ...this.artDirection };
+  }
+
+  setTemporalControls(controls: VisualTemporalControls): void {
+    this.temporal = normalizeTemporalControls(controls);
+  }
+
+  getTemporalControls(): VisualTemporalControls {
+    return { ...this.temporal };
+  }
+
+  lockResolution(width: number, height: number): void {
+    this.exportLock = { width, height };
+    this.branding.visible = true;
+    this.renderer.setPixelRatio(1);
+    this.composer.setPixelRatio(1);
+    this.renderer.setSize(width, height, false);
+    this.composer.setSize(width, height);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+
+  unlockResolution(): void {
+    this.exportLock = undefined;
+    this.branding.visible = false;
+    this.renderer.setPixelRatio(this.pixelRatio);
+    this.composer.setPixelRatio(this.pixelRatio);
+    this.resize();
+  }
+
+  subscribeStats(listener: StatsListener): () => void {
+    this.statsListeners.add(listener);
+    return () => this.statsListeners.delete(listener);
+  }
+
+  subscribeScene(listener: SceneListener): () => void {
+    this.sceneListeners.add(listener);
+    return () => this.sceneListeners.delete(listener);
+  }
+
+  setAudioAnalysis(trackId: TrackId, analysis: AudioAnalysisResult): void {
+    this.analyzedTrack = { trackId, analysis, sectionIndex: -1 };
+  }
+
+  clearAudioAnalysis(trackId?: TrackId): void {
+    if (trackId === undefined || this.analyzedTrack?.trackId === trackId) this.analyzedTrack = undefined;
+  }
+
+  private render(): void {
+    const now = performance.now();
+    const frameTime = Math.max(1, now - this.lastFrameAt);
+    this.lastFrameAt = now;
+    this.frameTimeEma = this.frameTimeEma * 0.94 + frameTime * 0.06;
+    this.framesSinceStats += 1;
+
+    const elapsed = this.clock.getElapsedTime();
+    const time = elapsed * (0.35 + this.temporal.speed * 1.65) + this.temporal.phase * Math.PI * 2;
+    this.updateMeasuredSectionScene();
+    const metrics = this.audio.getMetrics();
+    const low = frequencyBandEnergy(metrics.frequency, 48_000, 30, 180);
+    const mid = frequencyBandEnergy(metrics.frequency, 48_000, 180, 2_000);
+    const high = frequencyBandEnergy(metrics.frequency, 48_000, 6_000, 16_000);
+    const transportPulse = Math.pow(Math.max(0, 1 - metrics.beatPhase), 8) * metrics.masterLevel;
+    const beatPulse = Math.max(transportPulse, this.measuredBeatPulse());
+    const response = mapVisualAudioResponse(low, high, beatPulse, this.intensity);
+    const pulse = Math.max(metrics.masterLevel, low * 0.9) * this.intensity;
+
+    const performedMotion = (0.45 + this.artDirection.motion * 0.9) * (0.4 + this.temporal.camera * 1.2);
+    this.camera.position.x = Math.sin(time * (0.35 + this.artDirection.motion * 0.7)) * response.cameraDisplacement * 0.18 * performedMotion;
+    this.camera.position.y = 0.35 + Math.cos(time * (0.5 + this.artDirection.motion * 0.7)) * response.cameraDisplacement * 0.12 * performedMotion;
+    this.camera.position.z = 9 - response.cameraDisplacement * performedMotion;
+    this.bloomPoints?.geometry.setDrawRange(0, response.particleCount);
+
+    this.updateTunnel(time, low, mid, high);
+    this.updateBloom(time, pulse, high);
+    this.updateTerrain(time, metrics);
+    this.updateSignalBloom(time, metrics, response, low, mid, high);
+    this.core.rotation.x = time * 0.21 + mid * 0.4;
+    this.core.rotation.y = time * 0.34 + low * 0.6;
+    const strobeGate = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (12 + this.temporal.strobe * 44))), 0.22);
+    this.core.scale.setScalar((0.85 + pulse * 1.35 + response.radialPulse) * (0.94 + strobeGate * 0.06));
+    this.core.material.emissiveIntensity = 0.8 + high * 4 * this.intensity;
+
+    this.composer.render();
+    if (this.branding.visible) {
+      this.renderer.clearDepth();
+      this.renderer.render(this.overlayScene, this.overlayCamera);
+    }
+    this.adaptQuality();
+
+    if (now - this.statsAt >= 1_000) {
+      const elapsedStats = now - this.statsAt;
+      const stats: RenderStats = {
+        fps: Math.round((this.framesSinceStats * 1_000) / elapsedStats),
+        frameTimeMs: Math.round(this.frameTimeEma * 10) / 10,
+        pixelRatio: this.exportLock ? 1 : Math.round(this.pixelRatio * 100) / 100,
+        quality: this.exportLock ? "export" : "adaptive",
+      };
+      for (const listener of this.statsListeners) listener(stats);
+      this.framesSinceStats = 0;
+      this.statsAt = now;
+    }
+  }
+
+  private updateMeasuredSectionScene(): void {
+    const analyzed = this.analyzedTrack;
+    if (!analyzed) return;
+    const position = this.audio.getLoadedTrackPosition(analyzed.trackId);
+    if (position === undefined) return;
+    const sectionIndex = analyzed.analysis.sections.findIndex(
+      (section) => position >= section.start && position < section.end,
+    );
+    if (sectionIndex < 0 || sectionIndex === analyzed.sectionIndex) return;
+    analyzed.sectionIndex = sectionIndex;
+    const section = analyzed.analysis.sections[sectionIndex];
+    if (section) this.setScene(sceneForMeasuredSection(section.type, sectionIndex));
+  }
+
+  private measuredBeatPulse(): number {
+    const analyzed = this.analyzedTrack;
+    if (!analyzed || analyzed.analysis.beatGridSeconds.length === 0) return 0;
+    const position = this.audio.getLoadedTrackPosition(analyzed.trackId);
+    if (position === undefined) return 0;
+    const beats = analyzed.analysis.beatGridSeconds;
+    let low = 0;
+    let high = beats.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((beats[middle] ?? Number.POSITIVE_INFINITY) < position) low = middle + 1;
+      else high = middle;
+    }
+    const previous = beats[Math.max(0, low - 1)] ?? Number.NEGATIVE_INFINITY;
+    const next = beats[Math.min(beats.length - 1, low)] ?? Number.POSITIVE_INFINITY;
+    const distance = Math.min(Math.abs(position - previous), Math.abs(next - position));
+    return Math.exp(-distance * 24);
+  }
+
+  private updateTunnel(time: number, low: number, mid: number, high: number): void {
+    for (let index = 0; index < this.tunnelRings.length; index += 1) {
+      const ring = this.tunnelRings[index];
+      const travel = (index * 1.85 + time * (1.8 + this.artDirection.motion * 4.4 + this.temporal.speed * 3.2 + low * 8)) % 52;
+      ring.position.z = 7 - travel;
+      ring.rotation.z = time * (index % 2 === 0 ? 0.09 : -0.07) * (0.5 + this.temporal.morph) + index * 0.32;
+      const scale = 0.75 + Math.sin(time * (1.1 + this.temporal.morph * 1.8) + index * 0.7) * 0.09 + mid * 0.22;
+      ring.scale.setScalar(scale);
+      const material = ring.material as THREE.MeshBasicMaterial;
+      const strobe = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (16 + this.temporal.strobe * 50) + index)), 0.18);
+      material.opacity = Math.min(0.96, (0.2 + this.temporal.trail * 0.26 + high * 0.72 + (1 - travel / 52) * 0.28) * strobe);
+    }
+  }
+
+  private updateBloom(time: number, energy: number, high: number): void {
+    this.bloomMaterial.uniforms.uTime.value = time;
+    this.bloomMaterial.uniforms.uEnergy.value = energy;
+    this.bloomMaterial.uniforms.uIntensity.value = this.intensity;
+    this.bloomMaterial.uniforms.uPointSize.value = 1.2 + high * 3.2 + this.temporal.trail * 1.1;
+    this.bloomGroup.rotation.z = time * (0.012 + this.artDirection.motion * 0.075 + this.temporal.morph * 0.035);
+  }
+
+  private updateSignalBloom(
+    time: number,
+    metrics: AudioMetrics,
+    response: VisualAudioResponse,
+    low: number,
+    mid: number,
+    high: number,
+  ): void {
+    const frequency = metrics.frequency;
+    const frequencyMaxIndex = Math.max(0, frequency.length - 1);
+    const sculpture = 0.48 + this.artDirection.sculpture * 0.92;
+    const motion = 0.22 + this.artDirection.motion * 1.18;
+    const ribbon = 0.35 + this.artDirection.ribbon * 1.05;
+    const atmosphere = 0.2 + this.artDirection.atmosphere * 1.15;
+    if (visualSceneById(this.currentScene).mode === "bloom") {
+      for (let trailIndex = 0; trailIndex < this.spectralTrails.length; trailIndex += 1) {
+        const trail = this.spectralTrails[trailIndex];
+        const reflection = this.spectralReflections[trailIndex];
+        const positions = trail.geometry.attributes.position as THREE.BufferAttribute;
+        const reflected = reflection.geometry.attributes.position as THREE.BufferAttribute;
+        const trailPhase = trailIndex * 0.63;
+        const depth = -4.2 - trailIndex * 0.075;
+        for (let point = 0; point < SPECTRAL_POINTS; point += 1) {
+          const progress = point / (SPECTRAL_POINTS - 1);
+          const normalizedX = progress * 2 - 1;
+          const envelope = Math.pow(Math.max(0, Math.sin(progress * Math.PI)), 0.48 + this.temporal.morph * 0.42);
+          const frequencyBin = Math.min(
+            frequencyMaxIndex,
+            Math.floor(Math.pow(progress, 1.72) * frequencyMaxIndex * 0.78),
+          );
+          const spectrum = frequency.length > 0 ? (frequency[frequencyBin] ?? 0) / 255 : 0;
+          const drift = Math.sin(progress * 15 + time * 0.72 * motion + trailPhase)
+            * (0.05 + mid * 0.2 * motion);
+          const fan = 4.65 - envelope * (1.3 + response.spectralHeight * 0.78 * sculpture);
+          const x = normalizedX * fan
+            + Math.sin(progress * 8.4 + trailPhase) * (0.08 + sculpture * 0.1)
+            + Math.sin(time * 0.18 * motion + trailPhase) * (0.04 + motion * 0.07);
+          const ridge = envelope * (3.5 + response.spectralHeight * 2.55 * sculpture)
+            + spectrum * (0.26 + response.spectralHeight * 2.8 * sculpture)
+            + drift;
+          const y = FLOOR_Y + ridge;
+          const z = depth + Math.cos(progress * 10 + trailPhase + time * 0.22 * motion)
+            * (0.05 + high * 0.2 * motion);
+          positions.setXYZ(point, x, y, z);
+          reflected.setXYZ(point, x, FLOOR_Y - (y - FLOOR_Y) * 0.22, z + 0.16);
+        }
+        positions.needsUpdate = true;
+        reflected.needsUpdate = true;
+        trail.material.opacity = 0.36 + this.temporal.trail * 0.48;
+        reflection.material.opacity = 0.03 + this.temporal.trail * 0.08 + low * 0.12;
+      }
+    }
+
+    const waveform = metrics.waveform;
+    const ribbonPositions = this.waveformRibbon.geometry.attributes.position as THREE.BufferAttribute;
+    const glowPositions = this.waveformGlow.geometry.attributes.position as THREE.BufferAttribute;
+    const reflectionPositions = this.waveformReflection.geometry.attributes.position as THREE.BufferAttribute;
+    for (let point = 0; point < WAVEFORM_POINTS; point += 1) {
+      const progress = point / (WAVEFORM_POINTS - 1);
+      const waveformIndex = Math.min(
+        Math.max(0, waveform.length - 1),
+        Math.floor(progress * Math.max(0, waveform.length - 1)),
+      );
+      const sample = waveform.length > 0 ? ((waveform[waveformIndex] ?? 128) - 128) / 128 : 0;
+      const x = -7.15 + progress * 14.3;
+      const y = FLOOR_Y + 0.72 + sample * (0.22 + response.waveformAmplitude * 1.35 * ribbon);
+      const z = -0.64 + Math.sin(progress * Math.PI * 4 + time * 0.9 * motion) * (0.015 + ribbon * 0.025);
+      ribbonPositions.setXYZ(point, x, y, z);
+      glowPositions.setXYZ(point, x, y, z + 0.025);
+      reflectionPositions.setXYZ(point, x, FLOOR_Y - (y - FLOOR_Y) * 0.34, z + 0.12);
+    }
+    ribbonPositions.needsUpdate = true;
+    glowPositions.needsUpdate = true;
+    reflectionPositions.needsUpdate = true;
+    this.waveformRibbon.material.opacity = Math.min(1, 0.36 + ribbon * 0.24 + this.temporal.trail * 0.18 + metrics.masterLevel * 0.2);
+    this.waveformGlow.material.opacity = 0.04 + response.waveformAmplitude * (0.18 + this.temporal.trail * 0.22) * ribbon;
+    this.waveformReflection.material.opacity = 0.02 + low * (0.06 + this.temporal.trail * 0.12) * ribbon;
+
+    this.hazeMaterial.uniforms.uTime.value = time;
+    this.hazeMaterial.uniforms.uEnergy.value = Math.min(1, high * 0.72 + metrics.masterLevel * 0.5);
+    this.hazeMaterial.uniforms.uIntensity.value = Math.min(0.82, response.hazeOpacity * atmosphere);
+    this.atmosphereMaterial.opacity = Math.min(0.78, 0.035 + response.hazeOpacity * 0.68 * atmosphere);
+    this.atmosphereGroup.rotation.y = time * 0.006 * motion;
+    this.atmosphereGroup.rotation.z = Math.sin(time * 0.05 * motion) * 0.022 * atmosphere;
+    this.floorGroup.position.x = Math.sin(time * 0.08 * motion) * 0.06 * motion;
+  }
+
+  private updateTerrain(time: number, metrics: AudioMetrics): void {
+    if (!this.terrainGroup.visible) return;
+    const positions = this.terrain.geometry.attributes.position as THREE.BufferAttribute;
+    const frequency = metrics.frequency;
+    for (let index = 0; index < positions.count; index += 1) {
+      const x = index % (TERRAIN_SEGMENTS + 1);
+      const y = Math.floor(index / (TERRAIN_SEGMENTS + 1));
+      const normalized = y / TERRAIN_SEGMENTS;
+      const bin = Math.min(frequency.length - 1, Math.floor(normalized * normalized * frequency.length * 0.75));
+      const spectrum = frequency[bin] / 255;
+      const wave = Math.sin(x * (0.26 + this.temporal.morph * 0.22) + time * 1.8) * 0.18
+        + Math.cos(y * (0.18 + this.temporal.morph * 0.18) - time) * 0.12;
+      positions.setZ(index, wave + spectrum * (1.7 + this.temporal.morph * 1.8) * this.intensity);
+    }
+    positions.needsUpdate = true;
+    this.terrain.material.opacity = 0.58 + metrics.masterLevel * 0.36;
+  }
+
+  private applySceneTheme(scene: VisualSceneId): void {
+    const theme = visualSceneById(scene);
+    const color = new THREE.Color(theme.color);
+    const accent = new THREE.Color(theme.accent);
+    this.bloomMaterial.uniforms.uColorA.value = color;
+    this.bloomMaterial.uniforms.uColorB.value = accent;
+    this.atmosphereMaterial.color = color;
+    this.waveformGlow.material.color = accent;
+    this.waveformReflection.material.color = color;
+    this.terrain.material.color = color;
+    this.core.material.emissive = accent;
+    for (let index = 0; index < this.tunnelRings.length; index += 1) {
+      const material = this.tunnelRings[index]?.material as THREE.MeshBasicMaterial | undefined;
+      if (!material) continue;
+      material.color = index % 3 === 0 ? color : index % 3 === 1 ? accent : new THREE.Color(0xf7f5ff);
+    }
+    for (let index = 0; index < this.spectralTrails.length; index += 1) {
+      this.spectralTrails[index]!.material.color = index % 2 === 0 ? color : accent;
+      this.spectralReflections[index]!.material.color = index % 2 === 0 ? accent : color;
+    }
+  }
+
+  private adaptQuality(): void {
+    if (this.exportLock) return;
+    this.stableFrames += 1;
+    if (this.frameTimeEma > 20 && this.stableFrames > 90 && this.pixelRatio > 1) {
+      this.pixelRatio = Math.max(1, this.pixelRatio - 0.18);
+      this.renderer.setPixelRatio(this.pixelRatio);
+      this.composer.setPixelRatio(this.pixelRatio);
+      this.resize();
+      this.stableFrames = 0;
+    } else if (this.frameTimeEma < 13.8 && this.stableFrames > 300 && this.pixelRatio < Math.min(window.devicePixelRatio || 1, 1.75)) {
+      this.pixelRatio = Math.min(Math.min(window.devicePixelRatio || 1, 1.75), this.pixelRatio + 0.12);
+      this.renderer.setPixelRatio(this.pixelRatio);
+      this.composer.setPixelRatio(this.pixelRatio);
+      this.resize();
+      this.stableFrames = 0;
+    }
+  }
+
+  private resize(): void {
+    if (this.exportLock) return;
+    const parent = this.canvas.parentElement;
+    const width = Math.max(1, Math.floor(parent?.clientWidth ?? this.canvas.clientWidth));
+    const height = Math.max(1, Math.floor(parent?.clientHeight ?? this.canvas.clientHeight));
+    this.renderer.setSize(width, height, false);
+    this.composer.setSize(width, height);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private createTunnel(): void {
+    const geometry = new THREE.TorusGeometry(7.2, 0.055, 6, 72);
+    const colors = [0xff3f91, 0xffb443, 0x55ffd4, 0x6f8cff, 0xb269ff];
+    for (let index = 0; index < 30; index += 1) {
+      const material = new THREE.MeshBasicMaterial({
+        color: colors[index % colors.length],
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const ring = new THREE.Mesh(geometry, material);
+      ring.position.z = 7 - index * 1.85;
+      ring.rotation.z = index * 0.32;
+      this.tunnelGroup.add(ring);
+      this.tunnelRings.push(ring);
+    }
+  }
+
+  private createBloom(): void {
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const seeds = new Float32Array(PARTICLE_COUNT);
+    let randomState = 0xabc123;
+    const random = () => {
+      randomState = Math.imul(randomState ^ (randomState >>> 15), 1 | randomState);
+      randomState ^= randomState + Math.imul(randomState ^ (randomState >>> 7), 61 | randomState);
+      return ((randomState ^ (randomState >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let index = 0; index < PARTICLE_COUNT; index += 1) {
+      const radius = Math.sqrt(random()) * 6.8;
+      const angle = random() * Math.PI * 2;
+      const depth = (random() - 0.5) * 5;
+      positions[index * 3] = Math.cos(angle) * radius;
+      positions[index * 3 + 1] = Math.sin(angle) * radius;
+      positions[index * 3 + 2] = depth - 5;
+      seeds[index] = random();
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    const points = new THREE.Points(geometry, this.bloomMaterial);
+    this.bloomPoints = points;
+    this.bloomGroup.add(points);
+  }
+
+  private createBloomMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uEnergy: { value: 0 },
+        uIntensity: { value: 0.7 },
+        uPointSize: { value: 1.5 },
+        uColorA: { value: new THREE.Color(0xff3f91) },
+        uColorB: { value: new THREE.Color(0x58ffe0) },
+      },
+      vertexShader: `
+        attribute float aSeed;
+        uniform float uTime;
+        uniform float uEnergy;
+        uniform float uIntensity;
+        uniform float uPointSize;
+        varying float vSeed;
+        void main() {
+          vSeed = aSeed;
+          vec3 p = position;
+          float angle = uTime * (0.08 + aSeed * 0.18) + p.z * 0.06;
+          mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+          p.xy = rotation * p.xy;
+          p.xy *= 1.0 + uEnergy * (0.15 + aSeed * 0.48) * uIntensity;
+          p.z += sin(uTime * 0.8 + aSeed * 18.0) * (0.1 + uEnergy * 0.6);
+          vec4 view = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * view;
+          gl_PointSize = (uPointSize + aSeed * 2.2) * (180.0 / max(1.0, -view.z));
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        uniform float uEnergy;
+        varying float vSeed;
+        void main() {
+          vec2 centered = gl_PointCoord - 0.5;
+          float distanceToCenter = length(centered);
+          float alpha = smoothstep(0.5, 0.06, distanceToCenter);
+          vec3 color = mix(uColorA, uColorB, vSeed + uEnergy * 0.2);
+          gl_FragColor = vec4(color, alpha * (0.38 + uEnergy * 0.62));
+        }
+      `,
+    });
+  }
+
+  private createSignalBloom(): void {
+    const hazeGeometry = new THREE.PlaneGeometry(32, 24);
+    const haze = new THREE.Mesh(hazeGeometry, this.hazeMaterial);
+    haze.position.set(0, 0.8, -16);
+    haze.renderOrder = -20;
+    this.signalBloomGroup.add(haze);
+
+    const colors = [0xff27d8, 0xff4ff2, 0xc33cff, 0x7e5cff, 0x27d7ff];
+    for (let trailIndex = 0; trailIndex < SPECTRAL_TRAIL_COUNT; trailIndex += 1) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(SPECTRAL_POINTS * 3), 3));
+      const material = new THREE.LineBasicMaterial({
+        color: colors[trailIndex % colors.length],
+        transparent: true,
+        opacity: 0.68,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const trail = new THREE.Line(geometry, material);
+      trail.renderOrder = 4 + trailIndex;
+      this.spectralTrails.push(trail);
+      this.signalBloomGroup.add(trail);
+
+      const reflectionGeometry = new THREE.BufferGeometry();
+      reflectionGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(SPECTRAL_POINTS * 3), 3),
+      );
+      const reflectionMaterial = new THREE.LineBasicMaterial({
+        color: colors[trailIndex % colors.length],
+        transparent: true,
+        opacity: 0.08,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const reflection = new THREE.Line(reflectionGeometry, reflectionMaterial);
+      reflection.renderOrder = 2;
+      this.spectralReflections.push(reflection);
+      this.signalBloomGroup.add(reflection);
+    }
+
+    this.waveformRibbon.renderOrder = 80;
+    this.waveformGlow.renderOrder = 79;
+    this.waveformReflection.renderOrder = 3;
+    this.signalBloomGroup.add(this.waveformGlow, this.waveformRibbon, this.waveformReflection);
+
+    const railMaterial = new THREE.LineBasicMaterial({
+      color: 0x2eeaff,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const railPositions = new Float32Array([
+      -7.1, -3.2, -2.8, -7.1, 4.9, -2.8,
+      7.1, -3.2, -2.8, 7.1, 4.9, -2.8,
+      -6.75, 4.55, -3.2, -5.4, 4.55, -3.2,
+      5.4, -3.05, -3.2, 6.75, -3.05, -3.2,
+    ]);
+    const railGeometry = new THREE.BufferGeometry();
+    railGeometry.setAttribute("position", new THREE.BufferAttribute(railPositions, 3));
+    this.signalBloomGroup.add(new THREE.LineSegments(railGeometry, railMaterial));
+  }
+
+  private createWaveformRibbon(): {
+    ribbon: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+    glow: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+    reflection: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  } {
+    const geometry = () => {
+      const value = new THREE.BufferGeometry();
+      value.setAttribute("position", new THREE.BufferAttribute(new Float32Array(WAVEFORM_POINTS * 3), 3));
+      return value;
+    };
+    const ribbon = new THREE.Line(
+      geometry(),
+      new THREE.LineBasicMaterial({
+        color: 0xf7f5ff,
+        transparent: true,
+        opacity: 0.86,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    const glow = new THREE.Line(
+      geometry(),
+      new THREE.LineBasicMaterial({
+        color: 0xff29d7,
+        transparent: true,
+        opacity: 0.24,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    const reflection = new THREE.Line(
+      geometry(),
+      new THREE.LineBasicMaterial({
+        color: 0x32ddff,
+        transparent: true,
+        opacity: 0.08,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    return { ribbon, glow, reflection };
+  }
+
+  private createAtmosphere(): THREE.PointsMaterial {
+    const positions = new Float32Array(ATMOSPHERE_PARTICLES * 3);
+    let state = 0x51a9e2;
+    const random = () => {
+      state = Math.imul(state ^ (state >>> 15), 1 | state);
+      state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
+      return ((state ^ (state >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let index = 0; index < ATMOSPHERE_PARTICLES; index += 1) {
+      positions[index * 3] = (random() - 0.5) * 22;
+      positions[index * 3 + 1] = (random() - 0.42) * 15;
+      positions[index * 3 + 2] = -2 - random() * 20;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+      color: 0xff4cda,
+      size: 0.035,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    this.atmosphereGroup.add(new THREE.Points(geometry, material));
+    return material;
+  }
+
+  private createFloor(): void {
+    const grid = new THREE.GridHelper(24, 36, 0x512065, 0x101d31);
+    grid.position.set(0, FLOOR_Y, -5.5);
+    const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
+    for (const material of materials) {
+      material.transparent = true;
+      material.opacity = 0.22;
+      material.blending = THREE.AdditiveBlending;
+      material.depthWrite = false;
+    }
+    this.floorGroup.add(grid);
+  }
+
+  private createHazeMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uEnergy: { value: 0 },
+        uIntensity: { value: 0.2 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uEnergy;
+        uniform float uIntensity;
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        void main() {
+          vec2 p = vUv - 0.5;
+          float radial = max(0.0, 1.0 - length(p * vec2(1.05, 0.82)) * 1.75);
+          float cloudA = sin(p.x * 8.0 + uTime * 0.045) * sin(p.y * 9.0 - uTime * 0.038);
+          float cloudB = sin((p.x + p.y) * 13.0 - uTime * 0.026);
+          float grain = hash(floor(vUv * 220.0) + floor(uTime * 0.2));
+          float haze = radial * (0.16 + cloudA * 0.06 + cloudB * 0.035 + grain * 0.025);
+          vec3 violet = vec3(0.34, 0.01, 0.48);
+          vec3 cyan = vec3(0.01, 0.2, 0.34);
+          vec3 color = mix(violet, cyan, clamp(vUv.x + uEnergy * 0.22, 0.0, 1.0));
+          gl_FragColor = vec4(color, haze * (0.55 + uEnergy) * (0.6 + uIntensity));
+        }
+      `,
+    });
+  }
+
+  private createTerrain(): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
+    const geometry = new THREE.PlaneGeometry(18, 24, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x69fbd0,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.68,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI * 0.48;
+    mesh.position.set(0, -4.5, -10);
+    return mesh;
+  }
+
+  private createCore(): THREE.Mesh<THREE.IcosahedronGeometry, THREE.MeshStandardMaterial> {
+    const geometry = new THREE.IcosahedronGeometry(1.35, 3);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x0b0e16,
+      emissive: 0xff377f,
+      emissiveIntensity: 1.2,
+      metalness: 0.82,
+      roughness: 0.24,
+      wireframe: true,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.z = -1.5;
+    return mesh;
+  }
+
+  private createBranding(): { texture: THREE.CanvasTexture; sprite: THREE.Sprite } {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1024;
+    canvas.height = 256;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(-0.1, 0.76, 0);
+    sprite.scale.set(1.7, 0.425, 1);
+    sprite.renderOrder = 10_000;
+    return { texture, sprite };
+  }
+
+  private drawBranding(scene: VisualSceneId): void {
+    const canvas = this.brandingTexture.image as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    const theme = visualSceneById(scene);
+    const sceneName = theme.name.toUpperCase();
+    context.fillStyle = "rgba(2, 1, 7, 0.66)";
+    context.fillRect(18, 22, 760, 168);
+    context.fillStyle = "#ff34db";
+    context.fillRect(52, 48, 82, 5);
+    context.fillStyle = "#32dfff";
+    context.fillRect(141, 48, 14, 5);
+    context.fillStyle = "#f7f7f4";
+    context.font = "600 42px -apple-system, BlinkMacSystemFont, sans-serif";
+    context.fillText(`MUSICA / ${sceneName}`, 52, 112);
+    context.fillStyle = "#ff35d8";
+    context.font = "500 22px Menlo, monospace";
+    context.fillText("LIVE GENERATIVE SET  /  48 KHZ", 54, 160);
+    this.brandingTexture.needsUpdate = true;
+  }
+
+}

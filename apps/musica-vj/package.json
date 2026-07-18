@@ -1,0 +1,44 @@
+{
+  "name": "@musica/vj-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "test": "vitest",
+    "test:run": "vitest run --coverage=false",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "render:samples": "node scripts/render-samples.mjs",
+    "verify:samples": "node scripts/verify-samples.mjs",
+    "verify:samples:reproducible": "node scripts/verify-reproducibility.mjs",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "verify:no-secrets": "node scripts/verify-no-secrets.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-dialog": "2.7.2",
+    "@tauri-apps/plugin-fs": "2.5.1",
+    "@tauri-apps/plugin-global-shortcut": "2.3.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.185.1",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "29.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

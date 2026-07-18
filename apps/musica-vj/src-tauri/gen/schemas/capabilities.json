@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Least-privilege capability set for the main performance window","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-save","fs:allow-write-file","global-shortcut:allow-register","global-shortcut:allow-unregister-all"]}}

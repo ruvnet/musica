@@ -9,6 +9,9 @@ keywords = ["audio", "source-separation", "spectral", "mincut", "dsp"]
 categories = ["multimedia::audio", "algorithms", "science"]
 
 [workspace]
+members = ["apps/musica-vj/src-tauri"]
+default-members = ["."]
+resolver = "2"
 
 [features]
 default = []
@@ -22,3 +25,6 @@ ruvector-mincut = { version = "2.0", features = ["monitoring", "approximate", "e
 candle-core = { version = "0.10", optional = true }
 candle-nn = { version = "0.10", optional = true }
 candle-transformers = { version = "0.10", optional = true }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
