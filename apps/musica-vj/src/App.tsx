@@ -314,11 +314,15 @@ export function App() {
         setLyriaRealtimeBusy(true);
         try {
           setLyriaSession(await startLyriaRealtime(realtimeRequest));
+          engineRef.current.setRealtimeStreamPrimary(true);
         } catch (error) {
+          engineRef.current.setRealtimeStreamPrimary(false);
           setNotice(error instanceof Error ? error.message : "Lyria RealTime start failed");
         } finally {
           setLyriaRealtimeBusy(false);
         }
+      } else if (lyriaSession) {
+        engineRef.current.setRealtimeStreamPrimary(true);
       }
     }
     await engineRef.current.toggle();
@@ -343,6 +347,7 @@ export function App() {
         ? await updateLyriaRealtime(realtimeRequest)
         : await startLyriaRealtime(realtimeRequest);
       setLyriaSession(session);
+      engineRef.current.setRealtimeStreamPrimary(true);
       await refreshLyriaRealtimeStatus();
       setNotice(`${session.model} ${lyriaSession ? "updated" : "armed"}: ${session.config.bpm} BPM · density ${Math.round(session.config.density * 100)}.`);
     } catch (error) {
@@ -376,6 +381,7 @@ export function App() {
     try {
       await stopLyriaRealtime();
       setLyriaSession(undefined);
+      engineRef.current.setRealtimeStreamPrimary(false);
       await refreshLyriaRealtimeStatus();
       setNotice("Lyria RealTime session stopped.");
     } catch (error) {

@@ -87,6 +87,7 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
+const REALTIME_PRIMARY_TRACK_DUCK = 0.16;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
@@ -175,6 +176,7 @@ export class AudioEngine {
   private fxWet?: GainNode;
   private reverb?: ConvolverNode;
   private reverbWet?: GainNode;
+  private realtimeOutputGain?: GainNode;
   private masterAnalyser?: AnalyserNode;
   private captureDestination?: MediaStreamAudioDestinationNode;
   private noiseBuffer?: AudioBuffer;
@@ -192,6 +194,7 @@ export class AudioEngine {
   private playing = false;
   private droppedLateSteps = 0;
   private realtimeStreamTime = 0;
+  private realtimeStreamPrimary = false;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -214,6 +217,7 @@ export class AudioEngine {
     const fxWet = context.createGain();
     const reverb = context.createConvolver();
     const reverbWet = context.createGain();
+    const realtimeOutputGain = context.createGain();
     const masterAnalyser = context.createAnalyser();
     const captureDestination = context.createMediaStreamDestination();
 
@@ -228,6 +232,7 @@ export class AudioEngine {
     fxWet.gain.value = 0.24;
     reverb.buffer = this.createImpulseResponse(context, 1.7, 2.4);
     reverbWet.gain.value = 0.18;
+    realtimeOutputGain.gain.value = 0.94;
     masterAnalyser.fftSize = 2048;
     masterAnalyser.smoothingTimeConstant = 0.76;
 
@@ -235,6 +240,7 @@ export class AudioEngine {
     fxDelay.connect(fxFeedback).connect(fxDelay);
     fxDelay.connect(fxWet).connect(compressor);
     reverb.connect(reverbWet).connect(compressor);
+    realtimeOutputGain.connect(masterGain);
     compressor.connect(masterAnalyser);
     masterAnalyser.connect(context.destination);
     masterAnalyser.connect(captureDestination);
@@ -247,6 +253,7 @@ export class AudioEngine {
     this.fxWet = fxWet;
     this.reverb = reverb;
     this.reverbWet = reverbWet;
+    this.realtimeOutputGain = realtimeOutputGain;
     this.masterAnalyser = masterAnalyser;
     this.captureDestination = captureDestination;
     this.frequencyBuffer = new Uint8Array(masterAnalyser.frequencyBinCount);
@@ -805,6 +812,12 @@ export class AudioEngine {
     this.applyMix();
   }
 
+  setRealtimeStreamPrimary(enabled: boolean): void {
+    if (this.realtimeStreamPrimary === enabled) return;
+    this.realtimeStreamPrimary = enabled;
+    this.applyMix();
+  }
+
   private applyMix(shouldEmit = true, immediate = false): void {
     if (this.tracks.size === 0) {
       if (shouldEmit) this.emit();
@@ -812,8 +825,9 @@ export class AudioEngine {
     }
     const anySolo = [...this.tracks.values()].some((track) => track.mix.solo);
     const now = this.context?.currentTime ?? 0;
+    const realtimeDuck = this.realtimeStreamPrimary ? REALTIME_PRIMARY_TRACK_DUCK : 1;
     for (const track of this.tracks.values()) {
-      const gain = effectiveTrackGain(track.mix, anySolo);
+      const gain = effectiveTrackGain(track.mix, anySolo) * realtimeDuck;
       if (immediate) track.gain.gain.value = gain;
       else track.gain.gain.setTargetAtTime(gain, now, 0.012);
     }
@@ -970,11 +984,11 @@ export class AudioEngine {
       left[frame] = leftSample;
       right[frame] = rightSample;
     }
-    const track = this.tracks.get("texture");
-    if (!track) return;
+    const output = this.realtimeOutputGain ?? this.masterGain;
+    if (!output) return;
     const source = context.createBufferSource();
     source.buffer = buffer;
-    source.connect(track.input);
+    source.connect(output);
     const earliest = context.currentTime + 0.08;
     if (this.realtimeStreamTime < earliest || this.realtimeStreamTime > context.currentTime + 1.8) {
       this.realtimeStreamTime = earliest;

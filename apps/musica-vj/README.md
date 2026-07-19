@@ -121,7 +121,7 @@ A runtime environment variable cannot widen the compiled provider allowlist. The
 
 ### Lyria RealTime piano and Auto DJ
 
-The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with weighted prompt rows, style buttons for Samba, Rock, Jazz, Techno, Classical, and Cinema, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
+The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with weighted prompt rows, style buttons for Samba, Rock, Jazz, Techno, Classical, and Cinema, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. Pressing Play starts the Lyria RealTime stream when available and routes that stream as the primary output bus while the local sequencer ducks down into guide/accent duty. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
 
 Run the desktop app with realtime controls enabled:
 
