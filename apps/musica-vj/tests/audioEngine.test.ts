@@ -129,6 +129,10 @@ class FakeAudioContext {
     return new FakeAudioBuffer(channels, length, sampleRate) as unknown as AudioBuffer;
   }
 
+  async decodeAudioData(): Promise<AudioBuffer> {
+    return new FakeAudioBuffer(2, 48_000, 48_000) as unknown as AudioBuffer;
+  }
+
   async resume(): Promise<void> {}
 }
 
@@ -164,6 +168,42 @@ describe("audio engine state application", () => {
   it("starts one-shot imports immediately while preserving bar quantization for loops", () => {
     expect(importedAudioStartTime(false, 10, 12.5)).toBeCloseTo(10.01, 8);
     expect(importedAudioStartTime(true, 10, 12.5)).toBe(12.5);
+  });
+
+  it("sets sequencer steps idempotently for drag painting", () => {
+    const engine = new AudioEngine();
+    engine.setStep("lead", 1, true);
+    engine.setStep("lead", 2, true);
+    engine.setStep("lead", 1, true);
+    engine.setStep("lead", 2, false);
+
+    const lead = engine.getSnapshot().tracks.find((track) => track.id === "lead");
+    expect(lead?.pattern[1]).toBe(true);
+    expect(lead?.pattern[2]).toBe(false);
+  });
+
+  it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    const before = engine.getSnapshot().tracks.find((track) => track.id === "lead");
+
+    await engine.loadTrackToneFile("lead", new Uint8Array([1, 2, 3]).buffer, "Moonlight Glass", {
+      baseNote: 73,
+      grainSeconds: 0.44,
+      level: 0.06,
+      brightness: 0.82,
+      windowStartSeconds: 10,
+      windowDurationSeconds: 20,
+    });
+
+    const after = engine.getSnapshot().tracks.find((track) => track.id === "lead");
+    expect(after?.aiToneFile).toBe("Moonlight Glass");
+    expect(after?.loadedFile).toBeUndefined();
+    expect(after?.pattern).toEqual(before?.pattern);
+    expect(after?.notes).toEqual(before?.notes);
+
+    engine.clearTrackToneFile("lead");
+    expect(engine.getSnapshot().tracks.find((track) => track.id === "lead")?.aiToneFile).toBeUndefined();
   });
 
   it("adds bounded swing and humanization to synthesized steps", () => {

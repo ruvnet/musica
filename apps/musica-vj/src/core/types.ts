@@ -89,6 +89,7 @@ export interface PerformanceTemplate {
 
 export interface TrackSnapshot extends TrackDefinition, TrackMix {
   loadedFile?: string;
+  aiToneFile?: string;
 }
 
 export interface AudioMetrics {

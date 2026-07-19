@@ -16,6 +16,7 @@ type StatusListener = (status: ControllerStatus) => void;
 
 const KEYBOARD_ACTIONS: Record<string, { action: ControlAction; value?: number }> = {
   Space: { action: "transport.toggle" },
+  MediaPlayPause: { action: "transport.toggle" },
   KeyR: { action: "transport.record" },
   KeyT: { action: "tempo.tap" },
   KeyM: { action: "track.mute" },
@@ -85,6 +86,7 @@ export class ControlRouter {
     if (this.started) return;
     this.started = true;
     window.addEventListener("keydown", this.onKeyDown);
+    this.startMediaSession();
     await Promise.allSettled([this.startTauriInputs(), this.startMidi()]);
   }
 
@@ -92,6 +94,7 @@ export class ControlRouter {
     if (!this.started) return;
     this.started = false;
     window.removeEventListener("keydown", this.onKeyDown);
+    this.stopMediaSession();
     this.unlistenBridge?.();
     this.unlistenBridge = undefined;
     if (this.status.globalShortcuts && isTauri()) {
@@ -140,6 +143,27 @@ export class ControlRouter {
     event.preventDefault();
     this.dispatch(mapping.action, mapping.value, "keyboard");
   };
+
+  private startMediaSession(): void {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler("play", () => this.dispatch("transport.toggle", undefined, "keyboard"));
+      navigator.mediaSession.setActionHandler("pause", () => this.dispatch("transport.toggle", undefined, "keyboard"));
+    } catch (error) {
+      console.info("Media key handling is unavailable in this webview", error);
+    }
+  }
+
+  private stopMediaSession(): void {
+    if (!("mediaSession" in navigator)) return;
+    for (const action of ["play", "pause"] as const) {
+      try {
+        navigator.mediaSession.setActionHandler(action, null);
+      } catch {
+        // Ignore unsupported media session actions during teardown.
+      }
+    }
+  }
 
   private async startTauriInputs(): Promise<void> {
     if (!isTauri()) return;

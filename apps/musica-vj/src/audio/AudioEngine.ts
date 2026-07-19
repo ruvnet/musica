@@ -33,11 +33,26 @@ interface TrackRuntime {
   loadedLoop: boolean;
   loadedStartedAt?: number;
   loopSource?: AudioBufferSourceNode;
+  aiTone?: AiToneRuntime;
 }
 
 interface ScheduledSourceMetadata {
   startsAt: number;
   imported: boolean;
+}
+
+export interface AiToneOptions {
+  baseNote?: number;
+  grainSeconds?: number;
+  level?: number;
+  brightness?: number;
+  windowStartSeconds?: number;
+  windowDurationSeconds?: number;
+}
+
+interface AiToneRuntime extends Required<AiToneOptions> {
+  buffer: AudioBuffer;
+  fileName: string;
 }
 
 export interface LoadAudioOptions {
@@ -49,6 +64,10 @@ export interface LoadAudioOptions {
 export interface LoadedAudioDetails {
   encoded?: EncodedAudioMetadata;
   analysis: AudioAnalysisResult;
+}
+
+export interface LoadedAiToneDetails extends LoadedAudioDetails {
+  fileName: string;
 }
 
 export interface EngineSnapshot {
@@ -68,6 +87,7 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
+const DEFAULT_REALTIME_GUIDE_LEVEL = 0.34;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
@@ -156,6 +176,7 @@ export class AudioEngine {
   private fxWet?: GainNode;
   private reverb?: ConvolverNode;
   private reverbWet?: GainNode;
+  private realtimeOutputGain?: GainNode;
   private masterAnalyser?: AnalyserNode;
   private captureDestination?: MediaStreamAudioDestinationNode;
   private noiseBuffer?: AudioBuffer;
@@ -172,6 +193,9 @@ export class AudioEngine {
   private transportStartedAt = 0;
   private playing = false;
   private droppedLateSteps = 0;
+  private realtimeStreamTime = 0;
+  private realtimeStreamPrimary = false;
+  private realtimeGuideLevel = DEFAULT_REALTIME_GUIDE_LEVEL;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -194,6 +218,7 @@ export class AudioEngine {
     const fxWet = context.createGain();
     const reverb = context.createConvolver();
     const reverbWet = context.createGain();
+    const realtimeOutputGain = context.createGain();
     const masterAnalyser = context.createAnalyser();
     const captureDestination = context.createMediaStreamDestination();
 
@@ -208,6 +233,7 @@ export class AudioEngine {
     fxWet.gain.value = 0.24;
     reverb.buffer = this.createImpulseResponse(context, 1.7, 2.4);
     reverbWet.gain.value = 0.18;
+    realtimeOutputGain.gain.value = 0.94;
     masterAnalyser.fftSize = 2048;
     masterAnalyser.smoothingTimeConstant = 0.76;
 
@@ -215,6 +241,7 @@ export class AudioEngine {
     fxDelay.connect(fxFeedback).connect(fxDelay);
     fxDelay.connect(fxWet).connect(compressor);
     reverb.connect(reverbWet).connect(compressor);
+    realtimeOutputGain.connect(masterGain);
     compressor.connect(masterAnalyser);
     masterAnalyser.connect(context.destination);
     masterAnalyser.connect(captureDestination);
@@ -227,6 +254,7 @@ export class AudioEngine {
     this.fxWet = fxWet;
     this.reverb = reverb;
     this.reverbWet = reverbWet;
+    this.realtimeOutputGain = realtimeOutputGain;
     this.masterAnalyser = masterAnalyser;
     this.captureDestination = captureDestination;
     this.frequencyBuffer = new Uint8Array(masterAnalyser.frequencyBinCount);
@@ -379,6 +407,17 @@ export class AudioEngine {
     if (!track || !context) return;
     const time = context.currentTime + 0.01;
     const note = track.definition.notes[this.transportStepCounter % track.definition.notes.length];
+    this.triggerTrackNote(track, note, time);
+  }
+
+  triggerNote(id: TrackId, note: number): void {
+    const track = this.tracks.get(id);
+    const context = this.context;
+    if (!track || !context || !Number.isFinite(note)) return;
+    this.triggerTrackNote(track, Math.round(clamp(note, 0, 127)), context.currentTime + 0.01);
+  }
+
+  private triggerTrackNote(track: TrackRuntime, note: number, time: number): void {
     if (track.definition.instrument === "drums") this.triggerDrum(track, note, this.transportStepCounter, time);
     else if (track.definition.instrument === "bass") this.triggerBass(track, note, time);
     else if (track.definition.instrument === "poly") this.triggerChord(track, note, time);
@@ -453,6 +492,7 @@ export class AudioEngine {
     filter.connect(envelope).connect(track.input);
     this.startSource(sub, time, time + 0.44);
     this.startSource(mid, time, time + 0.44);
+    this.triggerAiToneGrain(track, note, time, 0.48, 0.72);
   }
 
   private triggerChord(track: TrackRuntime, root: number, time: number): void {
@@ -486,6 +526,7 @@ export class AudioEngine {
     envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.62);
     source.connect(formant).connect(secondFormant).connect(envelope).connect(track.input);
     this.startSource(source, time, time + 0.66);
+    this.triggerAiToneGrain(track, note, time, 0.62, 0.62);
   }
 
   private triggerTexture(track: TrackRuntime, note: number, time: number): void {
@@ -518,6 +559,7 @@ export class AudioEngine {
     this.startSource(modulator, time, time + 1.48);
     this.startSource(carrier, time, time + 1.48);
     this.startSource(air, time, time + 1.62);
+    this.triggerAiToneGrain(track, note, time, 1.48, 0.78);
   }
 
   private triggerTone(
@@ -546,6 +588,40 @@ export class AudioEngine {
     envelope.gain.exponentialRampToValueAtTime(0.001, time + duration);
     oscillator.connect(filter).connect(envelope).connect(track.input);
     this.startSource(oscillator, time, time + duration + 0.02);
+    this.triggerAiToneGrain(track, note, time, duration, 1);
+  }
+
+  private triggerAiToneGrain(track: TrackRuntime, note: number, time: number, duration: number, intensity: number): void {
+    const aiTone = track.aiTone;
+    if (!aiTone) return;
+    const context = this.requireContext();
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const envelope = context.createGain();
+    const grainSeconds = clamp(Math.min(aiTone.grainSeconds, duration + 0.32), 0.08, 2.4);
+    const attack = Math.min(0.045, grainSeconds * 0.18);
+    const releaseStart = Math.max(attack + 0.02, grainSeconds * 0.72);
+    const windowStart = clamp(aiTone.windowStartSeconds, 0, Math.max(0, aiTone.buffer.duration - 0.05));
+    const windowEnd = clamp(windowStart + aiTone.windowDurationSeconds, windowStart + 0.05, aiTone.buffer.duration);
+    const windowWidth = Math.max(0.05, windowEnd - windowStart - grainSeconds);
+    const fractionalSeed = Math.abs(Math.sin(note * 12.9898 + time * 78.233)) % 1;
+    const offset = clamp(windowStart + fractionalSeed * windowWidth, 0, Math.max(0, aiTone.buffer.duration - grainSeconds));
+    const semitones = note - aiTone.baseNote;
+
+    source.buffer = aiTone.buffer;
+    source.playbackRate.value = 2 ** (semitones / 12);
+    filter.type = "lowpass";
+    filter.frequency.value = 700 + aiTone.brightness * 7_600;
+    filter.Q.value = 0.9 + aiTone.brightness * 2.4;
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.linearRampToValueAtTime(aiTone.level * intensity, time + attack);
+    envelope.gain.setValueAtTime(aiTone.level * intensity, time + releaseStart);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + grainSeconds);
+    source.connect(filter).connect(envelope).connect(track.input);
+    this.scheduledSources.set(source, { startsAt: time, imported: false });
+    source.addEventListener("ended", () => this.scheduledSources.delete(source), { once: true });
+    source.start(time, offset, grainSeconds);
+    source.stop(time + grainSeconds + 0.02);
   }
 
   private startSource(source: AudioScheduledSourceNode, startsAt: number, stopsAt: number): void {
@@ -626,6 +702,51 @@ export class AudioEngine {
     return { encoded, analysis };
   }
 
+  async loadTrackToneFile(
+    id: TrackId,
+    bytes: ArrayBuffer,
+    fileName: string,
+    options: LoadAudioOptions & AiToneOptions = {},
+  ): Promise<LoadedAiToneDetails> {
+    if (bytes.byteLength > MAX_IMPORT_BYTES) throw new Error("AI tone files are limited to 250 MB");
+    let encoded: EncodedAudioMetadata | undefined;
+    try {
+      encoded = inspectEncodedAudio(bytes, options.declaredMimeType);
+    } catch (error) {
+      if (options.requireEncodedValidation) throw error;
+    }
+    await this.initialize();
+    const track = this.tracks.get(id);
+    if (!track) throw new Error(`Unknown track: ${id}`);
+    const buffer = await this.requireContext().decodeAudioData(bytes.slice(0));
+    if (buffer.duration > MAX_CLIP_DURATION_SECONDS) throw new Error("AI tone files are limited to 10 minutes");
+    if (buffer.numberOfChannels > 8) throw new Error("AI tone files are limited to 8 channels");
+    if (buffer.sampleRate > 192_000) throw new Error("AI tone files are limited to 192 kHz");
+    const analysis = analyzeDecodedPcm({
+      sampleRateHz: buffer.sampleRate,
+      channels: Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel)),
+    });
+    track.aiTone = {
+      buffer,
+      fileName,
+      baseNote: options.baseNote ?? 60,
+      grainSeconds: clamp(options.grainSeconds ?? 0.7, 0.08, 2.4),
+      level: clamp(options.level ?? 0.055, 0, 0.35),
+      brightness: clamp(options.brightness ?? 0.5, 0, 1),
+      windowStartSeconds: Math.max(0, options.windowStartSeconds ?? 0),
+      windowDurationSeconds: Math.max(0.05, options.windowDurationSeconds ?? buffer.duration),
+    };
+    this.emit();
+    return { encoded, analysis, fileName };
+  }
+
+  clearTrackToneFile(id: TrackId): void {
+    const track = this.tracks.get(id);
+    if (!track) return;
+    track.aiTone = undefined;
+    this.emit();
+  }
+
   clearAudioFile(id: TrackId): void {
     const track = this.tracks.get(id);
     if (!track) return;
@@ -643,6 +764,14 @@ export class AudioEngine {
     const definition = track?.definition ?? this.definitions.find((candidate) => candidate.id === id);
     if (!definition || step < 0 || step >= STEPS_PER_BAR) return;
     definition.pattern[step] = !definition.pattern[step];
+    this.emit();
+  }
+
+  setStep(id: TrackId, step: number, active: boolean): void {
+    const track = this.tracks.get(id);
+    const definition = track?.definition ?? this.definitions.find((candidate) => candidate.id === id);
+    if (!definition || step < 0 || step >= STEPS_PER_BAR || definition.pattern[step] === active) return;
+    definition.pattern[step] = active;
     this.emit();
   }
 
@@ -684,6 +813,19 @@ export class AudioEngine {
     this.applyMix();
   }
 
+  setRealtimeStreamPrimary(enabled: boolean): void {
+    if (this.realtimeStreamPrimary === enabled) return;
+    this.realtimeStreamPrimary = enabled;
+    this.applyMix();
+  }
+
+  setRealtimeGuideLevel(value: number): void {
+    const nextLevel = clamp(value, 0, 1);
+    if (Math.abs(this.realtimeGuideLevel - nextLevel) < 0.001) return;
+    this.realtimeGuideLevel = nextLevel;
+    this.applyMix();
+  }
+
   private applyMix(shouldEmit = true, immediate = false): void {
     if (this.tracks.size === 0) {
       if (shouldEmit) this.emit();
@@ -691,8 +833,9 @@ export class AudioEngine {
     }
     const anySolo = [...this.tracks.values()].some((track) => track.mix.solo);
     const now = this.context?.currentTime ?? 0;
+    const realtimeDuck = this.realtimeStreamPrimary ? this.realtimeGuideLevel : 1;
     for (const track of this.tracks.values()) {
-      const gain = effectiveTrackGain(track.mix, anySolo);
+      const gain = effectiveTrackGain(track.mix, anySolo) * realtimeDuck;
       if (immediate) track.gain.gain.value = gain;
       else track.gain.gain.setTargetAtTime(gain, now, 0.012);
     }
@@ -833,6 +976,38 @@ export class AudioEngine {
     return track.loadedLoop ? elapsed % duration : Math.min(elapsed, duration);
   }
 
+  async playRealtimePcm16(bytes: Uint8Array, sampleRateHz: number, channels: number): Promise<void> {
+    if (bytes.byteLength < 4 || channels < 1 || channels > 2 || sampleRateHz < 8_000 || sampleRateHz > 384_000) return;
+    await this.initialize();
+    const context = this.requireContext();
+    const frameCount = Math.floor(bytes.byteLength / 2 / channels);
+    if (frameCount <= 0) return;
+    const buffer = context.createBuffer(2, frameCount, sampleRateHz);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const leftSample = view.getInt16((frame * channels) * 2, true) / 32768;
+      const rightSample = channels === 1 ? leftSample : view.getInt16((frame * channels + 1) * 2, true) / 32768;
+      left[frame] = leftSample;
+      right[frame] = rightSample;
+    }
+    const output = this.realtimeOutputGain ?? this.masterGain;
+    if (!output) return;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(output);
+    const earliest = context.currentTime + 0.08;
+    if (this.realtimeStreamTime < earliest || this.realtimeStreamTime > context.currentTime + 1.8) {
+      this.realtimeStreamTime = earliest;
+    }
+    const startsAt = this.realtimeStreamTime;
+    this.realtimeStreamTime += buffer.duration;
+    this.scheduledSources.set(source, { startsAt, imported: true });
+    source.addEventListener("ended", () => this.scheduledSources.delete(source), { once: true });
+    source.start(startsAt);
+  }
+
   getSnapshot(): EngineSnapshot {
     const tracks = this.tracks.size > 0
       ? [...this.tracks.values()].map((track) => ({
@@ -841,6 +1016,7 @@ export class AudioEngine {
           notes: [...track.definition.notes],
           ...track.mix,
           loadedFile: track.loadedFile,
+          aiToneFile: track.aiTone?.fileName,
         }))
       : this.definitions.map((definition) => ({
           ...definition,

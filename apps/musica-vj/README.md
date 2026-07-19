@@ -61,6 +61,7 @@ These artifacts are for validation and internal distribution. Public macOS relea
 | Input | Action |
 |---|---|
 | Space | Play or pause |
+| Keyboard media Play/Pause | Play or pause |
 | R | Start or stop capture |
 | T | Tap tempo |
 | Enter | Trigger the selected track |
@@ -78,9 +79,9 @@ The left-side Artist Macros turn Signal Bloom into a visual instrument: Sculptur
 
 The visual bank includes Neon Fold, Signal Bloom, Spectral Field, Laser Grid, Aurora Veil, Black Monolith, Pulse Field, and Chroma Wave. VJ presets such as Peak Rave, Cinema Fog, Hyperspace, and Glass Ambient apply scene, intensity, macro, and temporal settings without changing the music. Temporal controls shape realtime animation speed, strobe gating, trail persistence, geometry morph depth, camera movement, and phase offset.
 
-Performance templates apply both sound and visuals: Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, Cinematic Pulse, UK Garage Neon, Afro Cosmic House, IDM Crystalline, and Hyperpop Rush. The studio boots into UK Garage Neon from the curated MIDI-style song bank so the first play is already musical. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, and optional temporal controls.
+Performance templates apply both sound and visuals: Moonlight Sequencer, Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, Cinematic Pulse, UK Garage Neon, Afro Cosmic House, IDM Crystalline, and Hyperpop Rush. The studio boots into Afro Cosmic House from the curated MIDI-style song bank so first play starts with a stronger groove while the Lyria RealTime deck receives neutral modern House guidance instead of defaulting to Latin percussion. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, optional temporal controls, and the realtime Lyria prompt/config guide.
 
-MIDI support uses open-source building blocks where they are strongest: WEBMIDI.js handles live browser controller input, while `@tonejs/midi` parses `.mid` and `.midi` files into editable Musica track templates. Loading a MIDI file through any track's Load button maps percussion, bass, chords, lead, breath, and texture material into the six-track sequencer and applies the first MIDI tempo when available. Audio files still load as clips on the selected track.
+MIDI support uses open-source building blocks where they are strongest: WEBMIDI.js handles live browser controller input, while `@tonejs/midi` parses `.mid` and `.midi` files into editable Musica track templates. Loading a MIDI file through any track's Load button maps percussion, bass, chords, lead, breath, and texture material into the six-track sequencer and applies the first MIDI tempo when available. Audio files still load as clips on the selected track. The AI Tones bank is separate from clip loading: it loads Lyria-generated source material into MIDI-triggered grain voices, so the sequencer keeps playing editable notes instead of replacing a track with a static backing loop.
 
 F13 through F24 provide the app specific Options+ fallback. The exact mapping is in [`logitech/options-plus-fallback.json`](logitech/options-plus-fallback.json).
 
@@ -118,30 +119,43 @@ The fixed contract uses `POST /v1/music/generations` and `GET /v1/music/generati
 
 A runtime environment variable cannot widen the compiled provider allowlist. The webview content security policy has no external network origin because provider traffic and generated audio downloads stay in Rust.
 
+### Lyria RealTime piano and Auto DJ
+
+The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with a prominent style selector, weighted prompt rows, quick style buttons for House, Techno, Cinema, D+B, Hip Hop, Funk, Samba, Rock, Jazz, Classical, and Ambient, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. Pressing Play starts the app in Lyria-first mode when realtime is available: a buffering dialog holds transport until live PCM frames arrive, then routes the Lyria stream as the primary output bus while Musica ducks into guide/accent duty. Prompt, style, and realtime audio control changes are debounced into the active stream so the deck manipulates Lyria live; Stop/Pause stops the native stream with the transport. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
+
+Run the desktop app with realtime controls enabled:
+
+```sh
+GEMINI_API_KEY=replace_with_your_google_api_key
+npm run dev:lyria:realtime
+```
+
+The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates Lyria RealTime controls against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, 48 kHz stereo PCM16 output, and instrumental-only operation. Auto DJ cycles prompt sets and gradually changes density, brightness, BPM, and local keyboard gestures.
+
+When Start RT is pressed, Rust opens the official v1alpha Lyria RealTime WebSocket, sends setup, weighted prompts, generation config, and PLAY, then receives Base64 PCM chunks. React polls bounded PCM chunks through Tauri and schedules them into Web Audio through the dedicated realtime output bus so Lyria becomes the higher-quality AI bed while Musica's sequencer, MIDI, piano keys, effects, mixer, analyser, and visuals continue running locally. The deck shows streamed kilobytes once audio is arriving. Browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
+
 ### Google Lyria 3 Pro preview
 
 Lyria is a separate provider adapter for complete songs. It is optional, paid, and disabled unless all required settings are present in the Tauri process environment:
 
 ```sh
-MUSICA_CREATIVE_ENABLED=true \
-MUSICA_CREATIVE_PROVIDER=lyria_3_pro \
-GEMINI_API_KEY=replace_with_your_google_api_key \
-MUSICA_CREATIVE_MAX_GENERATION_USD=0.32 \
-MUSICA_CREATIVE_REQUEST_TIMEOUT_SECONDS=600 \
-MUSICA_CREATIVE_RETAIN_PROMPTS=false \
-MUSICA_CREATIVE_TERMS_VERSION=reviewed_2026_07_18 \
-npm run tauri dev
+GEMINI_API_KEY=replace_with_your_google_api_key
+npm run dev:lyria
 ```
 
-For local GCP CLI authentication instead of an API key, first run `gcloud auth application-default login`, then launch with:
+`dev:lyria` loads `GEMINI_API_KEY` from the shell or the nearest parent `.env` file, probes the Gemini Models endpoint to catch invalid or over-restricted keys before launch, starts Tauri with `MUSICA_CREATIVE_ENABLED=true` and `MUSICA_CREATIVE_PROVIDER=lyria_3_pro`, and keeps the key out of tracked source. The repository ignores `.env` and `.env.*`; do not commit local provider credentials.
+
+For local GCP CLI authentication instead of an API key, first sign in with application-default credentials scoped for Google Cloud APIs, then launch with:
 
 ```sh
-MUSICA_CREATIVE_ENABLED=true \
-MUSICA_CREATIVE_PROVIDER=lyria_3_pro \
-MUSICA_GCP_AUTH=gcloud \
-MUSICA_CREATIVE_MAX_GENERATION_USD=0.32 \
-npm run tauri dev
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/generative-language.retriever
+gcloud auth application-default set-quota-project ruv-dev
+npm run dev:lyria:gcloud
 ```
+
+If Google requires an OAuth client for the Gemini scope, create a Google Auth Platform desktop OAuth client, download it as `client_secret.json`, and add `--client-id-file=client_secret.json` to the `application-default login` command.
+
+`dev:lyria:gcloud` checks that `gcloud` is installed, verifies application-default credentials without printing the access token, probes the Gemini Models endpoint for OAuth scope access, then starts Tauri with `MUSICA_CREATIVE_ENABLED=true`, `MUSICA_CREATIVE_PROVIDER=lyria_3_pro`, and `MUSICA_GCP_AUTH=gcloud`. It defaults the running-process generation ceiling to USD 0.32 and prompt retention to hashed receipts unless those environment variables are already set. A normal `gcloud auth login` token is not enough for this path because it can lack the scopes required by the Gemini Interactions API.
 
 | Setting | Meaning |
 |---|---|
@@ -160,6 +174,24 @@ The credential is consumed only by Rust application code, but an operator who la
 
 Use the generation panel to describe the complete track, set 31 to 180 seconds and 60 to 200 BPM, choose instrumental or vocal output, add optional lyrics and timed sections, choose MP3 or WAV, affirm rights for supplied lyrics, and approve the displayed cost. The same panel has key, tonal-center, production-intensity, and avoid-list controls. `GENERATE BETTER LOOP` uses those controls to request a 32-second, seamless, instrumental, bar-accurate WAV loop through the same governed Lyria/Gemini path and loads the result as a bar-quantized loop on the selected track. Standard song generation still loads as one-shot audio. Submission creates a local asynchronous task. Cancellation before provider dispatch releases the reservation. Cancellation after dispatch leaves the task in `processing`, marks cancellation requested, and keeps polling because Google exposes no cancellation operation; a late valid result is retained and is not auto-loaded. On completion, Musica measures encoded metadata and decoded waveform, BS.1770-style integrated loudness, BPM, beat grid, onset map, spectral profile, confidence-gated musical key, probable sections, and recommended visual scene. Analysis selects a dominant-energy channel for waveform, beat, key, and spectrum so anti-phase stereo does not cancel; loudness K-weights and gates each channel before summing energy. Bass drives camera displacement, detected beats drive radial pulse, high-frequency energy controls particle count, and measured section boundaries switch terrain, bloom, or tunnel scenes during playback. Provider text is preserved as lyrics or structure when returned but is never used as measured audio metadata.
 
+For recognizable repertoire, use notation or MIDI as the source of truth and use Lyria only to create core tones. The built-in Moonlight Sequencer preset follows that model: the public-domain Beethoven-inspired arpeggio pattern is encoded as sequencer note data, while `samples/lyria/moonlight-sonata-ai-timbre.mp3` supplies felt-piano, glass-bell, and dark-pad grain sources. Press Play or choose Load Moonlight Bank to prime those tones, then the six-track sequencer assembles the music from editable steps.
+
+To render the same sampler/sequencer arrangement as a standalone MP3:
+
+```sh
+npm run render:ai-sequencer
+```
+
+The output is written to `exports/moonlight-lyria-sequenced-composition.mp3`. The renderer decodes the Lyria tone source locally, slices and pitches grains from the deterministic sequencer notes, writes a temporary WAV, then encodes the final MP3 with FFmpeg.
+
+To render a direct programmatic Lyria RealTime stream capture with timed prompt and config changes:
+
+```sh
+npm run render:lyria-realtime-sample
+```
+
+The output is written to `samples/lyria/lyria-realtime-programmed-stream.mp3`. This script exercises the same WebSocket control path used by the app and fails if Lyria does not return enough PCM audio.
+
 Each completed task is staged beneath the Tauri application-data `generated/<task-id>` directory as create-new private files: the original MP3 or WAV, the exact provider response, and `receipt.json`. A dispatched failure attempts and finishes immutable `failure-receipt.json` storage before the task becomes visibly terminal; a successful receipt stores the typed failure, validated Google request ID when available, dispatch state, cancellation state, and whether the USD 0.08 reservation was released or conservatively recorded as potentially charged. The successful generation receipt includes content hashes, requested and measured media fields, the fixed-price basis, provider request ID, prompt or prompt hash, rights declaration, and provenance expectations. The mutable frontend convenience index stores summarized analysis rather than waveform, onset, or beat arrays and is capped at 500 entries and 2 MiB. Google documents SynthID watermarking and C2PA support; Musica currently records both as expected but does not detect SynthID or cryptographically validate C2PA. The receipts are workflow evidence, not a copyright or licensing guarantee.
 
 `MUSICA_CREATIVE_RETAIN_PROMPTS=false` suppresses plaintext prompt storage in `receipt.json`; it does not redact `provider-response.json`. The exact raw provider response may contain generated lyrics, structural text, safety details, or content that overlaps confidential input. The generated directory therefore remains sensitive private application data and needs an explicit retention and deletion policy before broad distribution.
@@ -171,7 +203,7 @@ Current Lyria V1 limits are intentional:
 - English, German, Spanish, French, Hindi, Japanese, Korean, and Portuguese vocal requests are accepted;
 - image conditioning and multiple reference images are deferred;
 - PDF conditioning is an experimental Vertex capability and is rejected by this Gemini adapter;
-- Lyria 3 Clip and Lyria RealTime are modeled routing choices but unavailable;
+- Lyria 3 Clip remains modeled but unavailable; Lyria RealTime is implemented as the live WebSocket stream path;
 - the job registry, cost reservation, and request deduplication do not survive app restart;
 - successful asset-bundle files are immutable but not committed as one filesystem transaction, so a late disk failure can leave private partial files for manual cleanup;
 - Web Audio decoding is not isolated in a constrained native media process;
@@ -229,6 +261,6 @@ The pull request workflow is configured to repeat those checks, compile and test
 
 ## Architecture records
 
-ADRs 160 through 169 in [`../../docs/adr`](../../docs/adr) cover the Tauri boundary, audio clock, Logitech integration, Three.js renderer, creative provider governance, social capture, threat model, release gates, the Lyria capability contract, and paid-job provenance. The implementation status and evidence matrix are in [`../../docs/specs/musica-lyria-3-pro-integration.md`](../../docs/specs/musica-lyria-3-pro-integration.md).
+ADRs 160 through 171 in [`../../docs/adr`](../../docs/adr) cover the Tauri boundary, audio clock, Logitech integration, Three.js renderer, creative provider governance, social capture, threat model, release gates, the Lyria capability contract, paid-job provenance, Lyria RealTime, and AI instrument-bank sequencing. The implementation status and evidence matrix are in [`../../docs/specs/musica-lyria-3-pro-integration.md`](../../docs/specs/musica-lyria-3-pro-integration.md).
 
 The most important release failure mode is a WKWebView or hardware specific timing regression that unit tests cannot reproduce. The reference acceptance run is six active tracks plus recording and scene switching for ten minutes on an Apple M1 with no audible dropout, controller event latency below 35 ms at p95, visual frame time below 20 ms at p95, and a decodable 15 second 1080 by 1920 output whose audio and video drift is no greater than 20 ms.

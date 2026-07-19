@@ -1,9 +1,13 @@
 /target
 Cargo.lock
 !/Cargo.lock
+.env
+.env.*
 *.wav
 *.mp3
 *.flac
+!apps/musica-vj/samples/lyria/*.mp3
+!apps/musica-vj/exports/*.mp3
 test_audio/*.wav
 apps/musica-vj/node_modules/
 apps/musica-vj/dist/
