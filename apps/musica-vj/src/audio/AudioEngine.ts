@@ -41,6 +41,26 @@ interface ScheduledSourceMetadata {
   imported: boolean;
 }
 
+export type RealtimeDeckId = "main" | "sequence" | "vocal";
+
+interface RealtimeDeckControl {
+  volume: number;
+  muted: boolean;
+  pitchSemitones: number;
+  beatNudgeMs: number;
+}
+
+interface RealtimeDeckRuntime {
+  gain: GainNode;
+  streamTime: number;
+}
+
+const REALTIME_DECK_DEFAULTS: Record<RealtimeDeckId, RealtimeDeckControl> = {
+  main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
+  sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
+  vocal: { volume: 0.3, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
+};
+
 export interface AiToneOptions {
   baseNote?: number;
   grainSeconds?: number;
@@ -176,7 +196,12 @@ export class AudioEngine {
   private fxWet?: GainNode;
   private reverb?: ConvolverNode;
   private reverbWet?: GainNode;
-  private realtimeOutputGain?: GainNode;
+  private realtimeDecks = new Map<RealtimeDeckId, RealtimeDeckRuntime>();
+  private realtimeDeckControls: Record<RealtimeDeckId, RealtimeDeckControl> = {
+    main: { ...REALTIME_DECK_DEFAULTS.main },
+    sequence: { ...REALTIME_DECK_DEFAULTS.sequence },
+    vocal: { ...REALTIME_DECK_DEFAULTS.vocal },
+  };
   private masterAnalyser?: AnalyserNode;
   private captureDestination?: MediaStreamAudioDestinationNode;
   private noiseBuffer?: AudioBuffer;
@@ -193,7 +218,6 @@ export class AudioEngine {
   private transportStartedAt = 0;
   private playing = false;
   private droppedLateSteps = 0;
-  private realtimeStreamTime = 0;
   private realtimeStreamPrimary = false;
   private realtimeGuideLevel = DEFAULT_REALTIME_GUIDE_LEVEL;
 
@@ -218,7 +242,6 @@ export class AudioEngine {
     const fxWet = context.createGain();
     const reverb = context.createConvolver();
     const reverbWet = context.createGain();
-    const realtimeOutputGain = context.createGain();
     const masterAnalyser = context.createAnalyser();
     const captureDestination = context.createMediaStreamDestination();
 
@@ -233,7 +256,6 @@ export class AudioEngine {
     fxWet.gain.value = 0.24;
     reverb.buffer = this.createImpulseResponse(context, 1.7, 2.4);
     reverbWet.gain.value = 0.18;
-    realtimeOutputGain.gain.value = 0.94;
     masterAnalyser.fftSize = 2048;
     masterAnalyser.smoothingTimeConstant = 0.76;
 
@@ -241,7 +263,13 @@ export class AudioEngine {
     fxDelay.connect(fxFeedback).connect(fxDelay);
     fxDelay.connect(fxWet).connect(compressor);
     reverb.connect(reverbWet).connect(compressor);
-    realtimeOutputGain.connect(masterGain);
+    for (const deck of ["main", "sequence", "vocal"] as const) {
+      const gain = context.createGain();
+      const control = this.realtimeDeckControls[deck];
+      gain.gain.value = control.muted ? 0 : control.volume;
+      gain.connect(masterGain);
+      this.realtimeDecks.set(deck, { gain, streamTime: 0 });
+    }
     compressor.connect(masterAnalyser);
     masterAnalyser.connect(context.destination);
     masterAnalyser.connect(captureDestination);
@@ -254,7 +282,6 @@ export class AudioEngine {
     this.fxWet = fxWet;
     this.reverb = reverb;
     this.reverbWet = reverbWet;
-    this.realtimeOutputGain = realtimeOutputGain;
     this.masterAnalyser = masterAnalyser;
     this.captureDestination = captureDestination;
     this.frequencyBuffer = new Uint8Array(masterAnalyser.frequencyBinCount);
@@ -826,6 +853,26 @@ export class AudioEngine {
     this.applyMix();
   }
 
+  setRealtimeDeckControl(deck: RealtimeDeckId, update: Partial<RealtimeDeckControl>): void {
+    const current = this.realtimeDeckControls[deck];
+    const next = {
+      volume: clamp(update.volume ?? current.volume, 0, 1),
+      muted: update.muted ?? current.muted,
+      pitchSemitones: clamp(update.pitchSemitones ?? current.pitchSemitones, -12, 12),
+      beatNudgeMs: clamp(update.beatNudgeMs ?? current.beatNudgeMs, -500, 500),
+    };
+    this.realtimeDeckControls[deck] = next;
+    const runtime = this.realtimeDecks.get(deck);
+    if (runtime && this.context) {
+      runtime.gain.gain.setTargetAtTime(next.muted ? 0 : next.volume, this.context.currentTime, 0.012);
+    }
+  }
+
+  resetRealtimeDeckClock(deck: RealtimeDeckId): void {
+    const runtime = this.realtimeDecks.get(deck);
+    if (runtime) runtime.streamTime = 0;
+  }
+
   private applyMix(shouldEmit = true, immediate = false): void {
     if (this.tracks.size === 0) {
       if (shouldEmit) this.emit();
@@ -976,7 +1023,12 @@ export class AudioEngine {
     return track.loadedLoop ? elapsed % duration : Math.min(elapsed, duration);
   }
 
-  async playRealtimePcm16(bytes: Uint8Array, sampleRateHz: number, channels: number): Promise<void> {
+  async playRealtimePcm16(
+    bytes: Uint8Array,
+    sampleRateHz: number,
+    channels: number,
+    deck: RealtimeDeckId = "main",
+  ): Promise<void> {
     if (bytes.byteLength < 4 || channels < 1 || channels > 2 || sampleRateHz < 8_000 || sampleRateHz > 384_000) return;
     await this.initialize();
     const context = this.requireContext();
@@ -992,17 +1044,20 @@ export class AudioEngine {
       left[frame] = leftSample;
       right[frame] = rightSample;
     }
-    const output = this.realtimeOutputGain ?? this.masterGain;
-    if (!output) return;
+    const runtime = this.realtimeDecks.get(deck);
+    if (!runtime) return;
+    const control = this.realtimeDeckControls[deck];
     const source = context.createBufferSource();
     source.buffer = buffer;
-    source.connect(output);
-    const earliest = context.currentTime + 0.08;
-    if (this.realtimeStreamTime < earliest || this.realtimeStreamTime > context.currentTime + 1.8) {
-      this.realtimeStreamTime = earliest;
+    const playbackRate = 2 ** (control.pitchSemitones / 12);
+    source.playbackRate.value = playbackRate;
+    source.connect(runtime.gain);
+    const earliest = Math.max(context.currentTime + 0.02, context.currentTime + 0.08 + control.beatNudgeMs / 1_000);
+    if (runtime.streamTime < earliest || runtime.streamTime > context.currentTime + 1.8) {
+      runtime.streamTime = earliest;
     }
-    const startsAt = this.realtimeStreamTime;
-    this.realtimeStreamTime += buffer.duration;
+    const startsAt = runtime.streamTime;
+    runtime.streamTime += buffer.duration / playbackRate;
     this.scheduledSources.set(source, { startsAt, imported: true });
     source.addEventListener("ended", () => this.scheduledSources.delete(source), { once: true });
     source.start(startsAt);
