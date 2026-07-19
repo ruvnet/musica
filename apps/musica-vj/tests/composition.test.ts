@@ -54,6 +54,32 @@ describe("Lyria composition contract", () => {
     expect(first).toContain("Requested response audio format: WAV");
   });
 
+  it("compiles seamless loop and tonal controls for provider loop generation", () => {
+    const prompt = compileLyriaPrompt(
+      composition({
+        durationSeconds: 32,
+        productionStyle: "club master, tight sidechain, loud but clean",
+        loop: { enabled: true, bars: 16, seamless: true },
+        tonal: {
+          key: "F minor",
+          tonalCenter: "deep F sub bass, bright chord stab, metallic percussion",
+          intensity: 0.82,
+          negativePrompt: "muddy low end, weak kick, long intro, long fade out",
+        },
+        structure: [
+          { time: "0:00", section: "bar 1 downbeat" },
+          { time: "0:16", section: "midpoint lift" },
+        ],
+      }),
+    );
+
+    expect(prompt).toContain("Loop intent: create a 16 bar seamless, DJ-loopable phrase");
+    expect(prompt).toContain("Key: F minor");
+    expect(prompt).toContain("Tonal center: deep F sub bass");
+    expect(prompt).toContain("Production intensity: 82%");
+    expect(prompt).toContain("Avoid: muddy low end");
+  });
+
   it("enforces the 31 to 180 second UI envelope and 184 second provider hard limit", () => {
     expect(validateProDuration(31, "ui").valid).toBe(true);
     expect(validateProDuration(180, "ui").valid).toBe(true);

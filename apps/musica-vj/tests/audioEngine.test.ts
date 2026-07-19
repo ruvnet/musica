@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AudioEngine,
+  createEngineSnapshotFromTemplate,
   importedAudioStartTime,
   performanceStepTime,
   rebaseTempoClock,
 } from "../src/audio/AudioEngine";
+import { defaultPerformanceTemplate } from "../src/core/presets";
 
 class FakeAudioParam {
   value = 0;
@@ -133,6 +135,16 @@ class FakeAudioContext {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("audio engine state application", () => {
+  it("starts from the curated default MIDI song bank template", () => {
+    const template = defaultPerformanceTemplate();
+    const snapshot = new AudioEngine().getSnapshot();
+    const expected = createEngineSnapshotFromTemplate(template);
+
+    expect(snapshot.bpm).toBe(template.bpm);
+    expect(snapshot.tracks.map((track) => track.pattern)).toEqual(expected.tracks.map((track) => track.pattern));
+    expect(snapshot.tracks.find((track) => track.id === "lead")?.notes).toEqual(template.tracks.lead.notes.slice(0, 64));
+  });
+
   it("applies pan and solo state chosen before AudioContext initialization", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();
@@ -145,7 +157,7 @@ describe("audio engine state application", () => {
       tracks: Map<string, { gain: FakeGainNode; pan: FakeStereoPannerNode }>;
     }).tracks;
     expect(runtimes.get("bass")?.pan.pan.value).toBe(0.65);
-    expect(runtimes.get("bass")?.gain.gain.value).toBeCloseTo(0.78 ** 2, 8);
+    expect(runtimes.get("bass")?.gain.gain.value).toBeCloseTo((defaultPerformanceTemplate().tracks.bass.volume ?? 1) ** 2, 8);
     expect(runtimes.get("drums")?.gain.gain.value).toBe(0);
   });
 

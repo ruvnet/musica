@@ -37,6 +37,19 @@ export interface SocialHook {
   durationSeconds: number;
 }
 
+export interface LoopIntent {
+  enabled: boolean;
+  bars?: number;
+  seamless?: boolean;
+}
+
+export interface TonalControls {
+  key?: string;
+  tonalCenter?: string;
+  intensity?: number;
+  negativePrompt?: string;
+}
+
 export interface StructuredComposition {
   durationSeconds: number;
   genre: string[];
@@ -51,6 +64,8 @@ export interface StructuredComposition {
   dynamicProgression?: string;
   visualSyncCues?: string[];
   outputFormat?: AudioOutputFormat;
+  loop?: LoopIntent;
+  tonal?: TonalControls;
 }
 
 export interface CompositionValidationIssue {
@@ -180,6 +195,21 @@ export function validateCompositionSpec(
   }
   if ((specification.vocals.lyrics?.length ?? 0) > 12_000) {
     errors.push(issue("vocals.lyrics", "limit", "Lyrics must not exceed 12,000 characters"));
+  }
+  if (
+    specification.loop?.bars !== undefined &&
+    (!Number.isInteger(specification.loop.bars) || specification.loop.bars < 1 || specification.loop.bars > 64)
+  ) {
+    errors.push(issue("loop.bars", "range", "Loop bars must be a whole number between 1 and 64"));
+  }
+  if (
+    specification.tonal?.intensity !== undefined &&
+    (!finiteNumber(specification.tonal.intensity) || specification.tonal.intensity < 0 || specification.tonal.intensity > 1)
+  ) {
+    errors.push(issue("tonal.intensity", "range", "Production intensity must be between 0 and 1"));
+  }
+  if ((specification.tonal?.negativePrompt?.length ?? 0) > 800) {
+    errors.push(issue("tonal.negativePrompt", "limit", "Negative prompt must not exceed 800 characters"));
   }
   if (!specification.vocals.enabled && specification.vocals.lyrics?.trim()) {
     errors.push(issue("vocals.lyrics", "conflict", "Lyrics require vocals to be enabled"));
@@ -336,11 +366,26 @@ export function compileLyriaPrompt(
   if (specification.mood?.length) lines.push(`Mood: ${specification.mood.map(cleanInline).join(", ")}.`);
   if (specification.bpm !== undefined) lines.push(`Tempo: ${specification.bpm} BPM.`);
   if (specification.timeSignature) lines.push(`Time signature: ${cleanInline(specification.timeSignature)}.`);
+  if (specification.tonal?.key) lines.push(`Key: ${cleanInline(specification.tonal.key)}.`);
+  if (specification.tonal?.tonalCenter) lines.push(`Tonal center: ${cleanInline(specification.tonal.tonalCenter)}.`);
+  if (specification.loop?.enabled) {
+    const loopBars = specification.loop.bars ?? 16;
+    const seamless = specification.loop.seamless ?? true;
+    lines.push(
+      `Loop intent: create a ${loopBars} bar ${seamless ? "seamless, DJ-loopable" : "loop-ready"} phrase with a clean downbeat, no long fade-in, no long fade-out, and an ending that returns naturally to bar 1.`,
+    );
+  }
   if (specification.instruments?.length) {
     lines.push(`Instrumentation: ${specification.instruments.map(cleanInline).join(", ")}.`);
   }
   if (specification.productionStyle) lines.push(`Production style: ${cleanInline(specification.productionStyle)}.`);
+  if (specification.tonal?.intensity !== undefined) {
+    lines.push(`Production intensity: ${Math.round(specification.tonal.intensity * 100)}%.`);
+  }
   if (specification.dynamicProgression) lines.push(`Dynamic progression: ${cleanInline(specification.dynamicProgression)}.`);
+  if (specification.tonal?.negativePrompt?.trim()) {
+    lines.push(`Avoid: ${cleanInline(specification.tonal.negativePrompt)}.`);
+  }
 
   if (specification.vocals.enabled) {
     const details = [specification.vocals.type, specification.vocals.language].filter(

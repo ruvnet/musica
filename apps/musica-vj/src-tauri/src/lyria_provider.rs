@@ -4,6 +4,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
     time::Duration,
 };
@@ -26,6 +27,7 @@ use crate::creative_provider::{
 };
 
 const GEMINI_KEY_ENV: &str = "GEMINI_API_KEY";
+const GCP_AUTH_ENV: &str = "MUSICA_GCP_AUTH";
 const MAX_BUDGET_ENV: &str = "MUSICA_CREATIVE_MAX_GENERATION_USD";
 const RETAIN_PROMPTS_ENV: &str = "MUSICA_CREATIVE_RETAIN_PROMPTS";
 const REQUEST_TIMEOUT_ENV: &str = "MUSICA_CREATIVE_REQUEST_TIMEOUT_SECONDS";
@@ -53,13 +55,19 @@ const MAX_REQUEST_TIMEOUT_SECONDS: u64 = 900;
 #[derive(Clone)]
 pub(super) struct LyriaProvider {
     client: Client,
-    api_key: Arc<HeaderValue>,
+    auth: LyriaAuth,
     jobs: Arc<RwLock<JobRegistry>>,
     permits: Arc<Semaphore>,
     asset_root: Arc<PathBuf>,
     max_budget_micro_usd: u64,
     retain_prompts: bool,
     terms_version: Option<Arc<str>>,
+}
+
+#[derive(Clone)]
+enum LyriaAuth {
+    ApiKey(Arc<HeaderValue>),
+    Gcloud,
 }
 
 #[derive(Default)]
@@ -391,10 +399,7 @@ impl ProviderFailure {
 
 impl LyriaProvider {
     pub(super) fn from_env(asset_root: PathBuf) -> Result<Self, ProviderError> {
-        let key = env::var(GEMINI_KEY_ENV)
-            .map_err(|_| ProviderError::Configuration("GEMINI_API_KEY is required for Lyria"))?;
-        validate_api_key(&key)?;
-        let api_key = sensitive_api_key(&key)?;
+        let auth = load_auth_from_env()?;
         let max_budget_micro_usd = env::var(MAX_BUDGET_ENV)
             .ok()
             .map(|value| parse_usd_to_micro(&value))
@@ -440,7 +445,7 @@ impl LyriaProvider {
 
         Ok(Self {
             client,
-            api_key: Arc::new(api_key),
+            auth,
             jobs: Arc::new(RwLock::new(JobRegistry::default())),
             permits: Arc::new(Semaphore::new(2)),
             asset_root: Arc::new(asset_root.join("generated")),
@@ -464,6 +469,24 @@ impl LyriaProvider {
 
     pub(super) const fn max_duration_seconds(&self) -> u16 {
         UI_MAX_DURATION_SECONDS
+    }
+
+    async fn auth_header(&self) -> Result<(HeaderName, HeaderValue), ProviderFailure> {
+        match &self.auth {
+            LyriaAuth::ApiKey(value) => Ok((
+                HeaderName::from_static("x-goog-api-key"),
+                value.as_ref().clone(),
+            )),
+            LyriaAuth::Gcloud => {
+                let token = tauri::async_runtime::spawn_blocking(gcloud_access_token)
+                    .await
+                    .map_err(|_| ProviderFailure::Authentication)??;
+                let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+                    .map_err(|_| ProviderFailure::Authentication)?;
+                value.set_sensitive(true);
+                Ok((HeaderName::from_static("authorization"), value))
+            }
+        }
     }
 
     pub(super) async fn generate(
@@ -697,13 +720,18 @@ impl LyriaProvider {
             store: false,
             response_format,
         };
+        let (auth_header, auth_value) = match self.auth_header().await {
+            Ok(header) => header,
+            Err(_) => {
+                self.fail(&task_id, ProviderFailure::Authentication, false, None)
+                    .await;
+                return;
+            }
+        };
         let response = match self
             .client
             .post(LYRIA_ENDPOINT)
-            .header(
-                HeaderName::from_static("x-goog-api-key"),
-                self.api_key.as_ref().clone(),
-            )
+            .header(auth_header, auth_value)
             .json(&body)
             .send()
             .await
@@ -1459,7 +1487,41 @@ fn set_directory_private(_path: &Path) -> std::io::Result<()> {
 }
 
 fn compile_prompt(request: &GenerationRequest) -> String {
-    request.prompt.trim().to_owned()
+    let mut lines = vec![request.prompt.trim().to_owned()];
+    if request.seamless_loop {
+        lines.push("Provider control: render as a seamless DJ-loopable phrase with a strong first downbeat, phrase ending that resolves into bar 1, no long intro, no long outro, and no reverb tail that breaks looping.".into());
+    }
+    if let Some(key) = request
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Provider control: key {key}."));
+    }
+    if let Some(center) = request
+        .tonal_center
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Provider control: tonal center {center}."));
+    }
+    if let Some(intensity) = request.production_intensity {
+        lines.push(format!(
+            "Provider control: production intensity {} percent.",
+            (intensity.clamp(0.0, 1.0) * 100.0).round()
+        ));
+    }
+    if let Some(negative) = request
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Provider control: avoid {negative}."));
+    }
+    lines.join("\n")
 }
 
 fn detect_audio_mime(bytes: &[u8]) -> Option<&'static str> {
@@ -1486,6 +1548,43 @@ fn normalize_audio_mime(value: &str) -> Option<&'static str> {
         "audio/wav" | "audio/wave" | "audio/x-wav" => Some("audio/wav"),
         _ => None,
     }
+}
+
+fn load_auth_from_env() -> Result<LyriaAuth, ProviderError> {
+    if let Ok(key) = env::var(GEMINI_KEY_ENV) {
+        validate_api_key(&key)?;
+        return sensitive_api_key(&key).map(|value| LyriaAuth::ApiKey(Arc::new(value)));
+    }
+    if env::var(GCP_AUTH_ENV)
+        .ok()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("gcloud"))
+    {
+        return Ok(LyriaAuth::Gcloud);
+    }
+    Err(ProviderError::Configuration(
+        "GEMINI_API_KEY is required for Lyria, or set MUSICA_GCP_AUTH=gcloud to use gcloud application-default credentials",
+    ))
+}
+
+fn gcloud_access_token() -> Result<String, ProviderFailure> {
+    let output = Command::new("gcloud")
+        .args(["auth", "application-default", "print-access-token"])
+        .output()
+        .map_err(|_| ProviderFailure::Authentication)?;
+    if !output.status.success() {
+        return Err(ProviderFailure::Authentication);
+    }
+    let token = String::from_utf8(output.stdout).map_err(|_| ProviderFailure::Authentication)?;
+    let token = token.trim();
+    if token.len() < 20
+        || token.len() > 4096
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(ProviderFailure::Authentication);
+    }
+    Ok(token.to_owned())
 }
 
 fn validate_api_key(key: &str) -> Result<(), ProviderError> {
@@ -1650,6 +1749,11 @@ mod tests {
             ],
             output_format: AudioOutputFormat::Mp3,
             reference_assets: Vec::new(),
+            seamless_loop: false,
+            key: None,
+            tonal_center: None,
+            negative_prompt: None,
+            production_intensity: None,
             max_cost_usd: Some(0.08),
             candidate_count: 1,
             max_attempts: 1,
@@ -1661,10 +1765,10 @@ mod tests {
     fn provider(max_budget_micro_usd: u64) -> LyriaProvider {
         LyriaProvider {
             client: Client::builder().build().expect("test HTTPS client"),
-            api_key: Arc::new(
+            auth: LyriaAuth::ApiKey(Arc::new(
                 sensitive_api_key("AIza-test-key-that-is-long-enough")
                     .expect("valid sensitive test header"),
-            ),
+            )),
             jobs: Arc::new(RwLock::new(JobRegistry::default())),
             permits: Arc::new(Semaphore::new(2)),
             asset_root: Arc::new(PathBuf::from("test-generated-assets")),
@@ -1761,6 +1865,25 @@ mod tests {
             compile_prompt(&request),
             "Compiled prompt with [0:42] drop and supplied lyrics."
         );
+    }
+
+    #[test]
+    fn loop_and_tone_controls_are_appended_for_provider() {
+        let mut request = request();
+        request.prompt = "Hardgroove loop".into();
+        request.duration_seconds = 32;
+        request.seamless_loop = true;
+        request.key = Some("F minor".into());
+        request.tonal_center = Some("sub bass around F1 with bright chord stabs".into());
+        request.production_intensity = Some(0.82);
+        request.negative_prompt = Some("muddy low end, weak kick, long ambient intro".into());
+
+        let prompt = compile_prompt(&request);
+        assert!(prompt.contains("seamless DJ-loopable phrase"));
+        assert!(prompt.contains("key F minor"));
+        assert!(prompt.contains("tonal center sub bass around F1"));
+        assert!(prompt.contains("production intensity 82 percent"));
+        assert!(prompt.contains("avoid muddy low end"));
     }
 
     #[test]

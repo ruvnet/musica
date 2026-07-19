@@ -265,3 +265,22 @@ export function visualSceneById(id: string): VisualSceneMeta {
 export function performanceTemplateById(id: string): PerformanceTemplate {
   return PERFORMANCE_TEMPLATES.find((template) => template.id === id) ?? PERFORMANCE_TEMPLATES[0];
 }
+
+export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "uk-garage-neon";
+
+export const DEFAULT_MIDI_SONG_BANK_IDS = [
+  "uk-garage-neon",
+  "afro-cosmic-house",
+  "idm-crystalline",
+  "liquid-breaks",
+  "synthwave-drive",
+  "hyperpop-rush",
+] as const;
+
+export function defaultPerformanceTemplate(): PerformanceTemplate {
+  return performanceTemplateById(DEFAULT_PERFORMANCE_TEMPLATE_ID);
+}
+
+export function midiSongBankTemplates(): PerformanceTemplate[] {
+  return DEFAULT_MIDI_SONG_BANK_IDS.map(performanceTemplateById);
+}
