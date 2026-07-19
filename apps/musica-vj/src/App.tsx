@@ -108,6 +108,18 @@ interface LyriaGuidanceDialogState extends LyriaStyleGuidance {
   styleId: string;
 }
 
+type LyriaCompanionDeckId = "sequence" | "vocal";
+
+interface LyriaCompanionDialogState {
+  deck: LyriaCompanionDeckId;
+  text: string;
+}
+
+const DEFAULT_LYRIA_COMPANION_GUIDANCE: Record<LyriaCompanionDeckId, string> = {
+  sequence: "Reinforce the main kick and pocket; bass mirrors the main harmonic roots and cadences; leave deliberate space for its hooks",
+  vocal: "Expressive wordless lead with a memorable chorus contour; answer the main motif without competing with it",
+};
+
 interface BufferedRealtimeChunk {
   bytes: Uint8Array;
   sampleRateHz: number;
@@ -324,6 +336,8 @@ export function App() {
   const [lyriaStyleId, setLyriaStyleId] = useState(DEFAULT_REALTIME_STYLE.id);
   const [lyriaStyleGuidance, setLyriaStyleGuidance] = useState<Record<string, LyriaStyleGuidance>>({});
   const [lyriaGuidanceDialog, setLyriaGuidanceDialog] = useState<LyriaGuidanceDialogState>();
+  const [lyriaCompanionGuidance, setLyriaCompanionGuidance] = useState<Record<LyriaCompanionDeckId, string>>({ ...DEFAULT_LYRIA_COMPANION_GUIDANCE });
+  const [lyriaCompanionDialog, setLyriaCompanionDialog] = useState<LyriaCompanionDialogState>();
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
   const [sequenceLyriaSession, setSequenceLyriaSession] = useState<LyriaRealtimeSession>();
   const [vocalLyriaSession, setVocalLyriaSession] = useState<LyriaRealtimeSession>();
@@ -414,11 +428,19 @@ export function App() {
     [lyriaDeckControls.main.pitchSemitones, lyriaPrompts, lyriaRealtimeConfig, snapshot.bpm],
   );
   const sequenceRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: createLyriaSequencePrompts(snapshot, activeLyriaStyle),
+    weightedPrompts: createLyriaSequencePrompts(snapshot, activeLyriaStyle, {
+      mainPrompts: realtimeRequest.weightedPrompts,
+      scale: realtimeRequest.config.scale,
+      customDirection: lyriaCompanionGuidance.sequence,
+    }),
     config: createLyriaSequenceConfig(snapshot, lyriaRealtimeConfig, lyriaDeckControls.sequence.pitchSemitones),
-  }), [activeLyriaStyle, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, sequencerGuideSignature]);
+  }), [activeLyriaStyle, lyriaCompanionGuidance.sequence, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, realtimeRequest, sequencerGuideSignature]);
   const vocalRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: createLyriaVocalPrompts(activeLyriaStyle),
+    weightedPrompts: createLyriaVocalPrompts(activeLyriaStyle, {
+      mainPrompts: realtimeRequest.weightedPrompts,
+      scale: realtimeRequest.config.scale,
+      customDirection: lyriaCompanionGuidance.vocal,
+    }),
     config: {
       ...lyriaRealtimeConfig,
       bpm: compensateLyriaBpmForPitch(snapshot.bpm, lyriaDeckControls.vocal.pitchSemitones),
@@ -430,7 +452,7 @@ export function App() {
       onlyBassAndDrums: false,
       musicGenerationMode: "VOCALIZATION",
     },
-  }), [activeLyriaStyle, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
+  }), [activeLyriaStyle, lyriaCompanionGuidance.vocal, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, realtimeRequest, snapshot.bpm]);
 
   const stopTransportAndRealtime = useCallback(async (announce = false) => {
     lyriaBufferCancelRef.current = true;
@@ -785,6 +807,18 @@ export function App() {
       setNotice(`${style.label} primary guidance saved for the next switch.`);
     }
   }, [applyRealtimeRequest, lyriaGuidanceDialog, lyriaStyleId]);
+
+  const applyLyriaCompanionDialog = useCallback(() => {
+    if (!lyriaCompanionDialog) return;
+    const text = lyriaCompanionDialog.text.trim();
+    if (!text) {
+      setNotice("Companion guidance cannot be empty.");
+      return;
+    }
+    setLyriaCompanionGuidance((current) => ({ ...current, [lyriaCompanionDialog.deck]: text.slice(0, 240) }));
+    setLyriaCompanionDialog(undefined);
+    setNotice(`${lyriaCompanionDialog.deck === "sequence" ? "BEAT" : "VOCALIZE"} companion guidance updated; active Lyria stream will follow the main harmony.`);
+  }, [lyriaCompanionDialog]);
 
   const stopRealtimeSession = useCallback(async () => {
     setLyriaRealtimeBusy(true);
@@ -1849,6 +1883,47 @@ export function App() {
           </section>
         </div>
       )}
+      {lyriaCompanionDialog && (
+        <div
+          className="lyria-guidance-overlay"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setLyriaCompanionDialog(undefined);
+          }}
+        >
+          <section className="lyria-guidance-dialog" role="dialog" aria-modal="true" aria-labelledby="lyria-companion-title">
+            <header>
+              <span>COMPANION GUIDANCE</span>
+              <button type="button" onClick={() => setLyriaCompanionDialog(undefined)} aria-label="Close companion guidance dialog">X</button>
+            </header>
+            <h2 id="lyria-companion-title">{lyriaCompanionDialog.deck === "sequence" ? "Beat" : "Vocalize"}</h2>
+            <label className="guidance-copy">
+              <span>ROLE ALONGSIDE MAIN</span>
+              <textarea
+                autoFocus
+                maxLength={240}
+                value={lyriaCompanionDialog.text}
+                onChange={(event) => setLyriaCompanionDialog((current) => current ? { ...current, text: event.target.value } : current)}
+              />
+              <b>{lyriaCompanionDialog.text.length}/240</b>
+            </label>
+            <div className="guidance-scope">
+              <span>{lyriaCompanionDialog.deck === "sequence" ? "MAIN SCALE · ROOT MOTION · 8-BAR PHRASES" : "MAIN SCALE · 32-BAR VOCAL FORM · VOICE ONLY"}</span>
+            </div>
+            <footer>
+              <button
+                type="button"
+                onClick={() => setLyriaCompanionDialog({
+                  ...lyriaCompanionDialog,
+                  text: DEFAULT_LYRIA_COMPANION_GUIDANCE[lyriaCompanionDialog.deck],
+                })}
+              >RESET</button>
+              <button type="button" onClick={() => setLyriaCompanionDialog(undefined)}>CANCEL</button>
+              <button type="button" className="primary" onClick={applyLyriaCompanionDialog} disabled={!lyriaCompanionDialog.text.trim()}>APPLY</button>
+            </footer>
+          </section>
+        </div>
+      )}
       {lyriaDeckSceneDialog && (
         <div
           className="lyria-guidance-overlay"
@@ -2216,6 +2291,13 @@ export function App() {
                           disabled={lyriaDeckSyncing[deck]}
                           title={`${lyriaDeckEnabled[deck] ? "Stop" : "Start and sync"} ${deck} Lyria stream`}
                         >{lyriaDeckEnabled[deck] ? "ON" : "OFF"}</button>
+                        {deck !== "main" && (
+                          <button
+                            onClick={() => setLyriaCompanionDialog({ deck, text: lyriaCompanionGuidance[deck] })}
+                            title={`Edit ${deck === "sequence" ? "beat" : "vocal"} companion prompt`}
+                            aria-haspopup="dialog"
+                          >P</button>
+                        )}
                         <button
                           className={control.muted ? "active" : ""}
                           onClick={() => updateLyriaDeckControl(deck, { muted: !control.muted })}

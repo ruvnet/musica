@@ -216,6 +216,12 @@ export interface LyriaSequenceState {
   tracks: TrackSnapshot[];
 }
 
+export interface LyriaCompanionPromptContext {
+  mainPrompts: LyriaWeightedPrompt[];
+  scale: LyriaRealtimeScale;
+  customDirection?: string;
+}
+
 const SEQUENCE_TRACK_CODES: Record<TrackId, string> = {
   drums: "DR",
   bass: "BS",
@@ -241,43 +247,57 @@ function pulseString(track: TrackSnapshot): string {
 
 function lanePrompt(tracks: TrackSnapshot[], label: string): string | undefined {
   if (tracks.length === 0) return undefined;
-  const lanes = tracks.map((track) => {
-    const notes = track.id === "drums" || track.notes.length === 0
-      ? ""
-      : ` notes:${[...new Set(track.notes)].slice(0, 8).join(".")}`;
-    return `${SEQUENCE_TRACK_CODES[track.id]}:${pulseString(track)} vol:${Math.round(track.volume * 100)}${notes}`;
-  });
+  const lanes = tracks.map((track) => `${SEQUENCE_TRACK_CODES[track.id]}:${pulseString(track)} vol:${Math.round(track.volume * 100)}`);
   return `${label}; ${lanes.join("; ")}; x is hit, - is rest`;
+}
+
+function companionIdentity(style: LyriaRealtimeStylePreset | undefined, context?: LyriaCompanionPromptContext): string {
+  const main = context?.mainPrompts.find((prompt) => prompt.weight > 0)?.text.trim();
+  return (main || style?.description || "the current main arrangement").slice(0, 112);
+}
+
+function readableScale(scale?: LyriaRealtimeScale): string {
+  return (scale ?? "SCALE_UNSPECIFIED").replaceAll("_", " ").toLowerCase();
 }
 
 export function createLyriaSequencePrompts(
   state: LyriaSequenceState,
   style?: LyriaRealtimeStylePreset,
+  context?: LyriaCompanionPromptContext,
 ): LyriaWeightedPrompt[] {
   const active = effectiveSequenceTracks(state).filter((track) => track.id === "drums" || track.id === "bass");
+  const identity = companionIdentity(style, context);
+  const scale = readableScale(context?.scale);
+  const custom = context?.customDirection?.trim() || "Reinforce the main kick and pocket; bass mirrors the main harmonic roots and cadences; leave deliberate space for its hooks";
   const prompts = [
     lanePrompt(active, `repeat this exact 16-step drum and bass rhythm at ${state.bpm} BPM`),
   ].filter((prompt): prompt is string => Boolean(prompt));
   if (prompts.length === 0) {
     return [
       { text: `minimal breakdown at ${state.bpm} BPM, no drums, no bass, near silence, instrumental only`, weight: 1.5 },
-      ...(style ? [{ text: `${style.label} rhythmic character, silent beat stem`.slice(0, 240), weight: 0.72 }] : []),
+      { text: `Companion to main: ${identity}; preserve ${scale}; remain silent except for phrase-boundary texture`.slice(0, 240), weight: 0.82 },
     ];
   }
   return [
     ...prompts.map((text, index) => ({ text: text.slice(0, 240), weight: index === 0 ? 1.7 : 1.45 })),
-    ...(style ? [{ text: `${style.label} supporting beat layer, match the main deck's groove and production character, percussion and bass only`.slice(0, 240), weight: 0.86 }] : []),
-    { text: "repeating one-bar beat stem, drums and bass only, locked tempo, identical pulse each bar, immediate downbeat, no intro, no fills, no melody, no vocals", weight: 1.35 },
-    { text: "chords, lead melody, pads, strings, piano, guitar, vocals, breakdown, free tempo, evolving arrangement", weight: -0.92 },
+    { text: `${style?.label ?? "Style-matched"} companion beat for main identity: ${identity}; use ${scale}; bass follows only the main root motion and resolves with its cadence; no independent harmony`.slice(0, 240), weight: 1.2 },
+    { text: `${custom}; drums and bass only; same downbeats and eight-bar boundaries as main; stable one-bar pulse with tiny phrase-end variation; immediate start, no intro`.slice(0, 240), weight: 1.35 },
+    { text: "independent song, independent chord progression, off-key bass, countermelody, chords, lead, pads, strings, piano, guitar, vocals, tempo drift, free-time fill, breakdown, long transition", weight: -1.15 },
   ].slice(0, 4);
 }
 
-export function createLyriaVocalPrompts(style: LyriaRealtimeStylePreset): LyriaWeightedPrompt[] {
+export function createLyriaVocalPrompts(
+  style: LyriaRealtimeStylePreset,
+  context?: LyriaCompanionPromptContext,
+): LyriaWeightedPrompt[] {
+  const identity = companionIdentity(style, context);
+  const scale = readableScale(context?.scale);
+  const custom = context?.customDirection?.trim() || "Expressive wordless lead with a memorable chorus contour; answer the main motif without competing with it";
   return [
-    { text: `${style.label} a cappella wordless vocalization, isolated dry human voice stem, expressive vowels, precise rhythmic syllables, voice only`.slice(0, 240), weight: 1.35 },
-    { text: "match the main deck's key, tempo, groove, and emotional tone; unaccompanied vocal performance with complete silence between phrases", weight: 0.92 },
-    { text: "sparse call-and-response vocal phrases, singable contour, short two-bar answers, intentional rests, supporting background role", weight: 0.9 },
-    { text: "drums, percussion, bass, synths, pads, piano, guitar, strings, brass, sound effects, instrumental accompaniment, continuous vocal wall", weight: -1.15 },
+    { text: `${style.label} a cappella companion vocal in ${scale}; main identity: ${identity}; ${custom}; isolated human voice, expressive vowels and rhythmic syllables, no intelligible words`.slice(0, 240), weight: 1.42 },
+    { text: "32-bar vocal form: bars 1-4 rest; 5-8 introduce short motif; 9-16 sparse verse answers; 17-20 pre-chorus lift; 21-28 sustained chorus hook; 29-32 resolve and leave space on final downbeat", weight: 1.3 },
+    { text: "Match the main tempo, scale, emotional arc, eight-bar boundaries, and cadences; favor root, third, fifth and consonant extensions; reuse one singable motif; voice only with complete silence between phrases", weight: 1.18 },
+    { text: "independent song, different key, new chord progression, lyrics, intelligible words, drums, percussion, bass, synths, pads, piano, guitar, strings, brass, sound effects, accompaniment, continuous vocal wall", weight: -1.3 },
   ];
 }
 

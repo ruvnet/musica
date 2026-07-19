@@ -49,23 +49,35 @@ describe("Lyria RealTime defaults", () => {
     const drums = state.tracks.find((track) => track.id === "drums")!;
     const expectedPulse = drums.pattern.map((active) => (active ? "x" : "-")).join("");
     const style = LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === "techno")!;
-    const prompts = createLyriaSequencePrompts(state, style);
+    const prompts = createLyriaSequencePrompts(state, style, {
+      mainPrompts: [{ text: "Main techno identity with filtered metallic stabs and a dark two-bar motif", weight: 1.2 }],
+      scale: "F_MAJOR_D_MINOR",
+      customDirection: "Reinforce the main kick and follow its bass cadences",
+    });
 
     expect(prompts.map((prompt) => prompt.text).join(" ")).toContain(`DR:${expectedPulse}`);
-    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("Techno supporting beat layer");
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("Main techno identity");
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("f major d minor");
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("follow its bass cadences");
     expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("drums and bass only");
     expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
     expect(prompts.length).toBeLessThanOrEqual(4);
   });
 
-  it("gives the vocal deck a sparse style-matched role with negative guidance", () => {
+  it("gives the vocal deck a main-linked 32-bar chorus form with negative guidance", () => {
     const style = LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === "house")!;
-    const prompts = createLyriaVocalPrompts(style);
+    const prompts = createLyriaVocalPrompts(style, {
+      mainPrompts: [{ text: "Warm elastic sub, glossy piano hook, and elegant restrained tension", weight: 1.2 }],
+      scale: "C_MAJOR_A_MINOR",
+      customDirection: "Answer the piano motif with a long wordless chorus hook",
+    });
 
     expect(prompts).toHaveLength(4);
-    expect(prompts.some((prompt) => prompt.text.includes("House a cappella wordless vocalization"))).toBe(true);
-    expect(prompts.some((prompt) => prompt.text.includes("isolated dry human voice stem"))).toBe(true);
-    expect(prompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("instrumental accompaniment"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("Warm elastic sub"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("32-bar vocal form"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("21-28 sustained chorus hook"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("voice only"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("accompaniment"))).toBe(true);
     expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
   });
 
