@@ -110,6 +110,9 @@ body {
 
 .template-bank { display: grid; gap: 8px; margin: -3px 0 13px; padding: 10px; border: 1px solid rgba(117,244,197,.12); border-radius: 8px; background: rgba(117,244,197,.026); }
 .visual-preset-bank { border-color: rgba(255,49,210,.14); background: rgba(255,49,210,.024); }
+.ai-tone-bank { border-color: rgba(112,169,255,.16); background: rgba(112,169,255,.024); }
+.bank-load-button { height: 28px; border: 1px solid rgba(112,169,255,.24); border-radius: 6px; color: #cbd7ff; background: rgba(112,169,255,.055); font: 600 7px "DM Mono"; cursor: pointer; }
+.bank-load-button:disabled { opacity: .55; cursor: wait; }
 .template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .template-grid button { min-width: 0; min-height: 38px; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.03); text-align: left; cursor: pointer; }
 .template-grid button:hover { border-color: rgba(117,244,197,.24); background: rgba(117,244,197,.055); }
@@ -268,6 +271,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .track-actions { display: flex; gap: 4px; }
 .track-actions button, .load-button { height: 18px; min-width: 20px; display: grid; place-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: #777982; background: transparent; font: 600 7px "DM Mono"; cursor: pointer; }
 .track-actions button.active { color: var(--accent); border-color: rgba(255,79,134,.35); background: rgba(255,79,134,.1); }
+.track-actions button.ai-tone-button { color: #9fb7ff; border-color: rgba(112,169,255,.24); }
+.track-actions button.ai-tone-button.active { color: #d7e0ff; border-color: rgba(112,169,255,.42); background: rgba(112,169,255,.11); }
 .track-actions button.solo { color: var(--mint); border-color: rgba(117,244,197,.35); background: rgba(117,244,197,.1); }
 .load-button { margin-left: auto; }
 .load-button input { display: none; }

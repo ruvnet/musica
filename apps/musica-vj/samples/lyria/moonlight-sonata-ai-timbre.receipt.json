@@ -1,0 +1,11 @@
+{
+  "id": "moonlight-sonata-ai-timbre",
+  "title": "Moonlight Sonata AI Timbre",
+  "composerSource": "Ludwig van Beethoven, Piano Sonata No. 14 in C-sharp minor, Op. 27 No. 2, first movement; public domain composition used as prompt reference.",
+  "generatedAt": "2026-07-19T17:53:32.024Z",
+  "model": "lyria-3-pro-preview",
+  "mimeType": "audio/mpeg",
+  "prompt": "Create a 31 second instrumental loop for Musica VJ Studio based on Beethoven Piano Sonata No. 14 in C sharp minor Opus 27 Number 2 first movement, a public domain classical composition. Use a soft piano arpeggio source, dark wavetable pad, glass FM bell harmonics, warm bowed synth bass, subtle delay, restrained hall reverb. Tempo 72 BPM, C sharp minor, seamless loop, clear tonal attacks and sustained harmonics for a MIDI triggered synth sample bank. No vocals.",
+  "file": "moonlight-sonata-ai-timbre.mp3",
+  "store": false
+}

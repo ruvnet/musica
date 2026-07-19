@@ -13,6 +13,7 @@ import {
   type CompositionSection,
   type StructuredComposition,
 } from "./core/composition";
+import { AI_TONE_LIBRARY, DEFAULT_AI_TONE_BANK, aiTonePresetById, type AiTonePreset } from "./core/aiAudioLibrary";
 import { DEFAULT_TEMPORAL_CONTROLS, PERFORMANCE_TEMPLATES, SOCIAL_PRESETS, VISUAL_PRESETS, VISUAL_SCENES, defaultPerformanceTemplate, performanceTemplateById } from "./core/presets";
 import {
   cancelGeneration,
@@ -154,6 +155,8 @@ export function App() {
   const cancellationLockRef = useRef(false);
   const activeGenerationIdRef = useRef<string | undefined>(undefined);
   const submissionRequestIdRef = useRef<string | undefined>(undefined);
+  const aiToneBankLoadedRef = useRef(false);
+  const aiToneAssetCacheRef = useRef(new Map<string, ArrayBuffer>());
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -191,6 +194,7 @@ export function App() {
   const [generating, setGenerating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [generation, setGeneration] = useState<GenerationTask>();
+  const [aiToneBusy, setAiToneBusy] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<SocialPreset>(SOCIAL_PRESETS[2]);
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
@@ -212,6 +216,54 @@ export function App() {
     (!hasUserSuppliedLyrics || rightsDeclared) &&
     !generating &&
     !generationIsActive;
+
+  const loadAiTonePreset = useCallback(async (trackId: TrackId, preset: AiTonePreset, announce = true) => {
+    let bytes = aiToneAssetCacheRef.current.get(preset.url);
+    if (!bytes) {
+      const response = await fetch(preset.url);
+      if (!response.ok) throw new Error(`Could not load ${preset.name} (${response.status})`);
+      bytes = await response.arrayBuffer();
+      aiToneAssetCacheRef.current.set(preset.url, bytes);
+    }
+    const loaded = await engineRef.current.loadTrackToneFile(
+      trackId,
+      bytes.slice(0),
+      preset.name,
+      {
+        declaredMimeType: preset.mimeType,
+        requireEncodedValidation: true,
+        baseNote: preset.baseNote,
+        grainSeconds: preset.grainSeconds,
+        level: preset.level,
+        brightness: preset.brightness,
+        windowStartSeconds: preset.windowStartSeconds,
+        windowDurationSeconds: preset.windowDurationSeconds,
+      },
+    );
+    if (announce) {
+      const bpm = loaded.analysis.bpm === null ? "tempo unconfirmed" : `${loaded.analysis.bpm.toFixed(1)} BPM`;
+      setNotice(`${preset.name} AI tone loaded into ${trackId}: ${loaded.analysis.durationSeconds.toFixed(1)}s · ${bpm}.`);
+    }
+  }, []);
+
+  const loadDefaultAiToneBank = useCallback(async (announce = true) => {
+    if (aiToneBankLoadedRef.current || aiToneBusy) return;
+    setAiToneBusy(true);
+    try {
+      for (const [trackId, presetId] of Object.entries(DEFAULT_AI_TONE_BANK) as Array<[TrackId, string]>) {
+        await loadAiTonePreset(trackId, aiTonePresetById(presetId), false);
+      }
+      aiToneBankLoadedRef.current = true;
+      if (announce) setNotice("Moonlight Sonata Lyria tone bank loaded into the MIDI synth layer.");
+    } finally {
+      setAiToneBusy(false);
+    }
+  }, [aiToneBusy, loadAiTonePreset]);
+
+  const handleTransportToggle = useCallback(async () => {
+    if (!snapshotRef.current.playing) await loadDefaultAiToneBank(false);
+    await engineRef.current.toggle();
+  }, [loadDefaultAiToneBank]);
 
   useEffect(() => {
     selectedTrackRef.current = selectedTrack;
@@ -393,6 +445,7 @@ export function App() {
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
     engineRef.current.applyPerformanceTemplate(template);
+    if (template.id === "moonlight-sequencer") void loadDefaultAiToneBank(false);
     setPrompt(template.prompt);
     setGenerationBpm(template.bpm);
     const settings = {
@@ -405,7 +458,7 @@ export function App() {
     changeScene(template.scene);
     applySceneSettings(settings);
     setNotice(`${template.name} template applied across rhythm, mix, and visuals.`);
-  }, [applySceneSettings, changeScene, saveSceneSettings, sceneVisualSettings]);
+  }, [applySceneSettings, changeScene, loadDefaultAiToneBank, saveSceneSettings, sceneVisualSettings]);
 
   const applyAgentPlan = useCallback((plan: AgentPlan) => {
     const template = performanceTemplateById(plan.templateId);
@@ -448,7 +501,10 @@ export function App() {
     if (recorderState !== "idle") return;
     try {
       await engineRef.current.initialize();
-      if (!snapshotRef.current.playing) await engineRef.current.start();
+      if (!snapshotRef.current.playing) {
+        await loadDefaultAiToneBank(false);
+        await engineRef.current.start();
+      }
       setLastRecording(undefined);
       setRecordProgress(0);
       await recorder.start(selectedPresetRef.current);
@@ -457,7 +513,7 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Recording is unavailable");
     }
-  }, [stopRecording]);
+  }, [loadDefaultAiToneBank, stopRecording]);
 
   useEffect(() => {
     if (!recording) return;
@@ -479,7 +535,7 @@ export function App() {
       const sceneIndex = scenes.indexOf(selectedSceneRef.current);
       switch (message.action) {
         case "transport.toggle":
-          await engine.toggle();
+          await handleTransportToggle();
           break;
         case "transport.stop":
           engine.stop();
@@ -569,7 +625,7 @@ export function App() {
         }
       }
     },
-    [applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, startRecording, temporalControls],
+    [applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, handleTransportToggle, startRecording, temporalControls],
   );
 
   useEffect(() => {
@@ -838,6 +894,24 @@ export function App() {
     }
   };
 
+  const handleAiTonePreset = async (trackId: TrackId, preset: AiTonePreset) => {
+    if (aiToneBusy) return;
+    setAiToneBusy(true);
+    try {
+      await loadAiTonePreset(trackId, preset);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load AI tone");
+    } finally {
+      setAiToneBusy(false);
+    }
+  };
+
+  const clearAiTone = (trackId: TrackId) => {
+    engineRef.current.clearTrackToneFile(trackId);
+    aiToneBankLoadedRef.current = false;
+    setNotice(`AI tone cleared from ${trackId}.`);
+  };
+
   const saveLastRecording = async () => {
     if (!lastRecording || !recorderRef.current) return;
     try {
@@ -860,7 +934,7 @@ export function App() {
           <button className="icon-button" onClick={() => engineRef.current.stop()} aria-label="Stop">■</button>
           <button
             className={`play-button ${snapshot.playing ? "is-playing" : ""}`}
-            onClick={() => void engineRef.current.toggle()}
+            onClick={() => void handleTransportToggle()}
             aria-label={snapshot.playing ? "Pause" : "Play"}
             data-testid="transport-toggle"
           >
@@ -939,6 +1013,23 @@ export function App() {
                 <button key={preset.id} onClick={() => applyVisualPreset(preset.id)}>
                   <strong>{preset.name}</strong>
                   <span>{VISUAL_SCENES.find((scene) => scene.id === preset.scene)?.name ?? preset.scene}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="template-bank ai-tone-bank" aria-label="AI tone library">
+            <div className="artist-macros-heading">
+              <span>AI TONES</span><b>LYRIA</b>
+            </div>
+            <button className="bank-load-button" onClick={() => void loadDefaultAiToneBank()} disabled={aiToneBusy}>
+              {aiToneBusy ? "LOADING…" : "LOAD MOONLIGHT BANK"}
+            </button>
+            <div className="template-grid">
+              {AI_TONE_LIBRARY.map((preset) => (
+                <button key={preset.id} onClick={() => void handleAiTonePreset(selectedTrack, preset)} disabled={aiToneBusy}>
+                  <strong>{preset.name}</strong>
+                  <span>{preset.targetTracks.join(" / ")}</span>
                 </button>
               ))}
             </div>
@@ -1250,7 +1341,7 @@ export function App() {
               <article key={track.id} className={`track-strip ${track.id === selectedTrack ? "selected" : ""}`} onClick={() => changeTrack(track.id)}>
                 <div className="track-number" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
                 <div className="track-main">
-                  <div className="track-title"><strong>{track.name}</strong><span>{track.loadedFile ? "CLIP" : track.instrument.toUpperCase()}</span></div>
+                  <div className="track-title"><strong>{track.name}</strong><span>{track.loadedFile ? "CLIP" : track.aiToneFile ? "AI MIDI" : track.instrument.toUpperCase()}</span></div>
                   <input aria-label={`${track.name} volume`} type="range" min="0" max="1" step="0.01" value={track.volume} onChange={(event) => engineRef.current.setTrackVolume(track.id, Number(event.target.value))} />
                   <label className="pan-control" onClick={(event) => event.stopPropagation()}>
                     <span>PAN</span>
@@ -1264,6 +1355,14 @@ export function App() {
                       {track.loadedFile ? "REPLACE" : "LOAD"}
                       <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.mid,.midi" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
                     </label>
+                    <button
+                      className={track.aiToneFile ? "active ai-tone-button" : "ai-tone-button"}
+                      onClick={(event) => { event.stopPropagation(); void handleAiTonePreset(track.id, aiTonePresetById(DEFAULT_AI_TONE_BANK[track.id] ?? AI_TONE_LIBRARY[0].id)); }}
+                      disabled={aiToneBusy}
+                    >
+                      AI
+                    </button>
+                    {track.aiToneFile && <button onClick={(event) => { event.stopPropagation(); clearAiTone(track.id); }}>AI ×</button>}
                     {track.loadedFile && <button onClick={(event) => { event.stopPropagation(); visualRef.current?.clearAudioAnalysis(track.id); engineRef.current.clearAudioFile(track.id); }}>×</button>}
                   </div>
                 </div>

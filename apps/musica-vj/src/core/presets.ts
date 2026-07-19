@@ -73,6 +73,30 @@ export const VISUAL_PRESETS: VisualPreset[] = [
 
 export const PERFORMANCE_TEMPLATES: PerformanceTemplate[] = [
   {
+    id: "moonlight-sequencer",
+    name: "Moonlight Sequencer",
+    description: "Public-domain Beethoven arpeggios, Lyria-sourced synth tone bank",
+    bpm: 72,
+    prompt: "public-domain Beethoven Moonlight Sonata first movement, C-sharp minor arpeggios, soft piano grains, dark pad, restrained hall reverb",
+    scene: "monolith",
+    intensity: 0.54,
+    artDirection: { sculpture: 0.92, motion: 0.18, atmosphere: 0.86, ribbon: 0.36 },
+    temporal: { speed: 0.16, strobe: 0, trail: 0.9, morph: 0.42, camera: 0.2, phase: 0.14 },
+    tracks: {
+      drums: { pattern: [0], notes: [36, 42, 38, 42], volume: 0 },
+      bass: { pattern: [0, 8], notes: [25, 32, 25, 32, 24, 31, 24, 31, 23, 30, 23, 30, 21, 28, 21, 28], volume: 0.48, pan: -0.08 },
+      chords: { pattern: [0, 4, 8, 12], notes: [49, 49, 48, 48, 47, 47, 45, 45, 44, 44, 42, 42, 41, 41, 44, 44], volume: 0.52, pan: -0.18 },
+      lead: {
+        pattern: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14],
+        notes: [68, 61, 64, 68, 61, 64, 68, 61, 66, 68, 61, 66, 68, 60, 64, 68, 60, 64, 68, 59, 63, 68, 59, 63, 68, 57, 61, 68, 57, 61, 68, 56],
+        volume: 0.5,
+        pan: 0.12,
+      },
+      voice: { pattern: [3, 7, 11, 15], notes: [64, 63, 61, 59, 57, 56, 57, 59, 61, 63, 64, 66, 64, 61, 59, 56], volume: 0.24, pan: 0.26 },
+      texture: { pattern: [0, 8], notes: [37, 44, 49, 56, 61, 56, 49, 44, 36, 43, 48, 55, 60, 55, 48, 43], volume: 0.42, pan: 0.32 },
+    },
+  },
+  {
     id: "warehouse-techno",
     name: "Warehouse Techno",
     description: "Four-on-floor pressure, clipped bass, bright stabs",
@@ -266,9 +290,10 @@ export function performanceTemplateById(id: string): PerformanceTemplate {
   return PERFORMANCE_TEMPLATES.find((template) => template.id === id) ?? PERFORMANCE_TEMPLATES[0];
 }
 
-export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "uk-garage-neon";
+export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "moonlight-sequencer";
 
 export const DEFAULT_MIDI_SONG_BANK_IDS = [
+  "moonlight-sequencer",
   "uk-garage-neon",
   "afro-cosmic-house",
   "idm-crystalline",

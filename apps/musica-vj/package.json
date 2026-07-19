@@ -13,6 +13,7 @@
     "tauri": "tauri",
     "dev:lyria": "node scripts/dev-lyria-env.mjs",
     "dev:lyria:gcloud": "node scripts/dev-lyria-gcloud.mjs",
+    "render:ai-sequencer": "node scripts/render-ai-sequencer.mjs",
     "render:samples": "node scripts/render-samples.mjs",
     "verify:samples": "node scripts/verify-samples.mjs",
     "verify:samples:reproducible": "node scripts/verify-reproducibility.mjs",

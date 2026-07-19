@@ -33,11 +33,26 @@ interface TrackRuntime {
   loadedLoop: boolean;
   loadedStartedAt?: number;
   loopSource?: AudioBufferSourceNode;
+  aiTone?: AiToneRuntime;
 }
 
 interface ScheduledSourceMetadata {
   startsAt: number;
   imported: boolean;
+}
+
+export interface AiToneOptions {
+  baseNote?: number;
+  grainSeconds?: number;
+  level?: number;
+  brightness?: number;
+  windowStartSeconds?: number;
+  windowDurationSeconds?: number;
+}
+
+interface AiToneRuntime extends Required<AiToneOptions> {
+  buffer: AudioBuffer;
+  fileName: string;
 }
 
 export interface LoadAudioOptions {
@@ -49,6 +64,10 @@ export interface LoadAudioOptions {
 export interface LoadedAudioDetails {
   encoded?: EncodedAudioMetadata;
   analysis: AudioAnalysisResult;
+}
+
+export interface LoadedAiToneDetails extends LoadedAudioDetails {
+  fileName: string;
 }
 
 export interface EngineSnapshot {
@@ -453,6 +472,7 @@ export class AudioEngine {
     filter.connect(envelope).connect(track.input);
     this.startSource(sub, time, time + 0.44);
     this.startSource(mid, time, time + 0.44);
+    this.triggerAiToneGrain(track, note, time, 0.48, 0.72);
   }
 
   private triggerChord(track: TrackRuntime, root: number, time: number): void {
@@ -486,6 +506,7 @@ export class AudioEngine {
     envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.62);
     source.connect(formant).connect(secondFormant).connect(envelope).connect(track.input);
     this.startSource(source, time, time + 0.66);
+    this.triggerAiToneGrain(track, note, time, 0.62, 0.62);
   }
 
   private triggerTexture(track: TrackRuntime, note: number, time: number): void {
@@ -518,6 +539,7 @@ export class AudioEngine {
     this.startSource(modulator, time, time + 1.48);
     this.startSource(carrier, time, time + 1.48);
     this.startSource(air, time, time + 1.62);
+    this.triggerAiToneGrain(track, note, time, 1.48, 0.78);
   }
 
   private triggerTone(
@@ -546,6 +568,40 @@ export class AudioEngine {
     envelope.gain.exponentialRampToValueAtTime(0.001, time + duration);
     oscillator.connect(filter).connect(envelope).connect(track.input);
     this.startSource(oscillator, time, time + duration + 0.02);
+    this.triggerAiToneGrain(track, note, time, duration, 1);
+  }
+
+  private triggerAiToneGrain(track: TrackRuntime, note: number, time: number, duration: number, intensity: number): void {
+    const aiTone = track.aiTone;
+    if (!aiTone) return;
+    const context = this.requireContext();
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const envelope = context.createGain();
+    const grainSeconds = clamp(Math.min(aiTone.grainSeconds, duration + 0.32), 0.08, 2.4);
+    const attack = Math.min(0.045, grainSeconds * 0.18);
+    const releaseStart = Math.max(attack + 0.02, grainSeconds * 0.72);
+    const windowStart = clamp(aiTone.windowStartSeconds, 0, Math.max(0, aiTone.buffer.duration - 0.05));
+    const windowEnd = clamp(windowStart + aiTone.windowDurationSeconds, windowStart + 0.05, aiTone.buffer.duration);
+    const windowWidth = Math.max(0.05, windowEnd - windowStart - grainSeconds);
+    const fractionalSeed = Math.abs(Math.sin(note * 12.9898 + time * 78.233)) % 1;
+    const offset = clamp(windowStart + fractionalSeed * windowWidth, 0, Math.max(0, aiTone.buffer.duration - grainSeconds));
+    const semitones = note - aiTone.baseNote;
+
+    source.buffer = aiTone.buffer;
+    source.playbackRate.value = 2 ** (semitones / 12);
+    filter.type = "lowpass";
+    filter.frequency.value = 700 + aiTone.brightness * 7_600;
+    filter.Q.value = 0.9 + aiTone.brightness * 2.4;
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.linearRampToValueAtTime(aiTone.level * intensity, time + attack);
+    envelope.gain.setValueAtTime(aiTone.level * intensity, time + releaseStart);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + grainSeconds);
+    source.connect(filter).connect(envelope).connect(track.input);
+    this.scheduledSources.set(source, { startsAt: time, imported: false });
+    source.addEventListener("ended", () => this.scheduledSources.delete(source), { once: true });
+    source.start(time, offset, grainSeconds);
+    source.stop(time + grainSeconds + 0.02);
   }
 
   private startSource(source: AudioScheduledSourceNode, startsAt: number, stopsAt: number): void {
@@ -624,6 +680,51 @@ export class AudioEngine {
     }
     this.emit();
     return { encoded, analysis };
+  }
+
+  async loadTrackToneFile(
+    id: TrackId,
+    bytes: ArrayBuffer,
+    fileName: string,
+    options: LoadAudioOptions & AiToneOptions = {},
+  ): Promise<LoadedAiToneDetails> {
+    if (bytes.byteLength > MAX_IMPORT_BYTES) throw new Error("AI tone files are limited to 250 MB");
+    let encoded: EncodedAudioMetadata | undefined;
+    try {
+      encoded = inspectEncodedAudio(bytes, options.declaredMimeType);
+    } catch (error) {
+      if (options.requireEncodedValidation) throw error;
+    }
+    await this.initialize();
+    const track = this.tracks.get(id);
+    if (!track) throw new Error(`Unknown track: ${id}`);
+    const buffer = await this.requireContext().decodeAudioData(bytes.slice(0));
+    if (buffer.duration > MAX_CLIP_DURATION_SECONDS) throw new Error("AI tone files are limited to 10 minutes");
+    if (buffer.numberOfChannels > 8) throw new Error("AI tone files are limited to 8 channels");
+    if (buffer.sampleRate > 192_000) throw new Error("AI tone files are limited to 192 kHz");
+    const analysis = analyzeDecodedPcm({
+      sampleRateHz: buffer.sampleRate,
+      channels: Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel)),
+    });
+    track.aiTone = {
+      buffer,
+      fileName,
+      baseNote: options.baseNote ?? 60,
+      grainSeconds: clamp(options.grainSeconds ?? 0.7, 0.08, 2.4),
+      level: clamp(options.level ?? 0.055, 0, 0.35),
+      brightness: clamp(options.brightness ?? 0.5, 0, 1),
+      windowStartSeconds: Math.max(0, options.windowStartSeconds ?? 0),
+      windowDurationSeconds: Math.max(0.05, options.windowDurationSeconds ?? buffer.duration),
+    };
+    this.emit();
+    return { encoded, analysis, fileName };
+  }
+
+  clearTrackToneFile(id: TrackId): void {
+    const track = this.tracks.get(id);
+    if (!track) return;
+    track.aiTone = undefined;
+    this.emit();
   }
 
   clearAudioFile(id: TrackId): void {
@@ -841,6 +942,7 @@ export class AudioEngine {
           notes: [...track.definition.notes],
           ...track.mix,
           loadedFile: track.loadedFile,
+          aiToneFile: track.aiTone?.fileName,
         }))
       : this.definitions.map((definition) => ({
           ...definition,
