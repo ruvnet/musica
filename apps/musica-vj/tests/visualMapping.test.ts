@@ -4,6 +4,7 @@ import {
   mapVisualAudioResponse,
   normalizeAnimationStyle,
   normalizeArtDirection,
+  normalizeVisualColorControls,
   normalizeTemporalControls,
   sceneForMeasuredSection,
   VISUAL_ANIMATION_STYLES,
@@ -68,6 +69,16 @@ describe("measured section scene mapping", () => {
       motion: 0,
       atmosphere: 0.5,
       ribbon: 0.7,
+    });
+  });
+
+  it("normalizes palette look controls", () => {
+    expect(normalizeVisualColorControls({ palette: "prism", hue: -1, saturation: 2, contrast: 0.4, diversity: Number.NaN })).toEqual({
+      palette: "prism",
+      hue: 0,
+      saturation: 1,
+      contrast: 0.4,
+      diversity: 0.5,
     });
   });
 

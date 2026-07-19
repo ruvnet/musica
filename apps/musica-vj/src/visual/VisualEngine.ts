@@ -5,7 +5,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import type { AudioEngine } from "../audio/AudioEngine";
 import type { AudioAnalysisResult, MeasuredSectionType } from "../audio/audioAnalysis";
 import { DEFAULT_TEMPORAL_CONTROLS, visualSceneById } from "../core/presets";
-import type { AudioMetrics, TrackId, VisualSceneId, VisualTemporalControls } from "../core/types";
+import type { AudioMetrics, TrackId, VisualColorControls, VisualPaletteId, VisualSceneId, VisualTemporalControls } from "../core/types";
 
 export interface RenderStats {
   fps: number;
@@ -81,6 +81,34 @@ export const DEFAULT_ART_DIRECTION: Readonly<VisualArtDirection> = Object.freeze
   atmosphere: 0.62,
   ribbon: 0.72,
 });
+
+export const VISUAL_COLOR_PALETTES: ReadonlyArray<{ id: VisualPaletteId; label: string; color?: string; accent?: string }> = [
+  { id: "scene", label: "SCENE" },
+  { id: "neon", label: "NEON", color: "#d64ba8", accent: "#39bdd0" },
+  { id: "ember", label: "EMBER", color: "#e96d4b", accent: "#d9c45d" },
+  { id: "ice", label: "ICE", color: "#4b9fc8", accent: "#9bd8c5" },
+  { id: "prism", label: "PRISM", color: "#a95bd5", accent: "#49c893" },
+  { id: "mono", label: "MONO", color: "#c6ccd5", accent: "#697583" },
+];
+
+export const DEFAULT_VISUAL_COLOR_CONTROLS: Readonly<VisualColorControls> = Object.freeze({
+  palette: "scene",
+  hue: 0.5,
+  saturation: 0.64,
+  contrast: 0.48,
+  diversity: 0.58,
+});
+
+export function normalizeVisualColorControls(controls: VisualColorControls): VisualColorControls {
+  const bounded = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
+  return {
+    palette: VISUAL_COLOR_PALETTES.some((palette) => palette.id === controls.palette) ? controls.palette : "scene",
+    hue: bounded(controls.hue),
+    saturation: bounded(controls.saturation),
+    contrast: bounded(controls.contrast),
+    diversity: bounded(controls.diversity),
+  };
+}
 
 export function normalizeArtDirection(direction: VisualArtDirection): VisualArtDirection {
   const bounded = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
@@ -206,6 +234,7 @@ export class VisualEngine {
   private currentScene: VisualSceneId = "bloom";
   private intensity = 0.72;
   private artDirection: VisualArtDirection = { ...DEFAULT_ART_DIRECTION };
+  private colorControls: VisualColorControls = { ...DEFAULT_VISUAL_COLOR_CONTROLS };
   private temporal: VisualTemporalControls = { ...DEFAULT_TEMPORAL_CONTROLS };
   private animationStyle: VisualAnimationStyle = "flow";
   private pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
@@ -372,6 +401,15 @@ export class VisualEngine {
 
   getArtDirection(): VisualArtDirection {
     return { ...this.artDirection };
+  }
+
+  setColorControls(controls: VisualColorControls): void {
+    this.colorControls = normalizeVisualColorControls(controls);
+    this.applySceneTheme(this.currentScene);
+  }
+
+  getColorControls(): VisualColorControls {
+    return { ...this.colorControls };
   }
 
   setTemporalControls(controls: VisualTemporalControls): void {
@@ -720,8 +758,19 @@ export class VisualEngine {
 
   private applySceneTheme(scene: VisualSceneId): void {
     const theme = visualSceneById(scene);
-    const color = new THREE.Color(theme.color);
-    const accent = new THREE.Color(theme.accent);
+    const palette = VISUAL_COLOR_PALETTES.find((candidate) => candidate.id === this.colorControls.palette);
+    const hueShift = (this.colorControls.hue - 0.5) * 0.9;
+    const color = new THREE.Color(palette?.color ?? theme.color).offsetHSL(hueShift, 0, 0);
+    const accent = new THREE.Color(palette?.accent ?? theme.accent).offsetHSL(hueShift, 0, 0);
+    for (const value of [color, accent]) {
+      const hsl = { h: 0, s: 0, l: 0 };
+      value.getHSL(hsl);
+      value.setHSL(hsl.h, Math.min(1, hsl.s * (0.35 + this.colorControls.saturation * 1.15)), hsl.l);
+    }
+    const third = color.clone().lerp(accent, 0.5).offsetHSL((this.colorControls.diversity - 0.5) * 0.55, 0.08, 0.08);
+    this.renderer.toneMappingExposure = 0.68 + this.colorControls.contrast * 0.38;
+    if (this.scene.background instanceof THREE.Color) this.scene.background.copy(color).multiplyScalar(0.015 + this.colorControls.contrast * 0.018);
+    if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.color.copy(accent).multiplyScalar(0.025 + this.colorControls.contrast * 0.02);
     this.bloomMaterial.uniforms.uColorA.value = color;
     this.bloomMaterial.uniforms.uColorB.value = accent;
     this.flowMaterial.uniforms.uColorA.value = color;
@@ -744,7 +793,7 @@ export class VisualEngine {
     for (let index = 0; index < this.tunnelRings.length; index += 1) {
       const material = this.tunnelRings[index]?.material as THREE.MeshBasicMaterial | undefined;
       if (!material) continue;
-      material.color = index % 3 === 0 ? color : index % 3 === 1 ? accent : new THREE.Color(0xf7f5ff);
+      material.color = index % 3 === 0 ? color : index % 3 === 1 ? accent : third;
     }
     for (let index = 0; index < this.spectralTrails.length; index += 1) {
       this.spectralTrails[index]!.material.color = index % 2 === 0 ? color : accent;

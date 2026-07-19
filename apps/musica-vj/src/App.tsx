@@ -3,6 +3,13 @@ import { AudioEngine, createEngineSnapshotFromTemplate, type EngineSnapshot } fr
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
 import {
+  broadcastDjControlState,
+  subscribeDjControlCommands,
+  type DjControlProfileId,
+  type DjControlState,
+} from "./core/djControls";
+import { openDjControlWindow } from "./core/djWindows";
+import {
   compileLyriaPrompt,
   LYRIA_PRO_PRICE_USD,
   LYRIA_VOCAL_LANGUAGES,
@@ -13,7 +20,6 @@ import {
   type CompositionSection,
   type StructuredComposition,
 } from "./core/composition";
-import { AI_TONE_LIBRARY, DEFAULT_AI_TONE_BANK, aiTonePresetById, type AiTonePreset } from "./core/aiAudioLibrary";
 import { DEFAULT_TEMPORAL_CONTROLS, PERFORMANCE_TEMPLATES, SOCIAL_PRESETS, VISUAL_PRESETS, VISUAL_SCENES, defaultPerformanceTemplate, performanceTemplateById } from "./core/presets";
 import {
   cancelGeneration,
@@ -25,8 +31,14 @@ import {
 } from "./core/creativeProvider";
 import {
   LYRIA_REALTIME_STYLE_PRESETS,
+  AUTO_DJ_PHRASE_BARS,
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
+  autoDjPhraseDurationMs,
   compensateLyriaBpmForPitch,
+  createAutoDjRealtimeRequest,
+  createLyriaSequenceConfig,
+  createLyriaSequencePrompts,
+  createLyriaVocalPrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   getLyriaRealtimeStatus,
@@ -40,16 +52,29 @@ import {
   type LyriaRealtimeDeckId,
   type LyriaRealtimeRequest,
   type LyriaRealtimeSession,
+  type LyriaRealtimeStylePreset,
   type LyriaRealtimeStatus,
   type LyriaWeightedPrompt,
 } from "./core/lyriaRealtime";
 import { importMidiPerformance } from "./core/midiImport";
-import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualSceneId, type VisualTemporalControls } from "./core/types";
+import {
+  DEFAULT_LYRIA_DECK_CONTROLS,
+  LYRIA_DECK_SCENE_STORAGE_KEY,
+  cloneLyriaDeckScene,
+  loadLyriaDeckScenes,
+  normalizeLyriaDeckScene,
+  type LyriaDeckControl,
+  type LyriaDeckScene,
+} from "./core/lyriaDeckScenes";
+import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualColorControls, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
 import {
+  DEFAULT_VISUAL_COLOR_CONTROLS,
   VISUAL_ANIMATION_STYLES,
+  VISUAL_COLOR_PALETTES,
   VisualEngine,
   normalizeAnimationStyle,
+  normalizeVisualColorControls,
   type RenderStats,
   type VisualAnimationStyle,
   type VisualArtDirection,
@@ -59,28 +84,14 @@ const DEFAULT_TEMPLATE = defaultPerformanceTemplate();
 const INITIAL_SNAPSHOT: EngineSnapshot = createEngineSnapshotFromTemplate(DEFAULT_TEMPLATE);
 const DEFAULT_REALTIME_REQUEST = createLyriaRealtimeRequestForTemplate(DEFAULT_TEMPLATE);
 const DEFAULT_REALTIME_STYLE = lyriaRealtimeStyleById(DEFAULT_LYRIA_REALTIME_STYLE_ID);
-const LYRIA_KEYBOARD_NOTES = [
-  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
-  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-] as const;
-const LYRIA_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
 const LYRIA_STREAM_STARTUP_TIMEOUT_MS = 15_000;
 const LYRIA_STREAM_POLL_MS = 80;
+const LYRIA_PREBUFFER_SECONDS = 1.25;
+const LYRIA_PREBUFFER_BYTES = 48_000 * 2 * 2 * LYRIA_PREBUFFER_SECONDS;
+const LYRIA_MIN_START_BYTES = 48_000 * 2 * 2 * 0.75;
+const LYRIA_PLAYBACK_LEAD_SECONDS = 1;
 const LYRIA_LIVE_UPDATE_DEBOUNCE_MS = 420;
 const LYRIA_DECKS: LyriaRealtimeDeckId[] = ["main", "sequence", "vocal"];
-
-interface LyriaDeckControl {
-  volume: number;
-  muted: boolean;
-  pitchSemitones: number;
-  beatNudgeMs: number;
-}
-
-const DEFAULT_LYRIA_DECK_CONTROLS: Record<LyriaRealtimeDeckId, LyriaDeckControl> = {
-  main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0.3, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-};
 
 interface LyriaBufferingState {
   active: boolean;
@@ -88,17 +99,60 @@ interface LyriaBufferingState {
   bytes: number;
 }
 
+interface LyriaStyleGuidance {
+  text: string;
+  weight: number;
+}
+
+interface LyriaGuidanceDialogState extends LyriaStyleGuidance {
+  styleId: string;
+}
+
+type LyriaCompanionDeckId = "sequence" | "vocal";
+
+interface LyriaCompanionDialogState {
+  deck: LyriaCompanionDeckId;
+  text: string;
+}
+
+const DEFAULT_LYRIA_COMPANION_GUIDANCE: Record<LyriaCompanionDeckId, string> = {
+  sequence: "Reinforce the main kick and pocket; bass mirrors the main harmonic roots and cadences; leave deliberate space for its hooks",
+  vocal: "Expressive wordless lead with a memorable chorus contour; answer the main motif without competing with it",
+};
+
+interface BufferedRealtimeChunk {
+  bytes: Uint8Array;
+  sampleRateHz: number;
+  channels: number;
+}
+
+function createRealtimePrebuffer(): Record<LyriaRealtimeDeckId, BufferedRealtimeChunk[]> {
+  return { main: [], sequence: [], vocal: [] };
+}
+
+function applyPrimaryGuidance(
+  style: LyriaRealtimeStylePreset,
+  guidance?: LyriaStyleGuidance,
+): LyriaRealtimeStylePreset {
+  if (!guidance) return style;
+  return {
+    ...style,
+    prompts: style.prompts.map((prompt, index) => (
+      index === 0 ? { text: guidance.text, weight: guidance.weight } : { ...prompt }
+    )),
+  };
+}
+
 type StudioPanelId =
   | "visual-scenes"
   | "visual-presets"
   | "visual-animation"
+  | "visual-color"
   | "visual-reactivity"
   | "visual-macros"
   | "visual-temporal"
   | "audio-lyria"
   | "audio-templates"
-  | "audio-mixer"
-  | "audio-tones"
   | "audio-agent"
   | "audio-generation"
   | "av-output";
@@ -112,7 +166,6 @@ const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
 };
 
 const WAIT = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const GENERATION_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_STRUCTURE = `0:00 atmospheric intro
 0:20 groove enters
@@ -121,19 +174,11 @@ const DEFAULT_STRUCTURE = `0:00 atmospheric intro
 1:35 larger second drop
 2:15 short outro`;
 
-const TRACK_GUIDE_LABELS: Record<TrackId, string> = {
-  drums: "drums",
-  bass: "bass",
-  chords: "chords",
-  lead: "lead",
-  voice: "vocal texture",
-  texture: "atmosphere",
-};
-
 interface SceneVisualSettings {
   intensity: number;
   artDirection: VisualArtDirection;
   temporal: VisualTemporalControls;
+  color: VisualColorControls;
   animationStyle: VisualAnimationStyle;
 }
 
@@ -143,6 +188,7 @@ const DEFAULT_SCENE_VISUAL_SETTINGS: SceneVisualSettings = {
   intensity: DEFAULT_TEMPLATE.intensity,
   artDirection: DEFAULT_TEMPLATE.artDirection,
   temporal: DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+  color: { ...DEFAULT_VISUAL_COLOR_CONTROLS },
   animationStyle: defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene),
 };
 
@@ -178,28 +224,12 @@ function sequencerSignature(snapshot: EngineSnapshot): string {
   ].join("|");
 }
 
-function sequencerGuidePrompt(snapshot: EngineSnapshot): string {
-  const hasSolo = snapshot.tracks.some((track) => track.solo);
-  const activeTracks = snapshot.tracks
-    .filter((track) => !track.muted && (!hasSolo || track.solo) && track.volume > 0.03)
-    .map((track) => {
-      const activeSteps = track.pattern.filter(Boolean).length;
-      if (activeSteps === 0) return "";
-      const density = activeSteps >= 12 ? "dense" : activeSteps >= 7 ? "medium" : "sparse";
-      return `${TRACK_GUIDE_LABELS[track.id]} ${density}`;
-    })
-    .filter(Boolean);
-  if (activeTracks.length === 0) {
-    return "follow Musica sequencer: stripped breakdown, minimal pulse, leave space, no vocals";
-  }
-  return `follow Musica sequencer at ${snapshot.bpm} BPM: ${activeTracks.join(", ")}; make muted or empty lanes drop out; instrumental only`;
-}
-
 function cloneVisualSettings(settings: SceneVisualSettings): SceneVisualSettings {
   return {
     intensity: Math.max(0.05, Math.min(1, settings.intensity)),
     artDirection: { ...settings.artDirection },
     temporal: { ...settings.temporal },
+    color: normalizeVisualColorControls(settings.color),
     animationStyle: normalizeAnimationStyle(settings.animationStyle),
   };
 }
@@ -216,6 +246,7 @@ function createInitialSceneVisualSettings(): SceneVisualSettingsMap {
           intensity: settings.intensity,
           artDirection: settings.artDirection,
           temporal: settings.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+          color: { ...DEFAULT_VISUAL_COLOR_CONTROLS },
           animationStyle: defaultAnimationStyleForScene(scene.id),
         }),
       ];
@@ -259,12 +290,18 @@ export function App() {
   const cancellationLockRef = useRef(false);
   const activeGenerationIdRef = useRef<string | undefined>(undefined);
   const submissionRequestIdRef = useRef<string | undefined>(undefined);
-  const aiToneBankLoadedRef = useRef(false);
-  const aiToneAssetCacheRef = useRef(new Map<string, ArrayBuffer>());
   const stepDragRef = useRef<{ active: boolean } | undefined>(undefined);
   const lyriaBufferCancelRef = useRef(false);
   const liveUpdateSignatureRef = useRef<Record<LyriaRealtimeDeckId, string>>({ main: "", sequence: "", vocal: "" });
-  const realtimePrebufferStartedRef = useRef(false);
+  const realtimePrebufferRef = useRef<Record<LyriaRealtimeDeckId, BufferedRealtimeChunk[]>>(createRealtimePrebuffer());
+  const realtimePollInFlightRef = useRef(false);
+  const autoDjStepRef = useRef(0);
+  const autoDjTransitionRef = useRef(false);
+  const autoDjStyleRef = useRef(DEFAULT_REALTIME_STYLE.id);
+  const autoDjPersonalizationRef = useRef("dark futuristic club set, muscular drums, memorable two-bar motif, sophisticated restraint, no generic festival cliches");
+  const lyriaSessionRef = useRef<LyriaRealtimeSession | undefined>(undefined);
+  const djControlStateRef = useRef<DjControlState | undefined>(undefined);
+  const handleControlRef = useRef<((message: ControlMessage) => Promise<void>) | undefined>(undefined);
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -277,6 +314,7 @@ export function App() {
   const [artDirection, setArtDirection] = useState<VisualArtDirection>(DEFAULT_TEMPLATE.artDirection);
   const [temporalControls, setTemporalControls] = useState<VisualTemporalControls>(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
   const [animationStyle, setAnimationStyle] = useState<VisualAnimationStyle>(defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene));
+  const [visualColorControls, setVisualColorControls] = useState<VisualColorControls>({ ...DEFAULT_VISUAL_COLOR_CONTROLS });
   const [sceneVisualSettings, setSceneVisualSettings] = useState<SceneVisualSettingsMap>(() => sceneVisualSettingsRef.current);
   const [controllerStatus, setControllerStatus] = useState(INITIAL_CONTROLLER_STATUS);
   const [renderStats, setRenderStats] = useState<RenderStats>({ fps: 0, frameTimeMs: 0, pixelRatio: 1, quality: "adaptive" });
@@ -296,6 +334,10 @@ export function App() {
   const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_REALTIME_REQUEST.config });
   const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_REALTIME_REQUEST.weightedPrompts);
   const [lyriaStyleId, setLyriaStyleId] = useState(DEFAULT_REALTIME_STYLE.id);
+  const [lyriaStyleGuidance, setLyriaStyleGuidance] = useState<Record<string, LyriaStyleGuidance>>({});
+  const [lyriaGuidanceDialog, setLyriaGuidanceDialog] = useState<LyriaGuidanceDialogState>();
+  const [lyriaCompanionGuidance, setLyriaCompanionGuidance] = useState<Record<LyriaCompanionDeckId, string>>({ ...DEFAULT_LYRIA_COMPANION_GUIDANCE });
+  const [lyriaCompanionDialog, setLyriaCompanionDialog] = useState<LyriaCompanionDialogState>();
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
   const [sequenceLyriaSession, setSequenceLyriaSession] = useState<LyriaRealtimeSession>();
   const [vocalLyriaSession, setVocalLyriaSession] = useState<LyriaRealtimeSession>();
@@ -307,10 +349,23 @@ export function App() {
     sequence: { ...DEFAULT_LYRIA_DECK_CONTROLS.sequence },
     vocal: { ...DEFAULT_LYRIA_DECK_CONTROLS.vocal },
   }));
+  const [lyriaDeckEnabled, setLyriaDeckEnabled] = useState<Record<LyriaRealtimeDeckId, boolean>>({ main: true, sequence: false, vocal: false });
+  const [lyriaDeckSyncing, setLyriaDeckSyncing] = useState<Record<LyriaRealtimeDeckId, boolean>>({ main: false, sequence: false, vocal: false });
+  const [lyriaDeckScenes, setLyriaDeckScenes] = useState<LyriaDeckScene[]>(() => {
+    try {
+      return loadLyriaDeckScenes(window.localStorage.getItem(LYRIA_DECK_SCENE_STORAGE_KEY));
+    } catch {
+      return loadLyriaDeckScenes();
+    }
+  });
+  const [activeLyriaDeckSceneId, setActiveLyriaDeckSceneId] = useState<string>();
+  const [lyriaDeckSceneDialog, setLyriaDeckSceneDialog] = useState<LyriaDeckScene>();
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
   const [lyriaBuffering, setLyriaBuffering] = useState<LyriaBufferingState>({ active: false, message: "", bytes: 0 });
   const [autoDjMode, setAutoDjMode] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const [autoDjStep, setAutoDjStep] = useState(0);
+  const [autoDjPersonalization, setAutoDjPersonalization] = useState("dark futuristic club set, muscular drums, memorable two-bar motif, sophisticated restraint, no generic festival cliches");
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ available: false, provider: "checking" });
   const [agentGoal, setAgentGoal] = useState("Make this set evolve into a darker peak-time system with sharper drums and a clearer visual hook.");
   const [agentPlan, setAgentPlan] = useState<AgentPlan>();
@@ -332,31 +387,24 @@ export function App() {
   const [generating, setGenerating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [generation, setGeneration] = useState<GenerationTask>();
-  const [aiToneBusy, setAiToneBusy] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<SocialPreset>(SOCIAL_PRESETS[2]);
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
-  const [localGuideLevel, setLocalGuideLevel] = useState(0.34);
   const [collapsedPanels, setCollapsedPanels] = useState<Set<StudioPanelId>>(() => new Set([
     "audio-templates",
-    "audio-tones",
     "audio-agent",
     "audio-generation",
     "av-output",
   ]));
   const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
 
-  const selectedTrackSnapshot = useMemo(
-    () => snapshot.tracks.find((track) => track.id === selectedTrack) ?? snapshot.tracks[0],
-    [selectedTrack, snapshot.tracks],
-  );
   const selectedSceneMeta = VISUAL_SCENES.find((scene) => scene.id === selectedScene) ?? VISUAL_SCENES[0];
+  const metaLlmAvailable = agentStatus.available && agentStatus.provider === "meta_llm";
   const lyriaAvailable = providerStatus.available && providerStatus.provider === "lyria_3_pro";
   const hasUserSuppliedLyrics = !instrumental && lyrics.trim().length > 0;
   const generationIsActive = generation !== undefined && ["queued", "processing"].includes(generation.status);
   const sequencerGuideSignature = useMemo(() => sequencerSignature(snapshot), [snapshot]);
-  const liveSequencerGuide = useMemo(() => sequencerGuidePrompt(snapshot), [sequencerGuideSignature]);
   const paidGenerationReady =
     lyriaAvailable &&
     prompt.trim().length > 0 &&
@@ -365,7 +413,10 @@ export function App() {
     !generating &&
     !generationIsActive;
 
-  const activeLyriaStyle = useMemo(() => lyriaRealtimeStyleById(lyriaStyleId), [lyriaStyleId]);
+  const activeLyriaStyle = useMemo(() => applyPrimaryGuidance(
+    lyriaRealtimeStyleById(lyriaStyleId),
+    lyriaStyleGuidance[lyriaStyleId],
+  ), [lyriaStyleGuidance, lyriaStyleId]);
   const realtimeRequest = useMemo<LyriaRealtimeRequest>(
     () => ({
       weightedPrompts: lyriaPrompts.filter((prompt) => prompt.text.trim().length > 0).slice(0, 4),
@@ -377,85 +428,38 @@ export function App() {
     [lyriaDeckControls.main.pitchSemitones, lyriaPrompts, lyriaRealtimeConfig, snapshot.bpm],
   );
   const sequenceRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: [
-      { text: liveSequencerGuide.slice(0, 240), weight: 1.25 },
-      { text: "tight looped sequencer layer, precise rhythmic accents, sparse arrangement, instrumental only", weight: 0.82 },
-    ],
-    config: {
-      ...lyriaRealtimeConfig,
-      bpm: compensateLyriaBpmForPitch(snapshot.bpm, lyriaDeckControls.sequence.pitchSemitones),
-      guidance: Math.min(6, lyriaRealtimeConfig.guidance + 0.7),
-      density: Math.max(0.18, Math.min(0.82, lyriaRealtimeConfig.density)),
-      brightness: Math.max(0.2, Math.min(0.78, lyriaRealtimeConfig.brightness)),
-      musicGenerationMode: "QUALITY",
-    },
-  }), [liveSequencerGuide, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
+    weightedPrompts: createLyriaSequencePrompts(snapshot, activeLyriaStyle, {
+      mainPrompts: realtimeRequest.weightedPrompts,
+      scale: realtimeRequest.config.scale,
+      customDirection: lyriaCompanionGuidance.sequence,
+    }),
+    config: createLyriaSequenceConfig(snapshot, lyriaRealtimeConfig, lyriaDeckControls.sequence.pitchSemitones),
+  }), [activeLyriaStyle, lyriaCompanionGuidance.sequence, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, realtimeRequest, sequencerGuideSignature]);
   const vocalRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: [
-      { text: `wordless vocalization layer for ${activeLyriaStyle.label}, expressive choir vowels and rhythmic syllables`, weight: 1.15 },
-      { text: "human voice used as a musical instrument, no intelligible lyrics, leave space for the main groove", weight: 0.76 },
-    ],
+    weightedPrompts: createLyriaVocalPrompts(activeLyriaStyle, {
+      mainPrompts: realtimeRequest.weightedPrompts,
+      scale: realtimeRequest.config.scale,
+      customDirection: lyriaCompanionGuidance.vocal,
+    }),
     config: {
       ...lyriaRealtimeConfig,
       bpm: compensateLyriaBpmForPitch(snapshot.bpm, lyriaDeckControls.vocal.pitchSemitones),
-      guidance: Math.min(6, lyriaRealtimeConfig.guidance + 0.35),
-      density: Math.max(0.15, Math.min(0.62, lyriaRealtimeConfig.density * 0.72)),
+      guidance: Math.min(6, lyriaRealtimeConfig.guidance + 0.7),
+      density: Math.max(0.12, Math.min(0.52, lyriaRealtimeConfig.density * 0.62)),
       brightness: Math.max(0.3, Math.min(0.82, lyriaRealtimeConfig.brightness + 0.1)),
       muteBass: true,
       muteDrums: true,
       onlyBassAndDrums: false,
       musicGenerationMode: "VOCALIZATION",
     },
-  }), [activeLyriaStyle.label, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
-
-  const loadAiTonePreset = useCallback(async (trackId: TrackId, preset: AiTonePreset, announce = true) => {
-    let bytes = aiToneAssetCacheRef.current.get(preset.url);
-    if (!bytes) {
-      const response = await fetch(preset.url);
-      if (!response.ok) throw new Error(`Could not load ${preset.name} (${response.status})`);
-      bytes = await response.arrayBuffer();
-      aiToneAssetCacheRef.current.set(preset.url, bytes);
-    }
-    const loaded = await engineRef.current.loadTrackToneFile(
-      trackId,
-      bytes.slice(0),
-      preset.name,
-      {
-        declaredMimeType: preset.mimeType,
-        requireEncodedValidation: true,
-        baseNote: preset.baseNote,
-        grainSeconds: preset.grainSeconds,
-        level: preset.level,
-        brightness: preset.brightness,
-        windowStartSeconds: preset.windowStartSeconds,
-        windowDurationSeconds: preset.windowDurationSeconds,
-      },
-    );
-    if (announce) {
-      const bpm = loaded.analysis.bpm === null ? "tempo unconfirmed" : `${loaded.analysis.bpm.toFixed(1)} BPM`;
-      setNotice(`${preset.name} AI tone loaded into ${trackId}: ${loaded.analysis.durationSeconds.toFixed(1)}s · ${bpm}.`);
-    }
-  }, []);
-
-  const loadDefaultAiToneBank = useCallback(async (announce = true) => {
-    if (aiToneBankLoadedRef.current || aiToneBusy) return;
-    setAiToneBusy(true);
-    try {
-      for (const [trackId, presetId] of Object.entries(DEFAULT_AI_TONE_BANK) as Array<[TrackId, string]>) {
-        await loadAiTonePreset(trackId, aiTonePresetById(presetId), false);
-      }
-      aiToneBankLoadedRef.current = true;
-      if (announce) setNotice("Moonlight Sonata Lyria tone bank loaded into the MIDI synth layer.");
-    } finally {
-      setAiToneBusy(false);
-    }
-  }, [aiToneBusy, loadAiTonePreset]);
+  }), [activeLyriaStyle, lyriaCompanionGuidance.vocal, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, realtimeRequest, snapshot.bpm]);
 
   const stopTransportAndRealtime = useCallback(async (announce = false) => {
     lyriaBufferCancelRef.current = true;
+    realtimePrebufferRef.current = createRealtimePrebuffer();
     engineRef.current.stop();
     engineRef.current.setRealtimeStreamPrimary(false);
-    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
     if (!lyriaSession && !sequenceLyriaSession && !vocalLyriaSession) {
       if (announce) setNotice("Transport stopped.");
       return;
@@ -473,9 +477,9 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaSession, lyriaStreamBytes, sequenceLyriaSession, vocalLyriaSession]);
+  }, [lyriaSession, sequenceLyriaSession, vocalLyriaSession]);
 
-  const ingestRealtimeAudioPoll = useCallback(async (deck: LyriaRealtimeDeckId): Promise<number> => {
+  const ingestRealtimeAudioPoll = useCallback(async (deck: LyriaRealtimeDeckId, schedule = true): Promise<number> => {
     const poll = await pollLyriaRealtimeAudio(deck);
     if (poll.warning) setLyriaRealtimeStatus((current) => ({ ...current, warning: poll.warning }));
     if (deck === "main") setLyriaStreamBytes(poll.streamedAudioBytes);
@@ -485,65 +489,97 @@ export function App() {
     let bytesScheduled = 0;
     for (const chunk of poll.chunks) {
       bytesScheduled += chunk.length;
-      await engineRef.current.playRealtimePcm16(new Uint8Array(chunk), poll.sampleRateHz, poll.channels, deck);
+      const bytes = new Uint8Array(chunk);
+      if (schedule) {
+        await engineRef.current.playRealtimePcm16(bytes, poll.sampleRateHz, poll.channels, deck);
+      } else {
+        realtimePrebufferRef.current[deck].push({ bytes, sampleRateHz: poll.sampleRateHz, channels: poll.channels });
+      }
     }
     return bytesScheduled;
   }, []);
 
-  const waitForRealtimeAudioFrames = useCallback(async (deck: LyriaRealtimeDeckId): Promise<number> => {
+  const waitForRealtimeAudioFrames = useCallback(async (deck: LyriaRealtimeDeckId, schedule = true): Promise<number> => {
     const deadline = performance.now() + LYRIA_STREAM_STARTUP_TIMEOUT_MS;
     let receivedBytes = 0;
-    while (receivedBytes === 0 && performance.now() < deadline) {
+    while (receivedBytes < LYRIA_PREBUFFER_BYTES && performance.now() < deadline) {
       if (lyriaBufferCancelRef.current) return 0;
-      receivedBytes += await ingestRealtimeAudioPoll(deck);
-      if (receivedBytes === 0) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, LYRIA_STREAM_POLL_MS));
-      }
+      receivedBytes += await ingestRealtimeAudioPoll(deck, schedule);
+      if (receivedBytes < LYRIA_PREBUFFER_BYTES) await WAIT(LYRIA_STREAM_POLL_MS);
     }
     return receivedBytes;
   }, [ingestRealtimeAudioPoll]);
 
-  const startAllRealtimeDecks = useCallback(async () => {
-    const [main, sequence, vocal] = await Promise.all([
-      startLyriaRealtime(realtimeRequest, "main"),
-      startLyriaRealtime(sequenceRealtimeRequest, "sequence"),
-      startLyriaRealtime(vocalRealtimeRequest, "vocal"),
-    ]);
-    setLyriaSession(main);
-    setSequenceLyriaSession(sequence);
-    setVocalLyriaSession(vocal);
-    liveUpdateSignatureRef.current = {
-      main: JSON.stringify(realtimeRequest),
-      sequence: JSON.stringify(sequenceRealtimeRequest),
-      vocal: JSON.stringify(vocalRealtimeRequest),
+  const scheduleRealtimePrebuffer = useCallback(async (decks: LyriaRealtimeDeckId[]) => {
+    const prebuffer = realtimePrebufferRef.current;
+    const chunkCount = Math.max(0, ...decks.map((deck) => prebuffer[deck].length));
+    for (let index = 0; index < chunkCount; index += 1) {
+      await Promise.all(decks.map(async (deck) => {
+        const chunk = prebuffer[deck][index];
+        if (chunk) await engineRef.current.playRealtimePcm16(chunk.bytes, chunk.sampleRateHz, chunk.channels, deck);
+      }));
+    }
+    for (const deck of decks) realtimePrebufferRef.current[deck] = [];
+  }, []);
+
+  const flushSynchronizedRealtimePrebuffer = useCallback(async (decks: LyriaRealtimeDeckId[]) => {
+    await engineRef.current.synchronizeRealtimeDeckClocks(LYRIA_PLAYBACK_LEAD_SECONDS);
+    await scheduleRealtimePrebuffer(decks);
+  }, [scheduleRealtimePrebuffer]);
+
+  const startRealtimeDeckProviders = useCallback(async (decks: LyriaRealtimeDeckId[]) => {
+    const requests: Record<LyriaRealtimeDeckId, LyriaRealtimeRequest> = {
+      main: realtimeRequest,
+      sequence: sequenceRealtimeRequest,
+      vocal: vocalRealtimeRequest,
     };
-    return { main, sequence, vocal };
+    const sessions = await Promise.all(decks.map(async (deck) => {
+      const session = await startLyriaRealtime(requests[deck], deck);
+      liveUpdateSignatureRef.current[deck] = JSON.stringify(requests[deck]);
+      return [deck, session] as const;
+    }));
+    return Object.fromEntries(sessions) as Partial<Record<LyriaRealtimeDeckId, LyriaRealtimeSession>>;
   }, [realtimeRequest, sequenceRealtimeRequest, vocalRealtimeRequest]);
 
-  const handleTransportToggle = useCallback(async () => {
+  const handleTransportToggle = useCallback(async (startupDeckOverride?: LyriaRealtimeDeckId[]) => {
     if (snapshotRef.current.playing) {
       await stopTransportAndRealtime();
       return;
     }
     if (!snapshotRef.current.playing) {
-      await loadDefaultAiToneBank(false);
-      if (lyriaRealtimeStatus.available && (!lyriaSession || !sequenceLyriaSession || !vocalLyriaSession) && !lyriaRealtimeBusy) {
+      if (lyriaRealtimeStatus.available && lyriaRealtimeBusy) {
+        setNotice("Lyria decks are still preparing. Wait for the synchronized buffer.");
+        return;
+      }
+      if (lyriaRealtimeStatus.available && !lyriaRealtimeBusy) {
         setLyriaRealtimeBusy(true);
         lyriaBufferCancelRef.current = false;
-        setLyriaBuffering({ active: true, message: "Buffering 3 synchronized Lyria decks", bytes: 0 });
+        const enabledDecks = startupDeckOverride ?? LYRIA_DECKS.filter((deck) => lyriaDeckEnabled[deck]);
+        const startupDecks = enabledDecks.length > 0 ? enabledDecks : ["main" as const];
+        setLyriaBuffering({ active: true, message: `Buffering ${startupDecks.length === 1 ? startupDecks[0] : `${startupDecks.length} Lyria decks`}`, bytes: 0 });
         try {
           await Promise.all(LYRIA_DECKS.map((deck) => stopLyriaRealtime(deck)));
-          await startAllRealtimeDecks();
+          setLyriaSession(undefined);
+          setSequenceLyriaSession(undefined);
+          setVocalLyriaSession(undefined);
+          const sessions = await startRealtimeDeckProviders(startupDecks);
           engineRef.current.setRealtimeStreamPrimary(true);
-          const [mainBytes, sequenceBytes, vocalBytes] = await Promise.all(LYRIA_DECKS.map((deck) => waitForRealtimeAudioFrames(deck)));
-          if (mainBytes === 0) {
+          realtimePrebufferRef.current = createRealtimePrebuffer();
+          const buffered = await Promise.all(startupDecks.map(async (deck) => [deck, await waitForRealtimeAudioFrames(deck, false)] as const));
+          const primaryBytes = buffered[0]?.[1] ?? 0;
+          if (primaryBytes < LYRIA_MIN_START_BYTES) {
+            await Promise.all(startupDecks.map((deck) => stopLyriaRealtime(deck).catch(() => undefined)));
             setLyriaBuffering({ active: false, message: "", bytes: 0 });
-            setNotice("The main Lyria deck did not return audio before the startup deadline.");
+            setNotice(`The ${startupDecks[0]} Lyria deck did not build a stable audio buffer before the startup deadline.`);
             return;
           }
-          const readyDecks = [mainBytes, sequenceBytes, vocalBytes].filter((bytes) => bytes > 0).length;
-          setLyriaBuffering({ active: false, message: "", bytes: mainBytes + sequenceBytes + vocalBytes });
-          setNotice(`${readyDecks}/3 Lyria decks ready · main, sequence, vocalization.`);
+          await flushSynchronizedRealtimePrebuffer(startupDecks);
+          setLyriaSession(sessions.main);
+          setSequenceLyriaSession(sessions.sequence);
+          setVocalLyriaSession(sessions.vocal);
+          const readyDecks = buffered.filter(([, bytes]) => bytes >= LYRIA_MIN_START_BYTES).length;
+          setLyriaBuffering({ active: false, message: "", bytes: buffered.reduce((sum, [, bytes]) => sum + bytes, 0) });
+          setNotice(`${readyDecks} Lyria ${readyDecks === 1 ? "deck" : "decks"} ready · additional decks connect and sync on demand.`);
         } catch (error) {
           await Promise.all(LYRIA_DECKS.map((deck) => stopLyriaRealtime(deck).catch(() => undefined)));
           setLyriaSession(undefined);
@@ -556,24 +592,82 @@ export function App() {
         } finally {
           setLyriaRealtimeBusy(false);
         }
-      } else if (lyriaSession) {
-        lyriaBufferCancelRef.current = false;
-        setLyriaBuffering({ active: true, message: "Re-buffering synchronized Lyria decks", bytes: 0 });
-        engineRef.current.setRealtimeStreamPrimary(true);
-        const activeDecks = LYRIA_DECKS.filter((deck) => (
-          deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession
-        ));
-        const received = await Promise.all(activeDecks.map((deck) => waitForRealtimeAudioFrames(deck)));
-        if (received[0] === 0) {
-          setLyriaBuffering({ active: false, message: "", bytes: 0 });
-          setNotice("The main Lyria deck is active but returned no fresh audio frames.");
-          return;
-        }
-        setLyriaBuffering({ active: false, message: "", bytes: received.reduce((sum, bytes) => sum + bytes, 0) });
       }
     }
     await engineRef.current.toggle();
-  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, sequenceLyriaSession, startAllRealtimeDecks, stopTransportAndRealtime, vocalLyriaSession, waitForRealtimeAudioFrames]);
+  }, [flushSynchronizedRealtimePrebuffer, lyriaDeckEnabled, lyriaRealtimeBusy, lyriaRealtimeStatus.available, startRealtimeDeckProviders, stopTransportAndRealtime, waitForRealtimeAudioFrames]);
+
+  const setRealtimeDeckEnabled = useCallback(async (deck: LyriaRealtimeDeckId, enabled: boolean) => {
+    setLyriaDeckEnabled((current) => ({ ...current, [deck]: enabled }));
+    const currentSession = deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession;
+    if (!enabled) {
+      if (!currentSession) return;
+      setLyriaDeckSyncing((current) => ({ ...current, [deck]: true }));
+      try {
+        await stopLyriaRealtime(deck);
+        if (deck === "main") setLyriaSession(undefined);
+        if (deck === "sequence") setSequenceLyriaSession(undefined);
+        if (deck === "vocal") setVocalLyriaSession(undefined);
+        realtimePrebufferRef.current[deck] = [];
+        engineRef.current.resetRealtimeDeckClock(deck);
+        setNotice(`${deck.toUpperCase()} Lyria deck is off.`);
+      } finally {
+        setLyriaDeckSyncing((current) => ({ ...current, [deck]: false }));
+      }
+      return;
+    }
+    if (!snapshotRef.current.playing || currentSession) return;
+    setLyriaDeckSyncing((current) => ({ ...current, [deck]: true }));
+    lyriaBufferCancelRef.current = false;
+    realtimePrebufferRef.current[deck] = [];
+    try {
+      const sessions = await startRealtimeDeckProviders([deck]);
+      const bytes = await waitForRealtimeAudioFrames(deck, false);
+      if (bytes < LYRIA_MIN_START_BYTES) throw new Error(`${deck.toUpperCase()} did not build a stable sync buffer`);
+      const startsAt = await engineRef.current.synchronizeRealtimeDeckClockToNextBar(deck, 0.75);
+      await scheduleRealtimePrebuffer([deck]);
+      if (deck === "main") setLyriaSession(sessions.main);
+      if (deck === "sequence") setSequenceLyriaSession(sessions.sequence);
+      if (deck === "vocal") setVocalLyriaSession(sessions.vocal);
+      setNotice(`${deck.toUpperCase()} connected · queued for the next bar at ${startsAt.toFixed(2)}s.`);
+    } catch (error) {
+      setLyriaDeckEnabled((current) => ({ ...current, [deck]: false }));
+      await stopLyriaRealtime(deck).catch(() => undefined);
+      setNotice(error instanceof Error ? error.message : `Could not start ${deck} Lyria deck`);
+    } finally {
+      setLyriaDeckSyncing((current) => ({ ...current, [deck]: false }));
+    }
+  }, [lyriaSession, scheduleRealtimePrebuffer, sequenceLyriaSession, startRealtimeDeckProviders, vocalLyriaSession, waitForRealtimeAudioFrames]);
+
+  const toggleAutoDjMode = useCallback(async () => {
+    if (autoDjMode) {
+      setAutoDjMode(false);
+      setNotice("Auto DJ stopped. The current main-stream direction remains loaded.");
+      return;
+    }
+    autoDjStepRef.current = 0;
+    setAutoDjStep(0);
+    setAutoDjMode(true);
+    await Promise.all([
+      setRealtimeDeckEnabled("sequence", false),
+      setRealtimeDeckEnabled("vocal", false),
+    ]);
+    await setRealtimeDeckEnabled("main", true);
+    setNotice(`Auto DJ armed on the single main Lyria stream · each direction holds for ${AUTO_DJ_PHRASE_BARS} bars.`);
+  }, [autoDjMode, setRealtimeDeckEnabled]);
+
+  const toggleDemoMode = useCallback(async () => {
+    if (demoMode) {
+      setDemoMode(false);
+      setAutoDjMode(false);
+      setNotice("Demo automation stopped. Lyria transport remains under manual control.");
+      return;
+    }
+    setDemoMode(true);
+    if (!autoDjMode) await toggleAutoDjMode();
+    setNotice("Demo mode is starting synchronized Lyria audio and visual automation.");
+    if (!snapshotRef.current.playing) await handleTransportToggle(["main"]);
+  }, [autoDjMode, demoMode, handleTransportToggle, toggleAutoDjMode]);
 
   const refreshLyriaRealtimeStatus = useCallback(async () => {
     try {
@@ -590,30 +684,28 @@ export function App() {
   const startOrUpdateLyriaRealtime = useCallback(async () => {
     setLyriaRealtimeBusy(true);
     try {
-      const [session, sequence, vocal] = lyriaSession && sequenceLyriaSession && vocalLyriaSession
-        ? await Promise.all([
-          updateLyriaRealtime(realtimeRequest, "main"),
-          updateLyriaRealtime(sequenceRealtimeRequest, "sequence"),
-          updateLyriaRealtime(vocalRealtimeRequest, "vocal"),
-        ])
-        : Object.values(await startAllRealtimeDecks());
-      setLyriaSession(session);
-      setSequenceLyriaSession(sequence);
-      setVocalLyriaSession(vocal);
-      liveUpdateSignatureRef.current = {
-        main: JSON.stringify(realtimeRequest),
-        sequence: JSON.stringify(sequenceRealtimeRequest),
-        vocal: JSON.stringify(vocalRealtimeRequest),
-      };
+      const active = LYRIA_DECKS.filter((deck) => deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession);
+      if (active.length === 0) {
+        setNotice("Press Play to connect the first enabled Lyria deck.");
+        return;
+      }
+      const requests = { main: realtimeRequest, sequence: sequenceRealtimeRequest, vocal: vocalRealtimeRequest };
+      const sessions = await Promise.all(active.map(async (deck) => [deck, await updateLyriaRealtime(requests[deck], deck)] as const));
+      for (const [deck, session] of sessions) {
+        if (deck === "main") setLyriaSession(session);
+        if (deck === "sequence") setSequenceLyriaSession(session);
+        if (deck === "vocal") setVocalLyriaSession(session);
+        liveUpdateSignatureRef.current[deck] = JSON.stringify(requests[deck]);
+      }
       engineRef.current.setRealtimeStreamPrimary(true);
       await refreshLyriaRealtimeStatus();
-      setNotice(`${session.model} 3-deck system ${lyriaSession ? "updated" : "armed"}: main · sequence · vocalization.`);
+      setNotice(`${active.length} active Lyria ${active.length === 1 ? "deck" : "decks"} updated.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Lyria RealTime command failed");
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaSession, realtimeRequest, refreshLyriaRealtimeStatus, sequenceLyriaSession, sequenceRealtimeRequest, startAllRealtimeDecks, vocalLyriaSession, vocalRealtimeRequest]);
+  }, [lyriaSession, realtimeRequest, refreshLyriaRealtimeStatus, sequenceLyriaSession, sequenceRealtimeRequest, vocalLyriaSession, vocalRealtimeRequest]);
 
   const applyRealtimeRequest = useCallback(async (request: typeof realtimeRequest, label: string, styleId?: string) => {
     if (styleId) setLyriaStyleId(styleId);
@@ -637,9 +729,96 @@ export function App() {
   }, [lyriaSession]);
 
   const applyRealtimeStyle = useCallback(async (styleId: string) => {
-    const style = lyriaRealtimeStyleById(styleId);
+    setActiveLyriaDeckSceneId(undefined);
+    const style = applyPrimaryGuidance(lyriaRealtimeStyleById(styleId), lyriaStyleGuidance[styleId]);
     await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`, style.id);
-  }, [applyRealtimeRequest]);
+  }, [applyRealtimeRequest, lyriaStyleGuidance]);
+
+  const updateLyriaDeckControl = useCallback((deck: LyriaRealtimeDeckId, update: Partial<LyriaDeckControl>) => {
+    setActiveLyriaDeckSceneId(undefined);
+    setLyriaDeckControls((current) => ({
+      ...current,
+      [deck]: { ...current[deck], ...update },
+    }));
+  }, []);
+
+  const applyLyriaDeckScene = useCallback(async (scene: LyriaDeckScene) => {
+    const normalized = normalizeLyriaDeckScene(scene, scene);
+    const style = applyPrimaryGuidance(
+      lyriaRealtimeStyleById(normalized.styleId),
+      lyriaStyleGuidance[normalized.styleId],
+    );
+    const request = createLyriaRealtimeRequestFromStyle(style);
+    engineRef.current.setBpm(normalized.bpm);
+    setLyriaDeckControls({
+      main: { ...normalized.controls.main },
+      sequence: { ...normalized.controls.sequence },
+      vocal: { ...normalized.controls.vocal },
+    });
+    setLyriaDeckEnabled({ ...normalized.enabled });
+    setActiveLyriaDeckSceneId(normalized.id);
+    if (snapshotRef.current.playing) {
+      await Promise.all(LYRIA_DECKS.map((deck) => setRealtimeDeckEnabled(deck, normalized.enabled[deck])));
+    }
+    await applyRealtimeRequest({
+      ...request,
+      config: {
+        ...request.config,
+        bpm: compensateLyriaBpmForPitch(normalized.bpm, normalized.controls.main.pitchSemitones),
+      },
+    }, `${normalized.name} deck scene`, style.id);
+  }, [applyRealtimeRequest, lyriaStyleGuidance, setRealtimeDeckEnabled]);
+
+  const applyLyriaDeckSceneByIndex = useCallback(async (index: number) => {
+    const scene = lyriaDeckScenes[index];
+    if (scene) await applyLyriaDeckScene(scene);
+  }, [applyLyriaDeckScene, lyriaDeckScenes]);
+
+  const saveLyriaDeckSceneDialog = useCallback(async (loadAfterSave: boolean) => {
+    if (!lyriaDeckSceneDialog) return;
+    const fallback = lyriaDeckScenes.find((scene) => scene.id === lyriaDeckSceneDialog.id) ?? lyriaDeckSceneDialog;
+    const scene = normalizeLyriaDeckScene(lyriaDeckSceneDialog, fallback);
+    setLyriaDeckScenes((current) => current.map((candidate) => candidate.id === scene.id ? scene : candidate));
+    setLyriaDeckSceneDialog(undefined);
+    if (loadAfterSave) await applyLyriaDeckScene(scene);
+    else setNotice(`${scene.name} deck scene saved. Recall it with Shift+${lyriaDeckScenes.findIndex((candidate) => candidate.id === scene.id) + 1}.`);
+  }, [applyLyriaDeckScene, lyriaDeckSceneDialog, lyriaDeckScenes]);
+
+  const openLyriaGuidanceDialog = useCallback((styleId: string) => {
+    const style = lyriaRealtimeStyleById(styleId);
+    const primary = lyriaStyleGuidance[styleId] ?? style.prompts[0];
+    setLyriaGuidanceDialog({ styleId, text: primary.text, weight: primary.weight });
+  }, [lyriaStyleGuidance]);
+
+  const applyLyriaGuidanceDialog = useCallback(async () => {
+    if (!lyriaGuidanceDialog) return;
+    const text = lyriaGuidanceDialog.text.trim();
+    if (!text) {
+      setNotice("Primary Lyria guidance cannot be empty.");
+      return;
+    }
+    const guidance = { text: text.slice(0, 240), weight: lyriaGuidanceDialog.weight };
+    const style = applyPrimaryGuidance(lyriaRealtimeStyleById(lyriaGuidanceDialog.styleId), guidance);
+    setLyriaStyleGuidance((current) => ({ ...current, [style.id]: guidance }));
+    setLyriaGuidanceDialog(undefined);
+    if (style.id === lyriaStyleId) {
+      await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} primary guidance`, style.id);
+    } else {
+      setNotice(`${style.label} primary guidance saved for the next switch.`);
+    }
+  }, [applyRealtimeRequest, lyriaGuidanceDialog, lyriaStyleId]);
+
+  const applyLyriaCompanionDialog = useCallback(() => {
+    if (!lyriaCompanionDialog) return;
+    const text = lyriaCompanionDialog.text.trim();
+    if (!text) {
+      setNotice("Companion guidance cannot be empty.");
+      return;
+    }
+    setLyriaCompanionGuidance((current) => ({ ...current, [lyriaCompanionDialog.deck]: text.slice(0, 240) }));
+    setLyriaCompanionDialog(undefined);
+    setNotice(`${lyriaCompanionDialog.deck === "sequence" ? "BEAT" : "VOCALIZE"} companion guidance updated; active Lyria stream will follow the main harmony.`);
+  }, [lyriaCompanionDialog]);
 
   const stopRealtimeSession = useCallback(async () => {
     setLyriaRealtimeBusy(true);
@@ -650,7 +829,7 @@ export function App() {
       setSequenceLyriaSession(undefined);
       setVocalLyriaSession(undefined);
       engineRef.current.setRealtimeStreamPrimary(false);
-      setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+      setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
       await refreshLyriaRealtimeStatus();
       setNotice("All Lyria RealTime decks stopped.");
     } catch (error) {
@@ -658,11 +837,11 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaStreamBytes, refreshLyriaRealtimeStatus]);
+  }, [refreshLyriaRealtimeStatus]);
 
   const cancelLyriaBuffering = useCallback(async () => {
     lyriaBufferCancelRef.current = true;
-    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
     setLyriaRealtimeBusy(true);
     try {
       await Promise.all(LYRIA_DECKS.map((deck) => stopLyriaRealtime(deck)));
@@ -676,14 +855,11 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaStreamBytes]);
-
-  const triggerKeyboardNote = useCallback(async (note: number) => {
-    await engineRef.current.initialize();
-    engineRef.current.triggerNote(selectedTrackRef.current === "drums" ? "lead" : selectedTrackRef.current, note);
   }, []);
 
   const pollRealtimeAudio = useCallback(async () => {
+    if (realtimePollInFlightRef.current) return;
+    realtimePollInFlightRef.current = true;
     try {
       const activeDecks = LYRIA_DECKS.filter((deck) => (
         deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession
@@ -691,6 +867,8 @@ export function App() {
       await Promise.all(activeDecks.map((deck) => ingestRealtimeAudioPoll(deck)));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Lyria RealTime audio polling failed");
+    } finally {
+      realtimePollInFlightRef.current = false;
     }
   }, [ingestRealtimeAudioPoll, lyriaSession, sequenceLyriaSession, vocalLyriaSession]);
 
@@ -723,14 +901,36 @@ export function App() {
   }, [snapshot]);
 
   useEffect(() => {
-    engineRef.current.setRealtimeGuideLevel(localGuideLevel);
-  }, [localGuideLevel]);
-
-  useEffect(() => {
     for (const deck of LYRIA_DECKS) {
       engineRef.current.setRealtimeDeckControl(deck, lyriaDeckControls[deck]);
     }
   }, [lyriaDeckControls]);
+
+  useEffect(() => {
+    const state: DjControlState = {
+      playing: snapshot.playing,
+      bpm: snapshot.bpm,
+      masterVolume: snapshot.masterVolume,
+      styleId: lyriaStyleId,
+      activeDeckSceneId: activeLyriaDeckSceneId,
+      deckScenes: lyriaDeckScenes,
+      deckEnabled: lyriaDeckEnabled,
+      deckControls: lyriaDeckControls,
+      visualScene: selectedScene,
+      visualIntensity: intensity,
+      visualColor: visualColorControls,
+    };
+    djControlStateRef.current = state;
+    void broadcastDjControlState(state).catch(() => undefined);
+  }, [activeLyriaDeckSceneId, intensity, lyriaDeckControls, lyriaDeckEnabled, lyriaDeckScenes, lyriaStyleId, selectedScene, snapshot.bpm, snapshot.masterVolume, snapshot.playing, visualColorControls]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LYRIA_DECK_SCENE_STORAGE_KEY, JSON.stringify(lyriaDeckScenes));
+    } catch {
+      // Presets remain available for this session when webview storage is disabled.
+    }
+  }, [lyriaDeckScenes]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -757,6 +957,7 @@ export function App() {
     visual.setIntensity(DEFAULT_TEMPLATE.intensity);
     visual.setArtDirection(DEFAULT_TEMPLATE.artDirection);
     visual.setTemporalControls(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
+    visual.setColorControls(DEFAULT_VISUAL_COLOR_CONTROLS);
     visual.setAnimationStyle(defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene));
     const recorder = new SocialRecorder(canvas, engineRef.current, visual);
     recorderRef.current = recorder;
@@ -769,10 +970,12 @@ export function App() {
       intensityRef.current = settings.intensity;
       setArtDirection(settings.artDirection);
       setTemporalControls(settings.temporal);
+      setVisualColorControls(settings.color);
       setAnimationStyle(settings.animationStyle);
       visual.setIntensity(settings.intensity);
       visual.setArtDirection(settings.artDirection);
       visual.setTemporalControls(settings.temporal);
+      visual.setColorControls(settings.color);
       visual.setAnimationStyle(settings.animationStyle);
     });
     const unlistenResults = recorder.subscribeResults((result) => {
@@ -805,6 +1008,8 @@ export function App() {
     visualRef.current?.setArtDirection(next.artDirection);
     setTemporalControls(next.temporal);
     visualRef.current?.setTemporalControls(next.temporal);
+    setVisualColorControls(next.color);
+    visualRef.current?.setColorControls(next.color);
     setAnimationStyle(next.animationStyle);
     visualRef.current?.setAnimationStyle(next.animationStyle);
   }, []);
@@ -818,6 +1023,7 @@ export function App() {
           intensity: settings.intensity ?? existing.intensity,
           artDirection: settings.artDirection ?? existing.artDirection,
           temporal: settings.temporal ?? existing.temporal,
+          color: settings.color ?? existing.color,
           animationStyle: settings.animationStyle ?? existing.animationStyle,
         }),
       };
@@ -867,12 +1073,22 @@ export function App() {
     saveSceneSettings(selectedSceneRef.current, { animationStyle: next });
   }, [saveSceneSettings]);
 
+  const changeVisualColor = useCallback((update: Partial<VisualColorControls>) => {
+    setVisualColorControls((current) => {
+      const next = normalizeVisualColorControls({ ...current, ...update });
+      visualRef.current?.setColorControls(next);
+      saveSceneSettings(selectedSceneRef.current, { color: next });
+      return next;
+    });
+  }, [saveSceneSettings]);
+
   const applyVisualPreset = useCallback((presetId: string) => {
     const preset = VISUAL_PRESETS.find((candidate) => candidate.id === presetId) ?? VISUAL_PRESETS[0];
     const settings = {
       intensity: preset.intensity,
       artDirection: preset.artDirection,
       temporal: preset.temporal,
+      color: sceneVisualSettings[preset.scene]?.color ?? { ...DEFAULT_VISUAL_COLOR_CONTROLS },
       animationStyle: sceneVisualSettings[preset.scene]?.animationStyle ?? defaultAnimationStyleForScene(preset.scene),
     };
     saveSceneSettings(preset.scene, settings);
@@ -883,23 +1099,24 @@ export function App() {
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
-    const style = lyriaRealtimeStyleForTemplate(template);
+    const baseStyle = lyriaRealtimeStyleForTemplate(template);
+    const style = applyPrimaryGuidance(baseStyle, lyriaStyleGuidance[baseStyle.id]);
     engineRef.current.applyPerformanceTemplate(template);
-    if (template.id === "moonlight-sequencer") void loadDefaultAiToneBank(false);
-    void applyRealtimeRequest(createLyriaRealtimeRequestForTemplate(template), `${template.name} realtime guide`, style.id);
+    void applyRealtimeRequest(createLyriaRealtimeRequestForTemplate(template, style), `${template.name} realtime guide`, style.id);
     setPrompt(template.prompt);
     setGenerationBpm(template.bpm);
     const settings = {
       intensity: template.intensity,
       artDirection: template.artDirection,
       temporal: template.temporal ?? sceneVisualSettings[template.scene]?.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+      color: sceneVisualSettings[template.scene]?.color ?? { ...DEFAULT_VISUAL_COLOR_CONTROLS },
       animationStyle: sceneVisualSettings[template.scene]?.animationStyle ?? defaultAnimationStyleForScene(template.scene),
     };
     saveSceneSettings(template.scene, settings);
     changeScene(template.scene);
     applySceneSettings(settings);
     setNotice(`${template.name} template applied across rhythm, mix, and visuals.`);
-  }, [applyRealtimeRequest, applySceneSettings, changeScene, loadDefaultAiToneBank, saveSceneSettings, sceneVisualSettings]);
+  }, [applyRealtimeRequest, applySceneSettings, changeScene, lyriaStyleGuidance, saveSceneSettings, sceneVisualSettings]);
 
   const applyAgentPlan = useCallback((plan: AgentPlan) => {
     const template = performanceTemplateById(plan.templateId);
@@ -910,6 +1127,7 @@ export function App() {
       intensity: plan.intensity,
       artDirection: plan.artDirection,
       temporal: plan.temporal ?? template.temporal ?? sceneVisualSettings[plan.scene]?.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+      color: sceneVisualSettings[plan.scene]?.color ?? { ...DEFAULT_VISUAL_COLOR_CONTROLS },
       animationStyle: sceneVisualSettings[plan.scene]?.animationStyle ?? defaultAnimationStyleForScene(plan.scene),
     };
     saveSceneSettings(plan.scene, settings);
@@ -943,7 +1161,6 @@ export function App() {
     try {
       await engineRef.current.initialize();
       if (!snapshotRef.current.playing) {
-        await loadDefaultAiToneBank(false);
         await engineRef.current.start();
       }
       setLastRecording(undefined);
@@ -954,7 +1171,7 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Recording is unavailable");
     }
-  }, [loadDefaultAiToneBank, stopRecording]);
+  }, [stopRecording]);
 
   useEffect(() => {
     if (!recording) return;
@@ -979,7 +1196,7 @@ export function App() {
           await handleTransportToggle();
           break;
         case "transport.stop":
-          engine.stop();
+          await stopTransportAndRealtime(true);
           break;
         case "transport.record":
           await startRecording();
@@ -1006,8 +1223,7 @@ export function App() {
           break;
         case "track.trigger": {
           const mapped = Number.isInteger(message.value) && (message.value ?? -1) >= 0 ? tracks[Math.min(tracks.length - 1, message.value ?? 0)] : selectedTrackRef.current;
-          await engine.initialize();
-          engine.triggerTrack(mapped);
+          changeTrack(mapped);
           break;
         }
         case "master.delta":
@@ -1058,6 +1274,9 @@ export function App() {
         case "visual.temporal.phase.delta":
           changeTemporalControl("phase", temporalControls.phase + (message.value ?? 0) * 0.04);
           break;
+        case "lyria.deck-scene.select":
+          await applyLyriaDeckSceneByIndex(Math.round(message.value ?? -1));
+          break;
         case "performance.template.select": {
           const index = Math.round(message.value ?? -1);
           const template = PERFORMANCE_TEMPLATES[index % PERFORMANCE_TEMPLATES.length];
@@ -1066,12 +1285,16 @@ export function App() {
         }
       }
     },
-    [applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, handleTransportToggle, startRecording, temporalControls],
+    [applyLyriaDeckSceneByIndex, applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, handleTransportToggle, startRecording, stopTransportAndRealtime, temporalControls],
   );
 
   useEffect(() => {
+    handleControlRef.current = handleControl;
+  }, [handleControl]);
+
+  useEffect(() => {
     const router = routerRef.current;
-    const unsubscribeControl = router.subscribe((message) => void handleControl(message));
+    const unsubscribeControl = router.subscribe((message) => void handleControlRef.current?.(message));
     const unsubscribeStatus = router.subscribeStatus(setControllerStatus);
     void router.start();
     return () => {
@@ -1079,7 +1302,48 @@ export function App() {
       unsubscribeStatus();
       void router.stop();
     };
-  }, [handleControl]);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: () => void = () => undefined;
+    void subscribeDjControlCommands((command) => {
+      if (command.type === "request-state") {
+        if (djControlStateRef.current) void broadcastDjControlState(djControlStateRef.current).catch(() => undefined);
+        return;
+      }
+      if (command.type === "action") {
+        routerRef.current.dispatch(command.action, command.value, "ui");
+        return;
+      }
+      if (command.type === "deck-control") {
+        updateLyriaDeckControl(command.deck, command.update);
+        return;
+      }
+      if (command.type === "deck-enabled") {
+        void setRealtimeDeckEnabled(command.deck, command.enabled);
+        return;
+      }
+      if (command.type === "style") {
+        void applyRealtimeStyle(command.styleId);
+        return;
+      }
+      if (command.type === "visual-color") {
+        changeVisualColor(command.update);
+        return;
+      }
+      setActiveLyriaDeckSceneId(undefined);
+      engineRef.current.setBpm(command.value);
+      setLyriaRealtimeConfig((current) => ({ ...current, bpm: command.value }));
+    }).then((stop) => {
+      if (disposed) stop();
+      else unsubscribe = stop;
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [applyRealtimeStyle, changeVisualColor, setRealtimeDeckEnabled, updateLyriaDeckControl]);
 
   useEffect(() => {
     void getProviderStatus().then(setProviderStatus).catch((error) => {
@@ -1090,29 +1354,6 @@ export function App() {
   useEffect(() => {
     void refreshLyriaRealtimeStatus();
   }, [refreshLyriaRealtimeStatus]);
-
-  useEffect(() => {
-    if (
-      realtimePrebufferStartedRef.current ||
-      !lyriaRealtimeStatus.available ||
-      (lyriaSession && sequenceLyriaSession && vocalLyriaSession) ||
-      lyriaRealtimeBusy
-    ) {
-      return;
-    }
-    realtimePrebufferStartedRef.current = true;
-    setLyriaRealtimeBusy(true);
-    void startAllRealtimeDecks()
-      .then(() => {
-        engineRef.current.setRealtimeStreamPrimary(true);
-        setNotice("Three Lyria decks are prebuffering: main, sequence, and vocalization.");
-      })
-      .catch((error) => {
-        engineRef.current.setRealtimeStreamPrimary(false);
-        setNotice(error instanceof Error ? error.message : "Lyria RealTime multistream prebuffer failed");
-      })
-      .finally(() => setLyriaRealtimeBusy(false));
-  }, [lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, sequenceLyriaSession, startAllRealtimeDecks, vocalLyriaSession]);
 
   useEffect(() => {
     if (!lyriaSession || snapshot.playing || lyriaBuffering.active) return;
@@ -1153,47 +1394,115 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!autoDjMode) return;
-    const timer = window.setInterval(() => {
-      setAutoDjStep((step) => {
-        const nextStep = step + 1;
-        const style = LYRIA_REALTIME_STYLE_PRESETS[nextStep % LYRIA_REALTIME_STYLE_PRESETS.length];
-        const styleRequest = createLyriaRealtimeRequestFromStyle(style);
-        const guidedRequest = {
-          ...styleRequest,
-          config: {
-            ...styleRequest.config,
-            bpm: Math.max(60, Math.min(200, styleRequest.config.bpm + (nextStep % 3 === 0 ? 4 : 0))),
-            density: Math.max(0, Math.min(1, styleRequest.config.density + ((nextStep % 4) - 1) * 0.04)),
-            brightness: Math.max(0, Math.min(1, styleRequest.config.brightness + ((nextStep % 5) - 2) * 0.035)),
-          },
-        };
-        setLyriaStyleId(style.id);
-        setLyriaPrompts(styleRequest.weightedPrompts);
-        setLyriaRealtimeConfig(guidedRequest.config);
-        const note = LYRIA_KEYBOARD_NOTES[(nextStep * 5) % LYRIA_KEYBOARD_NOTES.length];
-        void triggerKeyboardNote(note);
-        if (lyriaSession) {
-          void updateLyriaRealtime(guidedRequest, "main")
-            .then(setLyriaSession)
-            .catch((error) => {
-              setNotice(error instanceof Error ? error.message : "Auto DJ Lyria update failed");
-            });
-        }
-        return nextStep;
-      });
-    }, 3_200);
-    return () => window.clearInterval(timer);
-  }, [autoDjMode, lyriaSession, triggerKeyboardNote]);
+    lyriaSessionRef.current = lyriaSession;
+  }, [lyriaSession]);
 
   useEffect(() => {
-    if (!lyriaSession || !sequenceLyriaSession || !vocalLyriaSession || lyriaBuffering.active) return;
+    autoDjPersonalizationRef.current = autoDjPersonalization;
+  }, [autoDjPersonalization]);
+
+  useEffect(() => {
+    if (!autoDjMode) return;
+    let cancelled = false;
+    const applyNextDirection = async (advance: boolean) => {
+      if (autoDjTransitionRef.current || cancelled) return;
+      autoDjTransitionRef.current = true;
+      try {
+        const currentIndex = Math.max(0, LYRIA_REALTIME_STYLE_PRESETS.findIndex((style) => style.id === autoDjStyleRef.current));
+        const step = advance ? autoDjStepRef.current + 1 : autoDjStepRef.current;
+        const baseStyle = LYRIA_REALTIME_STYLE_PRESETS[(currentIndex + (advance ? 1 : 0)) % LYRIA_REALTIME_STYLE_PRESETS.length];
+        const style = applyPrimaryGuidance(baseStyle, lyriaStyleGuidance[baseStyle.id]);
+        const localRequest = createAutoDjRealtimeRequest(style, {
+          personalization: autoDjPersonalizationRef.current,
+          step,
+          bpm: snapshotRef.current.bpm,
+          bars: AUTO_DJ_PHRASE_BARS,
+        });
+        let generatedBrief: string | undefined;
+        if (metaLlmAvailable) {
+          const goal = [
+            `Write the next ${AUTO_DJ_PHRASE_BARS}-bar direction for one continuous Lyria RealTime main stereo stream.`,
+            `Style: ${style.label}. ${style.description}`,
+            `Master tempo: ${snapshotRef.current.bpm} BPM; never change or drift from it.`,
+            `Personalization: ${autoDjPersonalizationRef.current}.`,
+            `Beat and arrangement source: ${localRequest.weightedPrompts[1]?.text ?? "stable phrase-locked beat"}.`,
+            "The prompt field must be a dense production brief covering exact groove, instrumentation, motif development, eight-bar energy arc, transitions, mix character, and exclusions. No vocals, genre roulette, multiple songs, or multiple streams.",
+          ].join("\n");
+          try {
+            const timeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Meta-LLM planning timeout")), 12_000));
+            const plan = await Promise.race([
+              createAgentPlan({
+                goal,
+                currentPrompt: localRequest.weightedPrompts.map((prompt) => prompt.text).join("\n"),
+                bpm: snapshotRef.current.bpm,
+                scene: selectedSceneRef.current,
+                selectedTrack: selectedTrackRef.current,
+              }),
+              timeout,
+            ]);
+            generatedBrief = `${plan.prompt}. ${autoDjPersonalizationRef.current}`;
+          } catch {
+            generatedBrief = undefined;
+          }
+        }
+        const request = createAutoDjRealtimeRequest(style, {
+          personalization: autoDjPersonalizationRef.current,
+          generatedBrief,
+          step,
+          bpm: snapshotRef.current.bpm,
+          bars: AUTO_DJ_PHRASE_BARS,
+        });
+        autoDjStepRef.current = step;
+        autoDjStyleRef.current = style.id;
+        setAutoDjStep(step);
+        setLyriaStyleId(style.id);
+        setLyriaPrompts(request.weightedPrompts);
+        setLyriaRealtimeConfig(request.config);
+        if (lyriaSessionRef.current) {
+          const session = await updateLyriaRealtime(request, "main");
+          if (cancelled) return;
+          lyriaSessionRef.current = session;
+          setLyriaSession(session);
+          liveUpdateSignatureRef.current.main = JSON.stringify(request);
+          setNotice(`Auto DJ phrase ${step + 1} · ${style.label} · ${AUTO_DJ_PHRASE_BARS} bars · ${generatedBrief ? "Meta-LLM directed" : "local detailed direction"} · single main stream.`);
+        }
+      } catch (error) {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : "Auto DJ Lyria update failed");
+      } finally {
+        autoDjTransitionRef.current = false;
+      }
+    };
+    void applyNextDirection(false);
+    const phraseMs = autoDjPhraseDurationMs(snapshot.bpm, AUTO_DJ_PHRASE_BARS);
+    const timer = window.setInterval(() => void applyNextDirection(true), phraseMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [autoDjMode, lyriaStyleGuidance, metaLlmAvailable, snapshot.bpm]);
+
+  useEffect(() => {
+    if (!demoMode) return;
+    let step = 0;
+    const timer = window.setInterval(() => {
+      step += 1;
+      const preset = VISUAL_PRESETS[step % VISUAL_PRESETS.length];
+      applyVisualPreset(preset.id);
+    }, 12_000);
+    return () => window.clearInterval(timer);
+  }, [applyVisualPreset, demoMode]);
+
+  useEffect(() => {
+    if ((!lyriaSession && !sequenceLyriaSession && !vocalLyriaSession) || lyriaBuffering.active) return;
     const requests: Record<LyriaRealtimeDeckId, LyriaRealtimeRequest> = {
       main: realtimeRequest,
       sequence: sequenceRealtimeRequest,
       vocal: vocalRealtimeRequest,
     };
-    const changedDecks = LYRIA_DECKS.filter((deck) => JSON.stringify(requests[deck]) !== liveUpdateSignatureRef.current[deck]);
+    const changedDecks = LYRIA_DECKS.filter((deck) => {
+      const session = deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession;
+      return session && JSON.stringify(requests[deck]) !== liveUpdateSignatureRef.current[deck];
+    });
     if (changedDecks.length === 0) return;
     const timer = window.setTimeout(() => {
       void Promise.all(changedDecks.map(async (deck) => {
@@ -1211,7 +1520,7 @@ export function App() {
 
   useEffect(() => {
     if (!lyriaSession && !sequenceLyriaSession && !vocalLyriaSession) return;
-    if (!snapshot.playing && !lyriaBuffering.active) return;
+    if (!snapshot.playing) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
       if (!cancelled) void pollRealtimeAudio();
@@ -1221,7 +1530,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [lyriaBuffering.active, lyriaSession, pollRealtimeAudio, sequenceLyriaSession, snapshot.playing, vocalLyriaSession]);
+  }, [lyriaSession, pollRealtimeAudio, sequenceLyriaSession, snapshot.playing, vocalLyriaSession]);
 
   const handleAgentPlan = async () => {
     const goal = agentGoal.trim();
@@ -1248,7 +1557,7 @@ export function App() {
     const normalized = prompt.trim();
     if (!normalized) return;
     engineRef.current.mutate(normalized);
-    setNotice("Local performance DNA mutated from the prompt.");
+    setNotice("Lyria beat-control pattern mutated from the prompt.");
   };
 
   const handleGenerate = async (loopMode = false) => {
@@ -1446,41 +1755,16 @@ export function App() {
     }
   };
 
-  const handleFile = async (trackId: TrackId, file?: File) => {
+  const handleMidiFile = async (file?: File) => {
     if (!file) return;
     try {
-      if (/\.(?:mid|midi)$/i.test(file.name)) {
-        const imported = importMidiPerformance(await file.arrayBuffer(), file.name);
-        engineRef.current.applyImportedMidi(imported.tracks, imported.bpm);
-        visualRef.current?.clearAudioAnalysis(trackId);
-        setNotice(`${imported.name} imported as editable MIDI patterns${imported.bpm ? ` · ${imported.bpm} BPM` : ""}.`);
-        return;
-      }
-      if (file.size > MAX_IMPORT_BYTES) throw new Error("Audio files are limited to 250 MB");
-      await engineRef.current.loadAudioFile(trackId, await file.arrayBuffer(), file.name);
-      visualRef.current?.clearAudioAnalysis(trackId);
-      setNotice(`${file.name} loaded into ${trackId}.`);
+      if (!/\.(?:mid|midi)$/i.test(file.name)) throw new Error("Choose a .mid or .midi file");
+      const imported = importMidiPerformance(await file.arrayBuffer(), file.name);
+      engineRef.current.applyImportedMidi(imported.tracks, imported.bpm);
+      setNotice(`${imported.name} imported as Lyria beat-control patterns${imported.bpm ? ` · ${imported.bpm} BPM` : ""}.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not decode audio file");
+      setNotice(error instanceof Error ? error.message : "Could not import MIDI");
     }
-  };
-
-  const handleAiTonePreset = async (trackId: TrackId, preset: AiTonePreset) => {
-    if (aiToneBusy) return;
-    setAiToneBusy(true);
-    try {
-      await loadAiTonePreset(trackId, preset);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not load AI tone");
-    } finally {
-      setAiToneBusy(false);
-    }
-  };
-
-  const clearAiTone = (trackId: TrackId) => {
-    engineRef.current.clearTrackToneFile(trackId);
-    aiToneBankLoadedRef.current = false;
-    setNotice(`AI tone cleared from ${trackId}.`);
   };
 
   const paintStep = (trackId: TrackId, step: number, active: boolean) => {
@@ -1504,6 +1788,15 @@ export function App() {
       setNotice(`Copied program source URL: ${url}`);
     } catch {
       setNotice(`Program source URL: ${url}`);
+    }
+  };
+
+  const openDjWindow = async (profile: DjControlProfileId) => {
+    try {
+      await openDjControlWindow(profile);
+      setNotice(`${profile.toUpperCase()} control window opened with magnetic snapping.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not open DJ control window");
     }
   };
 
@@ -1537,13 +1830,166 @@ export function App() {
 
   return (
     <main className="app-shell">
+      {lyriaGuidanceDialog && (
+        <div
+          className="lyria-guidance-overlay"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setLyriaGuidanceDialog(undefined);
+          }}
+        >
+          <section className="lyria-guidance-dialog" role="dialog" aria-modal="true" aria-labelledby="lyria-guidance-title">
+            <header>
+              <span>PRIMARY GUIDANCE</span>
+              <button type="button" onClick={() => setLyriaGuidanceDialog(undefined)} aria-label="Close guidance dialog">X</button>
+            </header>
+            <h2 id="lyria-guidance-title">{lyriaRealtimeStyleById(lyriaGuidanceDialog.styleId).label}</h2>
+            <label className="guidance-copy">
+              <span>DIRECTION</span>
+              <textarea
+                autoFocus
+                maxLength={240}
+                value={lyriaGuidanceDialog.text}
+                onChange={(event) => setLyriaGuidanceDialog((current) => current ? { ...current, text: event.target.value } : current)}
+              />
+              <b>{lyriaGuidanceDialog.text.length}/240</b>
+            </label>
+            <label className="guidance-weight">
+              <span>WEIGHT</span>
+              <input
+                type="range"
+                min="0.1"
+                max="3"
+                step="0.05"
+                value={lyriaGuidanceDialog.weight}
+                onChange={(event) => setLyriaGuidanceDialog((current) => current ? { ...current, weight: Number(event.target.value) } : current)}
+              />
+              <b>{lyriaGuidanceDialog.weight.toFixed(2)}</b>
+            </label>
+            <div className="guidance-scope">
+              <span>MAIN ARRANGEMENT</span>
+            </div>
+            <footer>
+              <button
+                type="button"
+                onClick={() => {
+                  const primary = lyriaRealtimeStyleById(lyriaGuidanceDialog.styleId).prompts[0];
+                  setLyriaGuidanceDialog({ ...lyriaGuidanceDialog, text: primary.text, weight: primary.weight });
+                }}
+              >RESET</button>
+              <button type="button" onClick={() => setLyriaGuidanceDialog(undefined)}>CANCEL</button>
+              <button type="button" className="primary" onClick={() => void applyLyriaGuidanceDialog()} disabled={!lyriaGuidanceDialog.text.trim()}>APPLY</button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {lyriaCompanionDialog && (
+        <div
+          className="lyria-guidance-overlay"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setLyriaCompanionDialog(undefined);
+          }}
+        >
+          <section className="lyria-guidance-dialog" role="dialog" aria-modal="true" aria-labelledby="lyria-companion-title">
+            <header>
+              <span>COMPANION GUIDANCE</span>
+              <button type="button" onClick={() => setLyriaCompanionDialog(undefined)} aria-label="Close companion guidance dialog">X</button>
+            </header>
+            <h2 id="lyria-companion-title">{lyriaCompanionDialog.deck === "sequence" ? "Beat" : "Vocalize"}</h2>
+            <label className="guidance-copy">
+              <span>ROLE ALONGSIDE MAIN</span>
+              <textarea
+                autoFocus
+                maxLength={240}
+                value={lyriaCompanionDialog.text}
+                onChange={(event) => setLyriaCompanionDialog((current) => current ? { ...current, text: event.target.value } : current)}
+              />
+              <b>{lyriaCompanionDialog.text.length}/240</b>
+            </label>
+            <div className="guidance-scope">
+              <span>{lyriaCompanionDialog.deck === "sequence" ? "MAIN SCALE · ROOT MOTION · 8-BAR PHRASES" : "MAIN SCALE · 32-BAR VOCAL FORM · VOICE ONLY"}</span>
+            </div>
+            <footer>
+              <button
+                type="button"
+                onClick={() => setLyriaCompanionDialog({
+                  ...lyriaCompanionDialog,
+                  text: DEFAULT_LYRIA_COMPANION_GUIDANCE[lyriaCompanionDialog.deck],
+                })}
+              >RESET</button>
+              <button type="button" onClick={() => setLyriaCompanionDialog(undefined)}>CANCEL</button>
+              <button type="button" className="primary" onClick={applyLyriaCompanionDialog} disabled={!lyriaCompanionDialog.text.trim()}>APPLY</button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {lyriaDeckSceneDialog && (
+        <div
+          className="lyria-guidance-overlay"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setLyriaDeckSceneDialog(undefined);
+          }}
+        >
+          <section className="lyria-guidance-dialog deck-scene-dialog" role="dialog" aria-modal="true" aria-labelledby="deck-scene-title">
+            <header>
+              <span>MULTI-TRACK PRESET</span>
+              <button type="button" onClick={() => setLyriaDeckSceneDialog(undefined)} aria-label="Close deck scene editor">X</button>
+            </header>
+            <h2 id="deck-scene-title">Edit deck scene</h2>
+            <div className="deck-scene-identity">
+              <label>
+                <span>NAME</span>
+                <input autoFocus maxLength={18} value={lyriaDeckSceneDialog.name} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, name: event.target.value } : current)} />
+              </label>
+              <label>
+                <span>STYLE</span>
+                <select value={lyriaDeckSceneDialog.styleId} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, styleId: event.target.value } : current)}>
+                  {LYRIA_REALTIME_STYLE_PRESETS.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>BPM</span>
+                <input type="number" min="60" max="200" value={lyriaDeckSceneDialog.bpm} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, bpm: Number(event.target.value) } : current)} />
+              </label>
+            </div>
+            <div className="deck-scene-tracks">
+              {LYRIA_DECKS.map((deck) => {
+                const control = lyriaDeckSceneDialog.controls[deck];
+                const updateControl = (update: Partial<LyriaDeckControl>) => setLyriaDeckSceneDialog((current) => current ? {
+                  ...current,
+                  controls: { ...current.controls, [deck]: { ...current.controls[deck], ...update } },
+                } : current);
+                return (
+                  <article key={deck}>
+                    <header>
+                      <strong>{deck === "vocal" ? "VOCALIZE" : deck.toUpperCase()}</strong>
+                      <label><input type="checkbox" checked={lyriaDeckSceneDialog.enabled[deck]} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, enabled: { ...current.enabled, [deck]: event.target.checked } } : current)} /> ON</label>
+                      <label><input type="checkbox" checked={control.muted} onChange={(event) => updateControl({ muted: event.target.checked })} /> MUTE</label>
+                    </header>
+                    <label><span>VOL</span><input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => updateControl({ volume: Number(event.target.value) })} /><b>{Math.round(control.volume * 100)}</b></label>
+                    <label><span>PITCH</span><input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => updateControl({ pitchSemitones: Number(event.target.value) })} /><b>{control.pitchSemitones > 0 ? `+${control.pitchSemitones}` : control.pitchSemitones}</b></label>
+                    <label><span>BEAT</span><input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => updateControl({ beatNudgeMs: Number(event.target.value) })} /><b>{control.beatNudgeMs > 0 ? `+${control.beatNudgeMs}` : control.beatNudgeMs}</b></label>
+                  </article>
+                );
+              })}
+            </div>
+            <footer className="deck-scene-footer">
+              <button type="button" onClick={() => setLyriaDeckSceneDialog(undefined)}>CANCEL</button>
+              <button type="button" onClick={() => void saveLyriaDeckSceneDialog(false)} disabled={!lyriaDeckSceneDialog.name.trim()}>SAVE</button>
+              <button type="button" className="primary" onClick={() => void saveLyriaDeckSceneDialog(true)} disabled={!lyriaDeckSceneDialog.name.trim()}>SAVE + LOAD</button>
+            </footer>
+          </section>
+        </div>
+      )}
       {lyriaBuffering.active && (
         <div className="lyria-buffer-overlay" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Buffering Lyria RealTime stream">
           <div className="lyria-buffer-dialog">
             <div className="buffer-orbit" aria-hidden="true"><i /><i /><i /></div>
             <span>LYRIA REALTIME</span>
             <h2>{lyriaBuffering.message}</h2>
-            <p>Holding transport until live PCM frames arrive. The final output will route the Lyria stream first, then keep Musica as a low guide layer for performance controls.</p>
+            <p>Holding transport until each live PCM queue has stable headroom. Playback starts from a shared clock with Lyria as the exclusive audio output.</p>
             {(lyriaRealtimeStatus.warning || lyriaRealtimeStatus.reason) && (
               <p className="buffer-warning">{lyriaRealtimeStatus.warning ?? lyriaRealtimeStatus.reason}</p>
             )}
@@ -1631,6 +2077,25 @@ export function App() {
                   </button>
                 ))}
               </div>
+            </section>
+          ))}
+
+          {renderStudioPanel("visual-color", "COLOR / LOOK", visualColorControls.palette.toUpperCase(), (
+            <section className="visual-color-controls" aria-label="Visual color and look controls">
+              <div className="visual-palette-grid">
+                {VISUAL_COLOR_PALETTES.map((palette) => (
+                  <button key={palette.id} className={palette.id === visualColorControls.palette ? "selected" : ""} onClick={() => changeVisualColor({ palette: palette.id })}>
+                    <i style={{ background: palette.color ?? selectedSceneMeta.color, boxShadow: `7px 0 0 ${palette.accent ?? selectedSceneMeta.accent}` }} />
+                    <span>{palette.label}</span>
+                  </button>
+                ))}
+              </div>
+              {(["hue", "saturation", "contrast", "diversity"] as const).map((key) => (
+                <label key={key}>
+                  <span><b>{key.toUpperCase()}</b><em>{Math.round(visualColorControls[key] * 100)}</em></span>
+                  <input type="range" min="0" max="1" step="0.01" value={visualColorControls[key]} onChange={(event) => changeVisualColor({ [key]: Number(event.target.value) })} />
+                </label>
+              ))}
             </section>
           ))}
 
@@ -1724,9 +2189,36 @@ export function App() {
           </div>
 
           <div className="sequencer panel">
-            <div className="panel-heading"><span>SEQUENCE / {selectedTrackSnapshot?.name.toUpperCase()}</span><b>1 BAR · 1/16</b></div>
+            <div className="panel-heading sequence-heading">
+              <span>LYRIA BEAT / 16 STEPS</span>
+              <strong className={sequenceLyriaSession ? "online" : ""}><i /> LYRIA</strong>
+              <label>
+                <em>VOL</em>
+                <input type="range" min="0" max="1" step="0.01" value={lyriaDeckControls.sequence.volume} onChange={(event) => updateLyriaDeckControl("sequence", { volume: Number(event.target.value) })} />
+                <b>{Math.round(lyriaDeckControls.sequence.volume * 100)}</b>
+              </label>
+              <label>
+                <em>PITCH</em>
+                <input type="range" min="-7" max="7" step="1" value={lyriaDeckControls.sequence.pitchSemitones} onChange={(event) => updateLyriaDeckControl("sequence", { pitchSemitones: Number(event.target.value) })} />
+                <b>{lyriaDeckControls.sequence.pitchSemitones > 0 ? `+${lyriaDeckControls.sequence.pitchSemitones}` : lyriaDeckControls.sequence.pitchSemitones}</b>
+              </label>
+              <label>
+                <em>BEAT</em>
+                <input type="range" min="-250" max="250" step="5" value={lyriaDeckControls.sequence.beatNudgeMs} onChange={(event) => updateLyriaDeckControl("sequence", { beatNudgeMs: Number(event.target.value) })} />
+                <b>{lyriaDeckControls.sequence.beatNudgeMs}</b>
+              </label>
+              <button
+                className={lyriaDeckControls.sequence.muted ? "active" : ""}
+                onClick={() => updateLyriaDeckControl("sequence", { muted: !lyriaDeckControls.sequence.muted })}
+                title="Mute Lyria sequence stream"
+              >M</button>
+            </div>
+            <label className="beat-midi-import">
+              IMPORT MIDI
+              <input type="file" accept=".mid,.midi" onChange={(event) => void handleMidiFile(event.target.files?.[0])} />
+            </label>
             <div className="step-grid" data-testid="step-grid">
-              {snapshot.tracks.map((track) => (
+              {snapshot.tracks.filter((track) => track.id === "drums" || track.id === "bass").map((track) => (
                 <div className={`step-row ${track.id === selectedTrack ? "selected" : ""}`} key={track.id}>
                   <button className="step-label" style={{ color: track.color }} onClick={() => changeTrack(track.id)}>{track.shortName}</button>
                   {track.pattern.map((active, step) => (
@@ -1754,12 +2246,33 @@ export function App() {
         </section>
 
         <aside className="right-panel panel">
-          {renderStudioPanel("audio-lyria", "LYRIA REALTIME", lyriaRealtimeStatus.available ? "READY" : "LOCAL", (
-            <section className="lyria-realtime-deck live-deck" aria-label="Lyria RealTime piano keyboard">
+          {renderStudioPanel("audio-lyria", "LYRIA REALTIME", lyriaRealtimeStatus.available ? "READY" : "OFFLINE", (
+            <section className="lyria-realtime-deck live-deck" aria-label="Lyria RealTime controls">
               <div className="realtime-status">
                 <i className={lyriaRealtimeStatus.available ? "online" : ""} />
-                <span>{lyriaSession ? "3-DECK STREAM" : lyriaRealtimeStatus.model}</span>
+                <span>{[lyriaSession, sequenceLyriaSession, vocalLyriaSession].filter(Boolean).length > 0 ? `${[lyriaSession, sequenceLyriaSession, vocalLyriaSession].filter(Boolean).length}-DECK STREAM` : lyriaRealtimeStatus.model}</span>
                 <b>{Math.round((lyriaStreamBytes + sequenceLyriaStreamBytes + vocalLyriaStreamBytes) / 1024)} KB</b>
+              </div>
+              <div className="deck-scene-bank" aria-label="Multi-track deck scenes">
+                <header><span>DECK SCENES</span><b>SHIFT + 1-4</b></header>
+                <div>
+                  {lyriaDeckScenes.map((scene, index) => (
+                    <span className="deck-scene-slot" key={scene.id}>
+                      <button
+                        type="button"
+                        className={scene.id === activeLyriaDeckSceneId ? "active" : ""}
+                        onClick={() => void applyLyriaDeckScene(scene)}
+                        disabled={lyriaRealtimeBusy}
+                        title={`Load ${scene.name}: ${scene.bpm} BPM, ${lyriaRealtimeStyleById(scene.styleId).label}. Shift+${index + 1}`}
+                      >
+                        <em>{index + 1}</em>
+                        <strong>{scene.name}</strong>
+                        <small>{scene.bpm}</small>
+                      </button>
+                      <button type="button" className="deck-scene-edit" onClick={() => setLyriaDeckSceneDialog(cloneLyriaDeckScene(scene))} aria-label={`Edit ${scene.name} deck scene`}>E</button>
+                    </span>
+                  ))}
+                </div>
               </div>
               <div className="lyria-stream-mixer" aria-label="Lyria stream mixer">
                 {LYRIA_DECKS.map((deck) => {
@@ -1769,40 +2282,41 @@ export function App() {
                   return (
                     <article className="lyria-stream-strip" key={deck}>
                       <header>
-                        <i className={session ? "online" : ""} />
+                        <i className={session ? "online" : lyriaDeckSyncing[deck] ? "syncing" : ""} />
                         <strong>{deck === "vocal" ? "VOCALIZE" : deck.toUpperCase()}</strong>
-                        <span>{session ? `${Math.round(bytes / 1024)}K` : "IDLE"}</span>
+                        <span>{lyriaDeckSyncing[deck] ? "SYNC" : session ? `${Math.round(bytes / 1024)}K` : lyriaDeckEnabled[deck] ? "ARMED" : "OFF"}</span>
+                        <button
+                          className={lyriaDeckEnabled[deck] ? "power active" : "power"}
+                          onClick={() => void setRealtimeDeckEnabled(deck, !lyriaDeckEnabled[deck])}
+                          disabled={lyriaDeckSyncing[deck]}
+                          title={`${lyriaDeckEnabled[deck] ? "Stop" : "Start and sync"} ${deck} Lyria stream`}
+                        >{lyriaDeckEnabled[deck] ? "ON" : "OFF"}</button>
+                        {deck !== "main" && (
+                          <button
+                            onClick={() => setLyriaCompanionDialog({ deck, text: lyriaCompanionGuidance[deck] })}
+                            title={`Edit ${deck === "sequence" ? "beat" : "vocal"} companion prompt`}
+                            aria-haspopup="dialog"
+                          >P</button>
+                        )}
                         <button
                           className={control.muted ? "active" : ""}
-                          onClick={() => setLyriaDeckControls((current) => ({
-                            ...current,
-                            [deck]: { ...current[deck], muted: !current[deck].muted },
-                          }))}
+                          onClick={() => updateLyriaDeckControl(deck, { muted: !control.muted })}
                           title={`Mute ${deck} Lyria stream`}
                         >M</button>
                       </header>
                       <label>
                         <span>VOL</span>
-                        <input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], volume: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => updateLyriaDeckControl(deck, { volume: Number(event.target.value) })} />
                         <b>{Math.round(control.volume * 100)}</b>
                       </label>
                       <label>
                         <span>PITCH</span>
-                        <input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], pitchSemitones: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => updateLyriaDeckControl(deck, { pitchSemitones: Number(event.target.value) })} />
                         <b>{control.pitchSemitones > 0 ? `+${control.pitchSemitones}` : control.pitchSemitones}</b>
                       </label>
                       <label>
                         <span>BEAT</span>
-                        <input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], beatNudgeMs: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => updateLyriaDeckControl(deck, { beatNudgeMs: Number(event.target.value) })} />
                         <b>{control.beatNudgeMs > 0 ? `+${control.beatNudgeMs}` : control.beatNudgeMs}</b>
                       </label>
                     </article>
@@ -1824,8 +2338,13 @@ export function App() {
                     key={style.id}
                     className={style.id === lyriaStyleId ? "active" : ""}
                     onClick={() => void applyRealtimeStyle(style.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      openLyriaGuidanceDialog(style.id);
+                    }}
                     disabled={lyriaRealtimeBusy}
-                    title={style.description}
+                    aria-haspopup="dialog"
+                    title={`${style.description} Right-click to edit primary guidance.`}
                   >
                     {style.label}
                   </button>
@@ -1841,6 +2360,7 @@ export function App() {
                     value={snapshot.bpm}
                     onChange={(event) => {
                       const bpm = Number(event.target.value);
+                      setActiveLyriaDeckSceneId(undefined);
                       engineRef.current.setBpm(bpm);
                       setLyriaRealtimeConfig((current) => ({ ...current, bpm }));
                     }}
@@ -1858,31 +2378,11 @@ export function App() {
                   <span>GUIDE</span>
                   <input type="range" min="0" max="6" step="0.05" value={lyriaRealtimeConfig.guidance} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, guidance: Number(event.target.value) }))} />
                 </label>
-                <label>
-                  <span>LOCAL</span>
-                  <input type="range" min="0" max="1" step="0.01" value={localGuideLevel} onChange={(event) => setLocalGuideLevel(Number(event.target.value))} />
-                </label>
               </div>
               <div className="realtime-toggles">
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.muteBass} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteBass: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> BASS MUTE</label>
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.muteDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteDrums: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> DRUM MUTE</label>
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.onlyBassAndDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, onlyBassAndDrums: event.target.checked, muteBass: event.target.checked ? false : current.muteBass, muteDrums: event.target.checked ? false : current.muteDrums }))} /> BASS+DRUMS</label>
-              </div>
-              <div className="piano-keyboard">
-                {LYRIA_KEYBOARD_NOTES.map((note) => {
-                  const name = LYRIA_NOTE_NAMES[note % 12];
-                  const isSharp = name.includes("#");
-                  return (
-                    <button
-                      key={note}
-                      className={isSharp ? "sharp" : ""}
-                      onPointerDown={() => void triggerKeyboardNote(note)}
-                      title={`${name}${Math.floor(note / 12) - 1}`}
-                    >
-                      <span>{name.replace("#", "")}</span>
-                    </button>
-                  );
-                })}
               </div>
               <details className="advanced-prompts">
                 <summary>LIVE PROMPTS</summary>
@@ -1914,13 +2414,26 @@ export function App() {
               </details>
               <div className="realtime-actions">
                 <button onClick={() => void startOrUpdateLyriaRealtime()} disabled={lyriaRealtimeBusy}>
-                  {lyriaSession ? "UPDATE 3 DECKS" : "START 3 DECKS"}
+                  {[lyriaSession, sequenceLyriaSession, vocalLyriaSession].some(Boolean) ? "UPDATE LIVE" : "PLAY STARTS MAIN"}
                 </button>
-                <button className={autoDjMode ? "active" : ""} onClick={() => setAutoDjMode((active) => !active)}>
-                  AUTO DJ
+                <button className={autoDjMode ? "active" : ""} onClick={() => void toggleAutoDjMode()}>
+                  AUTO DJ · {AUTO_DJ_PHRASE_BARS} BARS
                 </button>
+                <button className={demoMode ? "active" : ""} onClick={() => void toggleDemoMode()} disabled={lyriaRealtimeBusy}>
+                  {demoMode ? "EXIT DEMO" : "DEMO"}
+                </button>
+                <button onClick={() => void openDjWindow("mixer")}>POP OUT MIXER</button>
                 {lyriaSession && <button onClick={() => void stopRealtimeSession()} disabled={lyriaRealtimeBusy}>STOP</button>}
               </div>
+              <details className="auto-dj-direction">
+                <summary>AUTO DJ DIRECTION · {metaLlmAvailable ? "META" : "LOCAL"} · PHRASE {autoDjStep + 1}</summary>
+                <textarea
+                  value={autoDjPersonalization}
+                  maxLength={240}
+                  onChange={(event) => setAutoDjPersonalization(event.target.value)}
+                  aria-label="Auto DJ personalization"
+                />
+              </details>
               {lyriaRealtimeStatus.warning && <small>{lyriaRealtimeStatus.warning}</small>}
               {!lyriaRealtimeStatus.available && <small>{lyriaRealtimeStatus.reason ?? "Desktop Lyria RealTime bridge is not configured"}</small>}
             </section>
@@ -1939,71 +2452,11 @@ export function App() {
             </section>
           ))}
 
-          {renderStudioPanel("audio-mixer", "MIXER", `${snapshot.tracks.length} TRACKS`, (
-            <>
-              <div className="track-list">
-                {snapshot.tracks.map((track, index) => (
-                  <article key={track.id} className={`track-strip ${track.id === selectedTrack ? "selected" : ""}`} onClick={() => changeTrack(track.id)}>
-                    <div className="track-number" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
-                    <div className="track-main">
-                      <div className="track-title"><strong>{track.name}</strong><span>{track.loadedFile ? "CLIP" : track.aiToneFile ? "AI MIDI" : track.instrument.toUpperCase()}</span></div>
-                      <input aria-label={`${track.name} volume`} type="range" min="0" max="1" step="0.01" value={track.volume} onChange={(event) => engineRef.current.setTrackVolume(track.id, Number(event.target.value))} />
-                      <label className="pan-control" onClick={(event) => event.stopPropagation()}>
-                        <span>PAN</span>
-                        <input aria-label={`${track.name} pan`} type="range" min="-1" max="1" step="0.01" value={track.pan} onChange={(event) => engineRef.current.setTrackPan(track.id, Number(event.target.value))} />
-                        <b>{Math.abs(track.pan) < 0.01 ? "C" : track.pan < 0 ? `L${Math.round(Math.abs(track.pan) * 100)}` : `R${Math.round(track.pan * 100)}`}</b>
-                      </label>
-                      <div className="track-actions">
-                        <button className={track.muted ? "active" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleMute(track.id); }}>M</button>
-                        <button className={track.solo ? "active solo" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleSolo(track.id); }}>S</button>
-                        <label className="load-button" onClick={(event) => event.stopPropagation()}>
-                          {track.loadedFile ? "REPLACE" : "LOAD"}
-                          <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.mid,.midi" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
-                        </label>
-                        <button
-                          className={track.aiToneFile ? "active ai-tone-button" : "ai-tone-button"}
-                          onClick={(event) => { event.stopPropagation(); void handleAiTonePreset(track.id, aiTonePresetById(DEFAULT_AI_TONE_BANK[track.id] ?? AI_TONE_LIBRARY[0].id)); }}
-                          disabled={aiToneBusy}
-                        >
-                          AI
-                        </button>
-                        {track.aiToneFile && <button onClick={(event) => { event.stopPropagation(); clearAiTone(track.id); }}>AI ×</button>}
-                        {track.loadedFile && <button onClick={(event) => { event.stopPropagation(); visualRef.current?.clearAudioAnalysis(track.id); engineRef.current.clearAudioFile(track.id); }}>×</button>}
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-
-              <div className="master-strip">
-                <span>MASTER</span>
-                <input type="range" min="0" max="1" step="0.01" value={snapshot.masterVolume} onChange={(event) => engineRef.current.setMasterVolume(Number(event.target.value))} />
-                <b>{Math.round(snapshot.masterVolume * 100)}</b>
-              </div>
-            </>
-          ))}
-
-          {renderStudioPanel("audio-tones", "AI TONES", aiToneBusy ? "LOADING" : "SAMPLER", (
-            <section className="template-bank ai-tone-bank" aria-label="AI tone library">
-              <button className="bank-load-button" onClick={() => void loadDefaultAiToneBank()} disabled={aiToneBusy}>
-                {aiToneBusy ? "LOADING..." : "LOAD MOONLIGHT BANK"}
-              </button>
-              <div className="template-grid">
-                {AI_TONE_LIBRARY.map((preset) => (
-                  <button key={preset.id} onClick={() => void handleAiTonePreset(selectedTrack, preset)} disabled={aiToneBusy}>
-                    <strong>{preset.name}</strong>
-                    <span>{preset.targetTracks.join(" / ")}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-
           {renderStudioPanel("audio-agent", "AGENT DIRECTOR", agentStatus.available ? agentStatus.provider.toUpperCase() : "LOCAL", (
             <section className="creative-panel compact-creative">
               <textarea className="direction-input" value={prompt} maxLength={1000} onChange={(event) => setPrompt(event.target.value)} aria-label="Creative direction" />
               <button className="local-mutate-button" onClick={handleLocalMutate} disabled={!prompt.trim()}>
-                MUTATE LOCALLY
+                MUTATE LYRIA BEAT
               </button>
               <section className="agent-director">
                 <textarea value={agentGoal} maxLength={1500} onChange={(event) => setAgentGoal(event.target.value)} aria-label="Agent director goal" />
@@ -2099,7 +2552,7 @@ export function App() {
                 </button>
               )}
               <p className="provider-note">
-                <i className={lyriaAvailable ? "online" : ""} /> {lyriaAvailable ? `${providerStatus.model ?? "lyria-3-pro-preview"} batch export` : "Live playback still uses RealTime/local audio"}
+                <i className={lyriaAvailable ? "online" : ""} /> {lyriaAvailable ? `${providerStatus.model ?? "lyria-3-pro-preview"} batch export` : "Live playback uses Lyria RealTime"}
               </p>
               {generation && (
                 <small className="generation-status" aria-live="polite">
@@ -2116,6 +2569,11 @@ export function App() {
                   {recording ? "STOP CAPTURE" : "START CAPTURE"}
                 </button>
                 <button onClick={() => void copyProgramSourceUrl()}>COPY OBS URL</button>
+              </div>
+              <div className="dj-window-launchers">
+                <button onClick={() => void openDjWindow("mixer")}>MIXER WINDOW</button>
+                <button onClick={() => void openDjWindow("launcher")}>LAUNCH WINDOW</button>
+                <button onClick={() => void openDjWindow("visual")}>VISUAL WINDOW</button>
               </div>
               <label>
                 <span>FORMAT</span>

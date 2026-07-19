@@ -58,7 +58,7 @@ interface RealtimeDeckRuntime {
 const REALTIME_DECK_DEFAULTS: Record<RealtimeDeckId, RealtimeDeckControl> = {
   main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
   sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0.3, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
+  vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
 };
 
 export interface AiToneOptions {
@@ -107,7 +107,6 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
-const DEFAULT_REALTIME_GUIDE_LEVEL = 0.34;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
@@ -219,7 +218,7 @@ export class AudioEngine {
   private playing = false;
   private droppedLateSteps = 0;
   private realtimeStreamPrimary = false;
-  private realtimeGuideLevel = DEFAULT_REALTIME_GUIDE_LEVEL;
+  private realtimeAnchor = 0;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -388,43 +387,10 @@ export class AudioEngine {
       this.droppedLateSteps += lateSteps;
     }
     while (this.nextStepTime < context.currentTime + LOOK_AHEAD_SECONDS) {
-      this.scheduleStep(
-        this.currentStep,
-        this.transportStepCounter,
-        performanceStepTime(this.currentStep, this.transportStepCounter, this.nextStepTime, stepSeconds),
-      );
       this.nextStepTime += stepSeconds;
       this.currentStep = (this.currentStep + 1) % STEPS_PER_BAR;
       this.transportStepCounter += 1;
       this.emit();
-    }
-  }
-
-  private scheduleStep(step: number, absoluteStep: number, time: number): void {
-    for (const track of this.tracks.values()) {
-      if (track.loadedBuffer || !track.definition.pattern[step]) continue;
-      const noteIndex = Math.floor(absoluteStep / 2) % track.definition.notes.length;
-      const note = track.definition.notes[noteIndex];
-      switch (track.definition.instrument) {
-        case "drums":
-          this.triggerDrum(track, note, absoluteStep, time);
-          break;
-        case "bass":
-          this.triggerBass(track, note, time);
-          break;
-        case "poly":
-          this.triggerChord(track, note, time);
-          break;
-        case "lead":
-          this.triggerLead(track, note, time);
-          break;
-        case "voice":
-          this.triggerVoice(track, note, time);
-          break;
-        case "texture":
-          this.triggerTexture(track, note, time);
-          break;
-      }
     }
   }
 
@@ -846,13 +812,6 @@ export class AudioEngine {
     this.applyMix();
   }
 
-  setRealtimeGuideLevel(value: number): void {
-    const nextLevel = clamp(value, 0, 1);
-    if (Math.abs(this.realtimeGuideLevel - nextLevel) < 0.001) return;
-    this.realtimeGuideLevel = nextLevel;
-    this.applyMix();
-  }
-
   setRealtimeDeckControl(deck: RealtimeDeckId, update: Partial<RealtimeDeckControl>): void {
     const current = this.realtimeDeckControls[deck];
     const next = {
@@ -864,8 +823,37 @@ export class AudioEngine {
     this.realtimeDeckControls[deck] = next;
     const runtime = this.realtimeDecks.get(deck);
     if (runtime && this.context) {
+      if (runtime.streamTime > 0 && next.beatNudgeMs !== current.beatNudgeMs) {
+        runtime.streamTime += (next.beatNudgeMs - current.beatNudgeMs) / 1_000;
+      }
       runtime.gain.gain.setTargetAtTime(next.muted ? 0 : next.volume, this.context.currentTime, 0.012);
     }
+  }
+
+  async synchronizeRealtimeDeckClocks(leadSeconds = 0.45): Promise<number> {
+    await this.initialize();
+    const context = this.requireContext();
+    const anchor = context.currentTime + clamp(leadSeconds, 0.1, 2);
+    this.realtimeAnchor = anchor;
+    for (const [deck, runtime] of this.realtimeDecks) {
+      const nudgeSeconds = this.realtimeDeckControls[deck].beatNudgeMs / 1_000;
+      runtime.streamTime = Math.max(context.currentTime + 0.02, anchor + nudgeSeconds);
+    }
+    return anchor;
+  }
+
+  async synchronizeRealtimeDeckClockToNextBar(deck: RealtimeDeckId, leadSeconds = 0.75): Promise<number> {
+    await this.initialize();
+    const context = this.requireContext();
+    const runtime = this.realtimeDecks.get(deck);
+    if (!runtime) return context.currentTime;
+    const minimumStart = context.currentTime + clamp(leadSeconds, 0.1, 2);
+    const barSeconds = secondsPerStep(this.bpm) * STEPS_PER_BAR;
+    const anchor = this.realtimeAnchor > 0 ? this.realtimeAnchor : minimumStart;
+    const elapsedBars = Math.max(0, Math.ceil((minimumStart - anchor) / barSeconds));
+    const startsAt = anchor + elapsedBars * barSeconds;
+    runtime.streamTime = startsAt + this.realtimeDeckControls[deck].beatNudgeMs / 1_000;
+    return startsAt;
   }
 
   resetRealtimeDeckClock(deck: RealtimeDeckId): void {
@@ -880,9 +868,9 @@ export class AudioEngine {
     }
     const anySolo = [...this.tracks.values()].some((track) => track.mix.solo);
     const now = this.context?.currentTime ?? 0;
-    const realtimeDuck = this.realtimeStreamPrimary ? this.realtimeGuideLevel : 1;
+    const realtimeDuck = this.realtimeStreamPrimary ? 0 : 1;
     for (const track of this.tracks.values()) {
-      const gain = effectiveTrackGain(track.mix, anySolo) * realtimeDuck;
+      const gain = track.loadedBuffer ? effectiveTrackGain(track.mix, anySolo) * realtimeDuck : 0;
       if (immediate) track.gain.gain.value = gain;
       else track.gain.gain.setTargetAtTime(gain, now, 0.012);
     }
@@ -1053,7 +1041,7 @@ export class AudioEngine {
     source.playbackRate.value = playbackRate;
     source.connect(runtime.gain);
     const earliest = Math.max(context.currentTime + 0.02, context.currentTime + 0.08 + control.beatNudgeMs / 1_000);
-    if (runtime.streamTime < earliest || runtime.streamTime > context.currentTime + 1.8) {
+    if (runtime.streamTime < context.currentTime + 0.02 || runtime.streamTime > context.currentTime + 10) {
       runtime.streamTime = earliest;
     }
     const startsAt = runtime.streamTime;

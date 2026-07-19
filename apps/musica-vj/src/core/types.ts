@@ -31,6 +31,16 @@ export interface VisualTemporalControls {
   phase: number;
 }
 
+export type VisualPaletteId = "scene" | "neon" | "ember" | "ice" | "prism" | "mono";
+
+export interface VisualColorControls {
+  palette: VisualPaletteId;
+  hue: number;
+  saturation: number;
+  contrast: number;
+  diversity: number;
+}
+
 export interface VisualPreset {
   id: string;
   name: string;
@@ -129,6 +139,7 @@ export type ControlAction =
   | "visual.temporal.morph.delta"
   | "visual.temporal.camera.delta"
   | "visual.temporal.phase.delta"
+  | "lyria.deck-scene.select"
   | "performance.template.select";
 
 export interface ControlMessage {

@@ -149,7 +149,7 @@ describe("audio engine state application", () => {
     expect(snapshot.tracks.find((track) => track.id === "lead")?.notes).toEqual(template.tracks.lead.notes.slice(0, 64));
   });
 
-  it("applies pan and solo state chosen before AudioContext initialization", async () => {
+  it("preserves control state while keeping local synth tracks silent", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();
     engine.setTrackPan("bass", 0.65);
@@ -161,7 +161,7 @@ describe("audio engine state application", () => {
       tracks: Map<string, { gain: FakeGainNode; pan: FakeStereoPannerNode }>;
     }).tracks;
     expect(runtimes.get("bass")?.pan.pan.value).toBe(0.65);
-    expect(runtimes.get("bass")?.gain.gain.value).toBeCloseTo((defaultPerformanceTemplate().tracks.bass.volume ?? 1) ** 2, 8);
+    expect(runtimes.get("bass")?.gain.gain.value).toBe(0);
     expect(runtimes.get("drums")?.gain.gain.value).toBe(0);
   });
 
@@ -193,6 +193,36 @@ describe("audio engine state application", () => {
     expect(controls.sequence).toMatchObject({ volume: 0.63, pitchSemitones: 4, beatNudgeMs: -85, muted: false });
     expect(controls.vocal).toMatchObject({ volume: 1, pitchSemitones: 12, beatNudgeMs: 500, muted: true });
     expect(controls.main).toMatchObject({ volume: 0.72, pitchSemitones: 0, beatNudgeMs: 0, muted: false });
+  });
+
+  it("releases realtime decks on one shared clock and preserves beat nudge offsets", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    engine.setRealtimeDeckControl("sequence", { beatNudgeMs: 100 });
+
+    const anchor = await engine.synchronizeRealtimeDeckClocks(0.45);
+    const runtimes = (engine as unknown as {
+      realtimeDecks: Map<string, { streamTime: number }>;
+    }).realtimeDecks;
+
+    expect(anchor).toBeCloseTo(0.45, 8);
+    expect(runtimes.get("main")?.streamTime).toBeCloseTo(anchor, 8);
+    expect(runtimes.get("sequence")?.streamTime).toBeCloseTo(anchor + 0.1, 8);
+    expect(runtimes.get("vocal")?.streamTime).toBeCloseTo(anchor, 8);
+
+    engine.setRealtimeDeckControl("sequence", { beatNudgeMs: -50 });
+    expect(runtimes.get("sequence")?.streamTime).toBeCloseTo(anchor - 0.05, 8);
+  });
+
+  it("queues a newly enabled realtime deck on the next shared bar", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    const anchor = await engine.synchronizeRealtimeDeckClocks(0.45);
+    const startsAt = await engine.synchronizeRealtimeDeckClockToNextBar("sequence", 0.75);
+
+    expect(startsAt).toBeCloseTo(anchor + (60 / engine.getSnapshot().bpm) * 4, 8);
+    const runtime = (engine as unknown as { realtimeDecks: Map<string, { streamTime: number }> }).realtimeDecks.get("sequence");
+    expect(runtime?.streamTime).toBeCloseTo(startsAt, 8);
   });
 
   it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
