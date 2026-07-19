@@ -1,0 +1,12 @@
+type: plugin4
+name: MusicaVj
+displayName: Musica VJ
+description: Real-time music, VJ visuals, and social recording controls for Musica VJ.
+pluginFileName: MusicaVj.Logitech.Plugin.dll
+version: 1.0.0
+author: Cognitum One
+copyright: Copyright © 2026 Cognitum One. All rights reserved.
+minimumLoupedeckVersion: 6.0
+pluginFolderMac: bin
+supportedDevices:
+  - LoupedeckExtendedFamily

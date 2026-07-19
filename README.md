@@ -1,16 +1,81 @@
-# Musica — Structure-First Audio Source Separation
+# Musica — Agentic Live AI Music + Visual Performance
 
-**Dynamic mincut graph partitioning for real-time audio source separation.**
+[![Musica VJ CI](https://github.com/ruvnet/musica/actions/workflows/musica-vj.yml/badge.svg)](https://github.com/ruvnet/musica/actions/workflows/musica-vj.yml)
+[![Rust](https://img.shields.io/badge/Rust-2021-f97316)](Cargo.toml)
+[![Tauri](https://img.shields.io/badge/Tauri-2-24c8db)](apps/musica-vj/src-tauri/tauri.conf.json)
+[![Three.js](https://img.shields.io/badge/Three.js-WebGL2-111111)](apps/musica-vj/src/visual/VisualEngine.ts)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](Cargo.toml)
 
-Zero-dependency, sub-millisecond, fully interpretable audio separation via graph Laplacian spectral clustering and dynamic mincut refinement. Designed for hearing aids, embedded devices, and edge deployment.
+![Musica VJ Neon Fold performance view](apps/musica-vj/assets/screenshots/musica-vj-neon-fold.png)
+
+Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
+
+The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with six-track Web Audio synthesis, imported audio clips, AI-directed performance templates, Meta-LLM set planning, governed Gemini/Lyria generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
+
+## Current Direction
+
+| Layer | What Musica does now |
+|---|---|
+| **Agentic direction** | Meta-LLM can plan and apply a complete set state: prompt, template, BPM, scene, intensity, visual macros, temporal controls, and arrangement notes. Browser preview falls back to a deterministic local director. |
+| **Music performance** | Six live tracks, 16-step sequencing, synthesis, loop import, prompt mutation, performance templates, per-track mix, one-shot generated song loading, and BPM/section analysis for imported or generated clips. |
+| **Visual performance** | Eight visual-bank scenes, five VJ presets, audio-reactive Three.js systems, adaptive quality, scene color themes, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
+| **Live control** | Keyboard, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, macros, and temporal controls. |
+| **AI providers** | Rust-only governed boundaries for Gemini/Lyria music generation and Cognitum Meta-LLM planning; tokens stay out of React bundles and are checked by CI secret canaries. |
+| **Musica core** | STFT/ISTFT, graph mincut separation, sparse Lanczos, six-stem separation, streaming separation, HearMusica compressor/limiter/mixer/filter blocks, WAV I/O, visualization helpers, and transcription hooks. |
+| **Release path** | GitHub Actions build frontend plus unsigned macOS `.app`/`.dmg`, Linux `.deb`/AppImage, Windows NSIS artifacts, then gate release publishing behind the `ci-guard` job. |
+
+## Web + WASM Direction
+
+The browser version should use Web Audio and Three.js for the performance UI, then load Musica core through WASM for heavier analysis and structure-aware DSP. The repo already has a feature-gated [`src/wasm_bridge.rs`](src/wasm_bridge.rs) FFI surface for the graph separation pipeline:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown --features wasm --release
+```
+
+The intended split is pragmatic:
+
+| Runtime | Responsibility |
+|---|---|
+| Browser TypeScript | UI, transport, Web Audio scheduling, MIDI, file import, visual rendering, local fallback analysis |
+| Musica WASM | STFT, graph masks, stem confidence, separation witnesses, structural section features, and low-latency DSP primitives |
+| Tauri Rust | Provider credentials, paid generation, private asset storage, controller socket, native dialogs, packaged export validation |
+
+That keeps the web app usable without a server while preserving the stronger native security boundary for API tokens and paid generation.
+
+## Run The Studio
+
+```bash
+cd apps/musica-vj
+npm ci
+npm run dev
+
+# Native desktop shell with provider commands, global shortcuts, and packaged-app behavior
+npm run tauri dev
+```
+
+Optional AI providers are configured only through the Tauri process environment. Do not commit API tokens, `.env` files, generated provider responses, or shell snippets containing secrets.
+
+```bash
+MUSICA_META_LLM_ENABLED=true \
+MUSICA_META_LLM_API_BASE=https://api.cognitum.one \
+MUSICA_META_LLM_API_TOKEN=replace_with_token \
+MUSICA_META_LLM_MODEL=meta-llm \
+npm run tauri dev
+```
+
+See [apps/musica-vj/README.md](apps/musica-vj/README.md) for the complete studio documentation, controller mappings, MIDI notes, import behavior, provider setup, screenshots, release artifacts, and verification commands.
+
+## Musica Core
+
+Under the live studio is the original Rust audio engine: structure-first audio source separation via graph Laplacian spectral clustering and dynamic mincut refinement. It remains useful as a standalone library for low-latency audio analysis, separation, embedded processing, and research.
 
 | Metric | Value |
 |--------|-------|
-| **Latency** | 0.20 ms avg / 0.26 ms max (31x under 8ms budget) |
-| **Model size** | 0 bytes (algorithmic, no learned weights) |
-| **Dependencies** | 1 (`ruvector-mincut`) |
-| **Tests** | 276 passing |
-| **Code** | 11,032 lines across 20 modules |
+| **Core separation latency** | 0.20 ms avg / 0.26 ms max in the benchmark suite |
+| **Model size** | 0 bytes for the graph DSP path |
+| **Core dependency count** | 1 required dependency: `ruvector-mincut` |
+| **Workspace tests** | Rust workspace plus VJ frontend/provider/controller tests |
 | **License** | MIT OR Apache-2.0 |
 
 ## Why Structure-First?
@@ -114,6 +179,28 @@ cargo run --release
 # Run tests (34 tests)
 cargo test
 ```
+
+## Musica VJ Studio
+
+[`apps/musica-vj`](apps/musica-vj) is a Mac-first Tauri 2 performance instrument built on Musica. It combines a six-track synthesizer and loop mixer, a 16-step sequencer, three audio-reactive Three.js scenes, official Logitech MX Creative Console controls, prompt-driven performance mutation, optional governed creative-music providers, and capability-probed vertical social capture that prefers H.264 and AAC.
+
+```bash
+cd apps/musica-vj
+npm ci
+npm run dev
+
+# Launch the native Tauri application on macOS
+npm run tauri dev
+```
+
+The official Logi Actions SDK companion maps the Keypad LCD buttons, Dialpad, and roller into Musica controls. An Options+ F13-F24 profile works as an installation-free fallback. Creative provider credentials remain in the Rust process. Google Lyria 3 Pro Preview is optional and disabled by default, while the Suno partner adapter stays disabled until documented official access is configured.
+
+Reproducible vertical preview fixtures are checked in for quick review:
+
+- [Signal Bloom](apps/musica-vj/samples/signal-bloom-vertical.mp4)
+- [Spectral Field](apps/musica-vj/samples/spectral-field-vertical.mp4)
+
+See [Musica VJ documentation](apps/musica-vj/README.md), [the Lyria integration specification](docs/specs/musica-lyria-3-pro-integration.md), and ADRs 160-169 for architecture, security, controller setup, performance budgets, export rules, paid generation, provenance, and release gates.
 
 ## Usage
 

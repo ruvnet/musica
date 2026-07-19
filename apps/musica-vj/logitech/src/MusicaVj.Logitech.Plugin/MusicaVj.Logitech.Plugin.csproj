@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Loupedeck.MusicaVjPlugin</RootNamespace>
+    <AssemblyName>MusicaVj.Logitech.Plugin</AssemblyName>
+    <LangVersion>12</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <PluginApiDir Condition="'$(PluginApiDir)' == '' and '$(OS)' == 'Windows_NT'">C:\Program Files\Logi\LogiPluginService\</PluginApiDir>
+    <PluginApiDir Condition="'$(PluginApiDir)' == '' and '$(OS)' != 'Windows_NT'">/Applications/Utilities/LogiPluginService.app/Contents/MonoBundle/</PluginApiDir>
+    <PluginDir Condition="'$(PluginDir)' == '' and '$(OS)' == 'Windows_NT'">$(LocalAppData)\Logi\LogiPluginService\Plugins\</PluginDir>
+    <PluginDir Condition="'$(PluginDir)' == '' and '$(OS)' != 'Windows_NT'">$(HOME)/Library/Application Support/Logi/LogiPluginService/Plugins/</PluginDir>
+    <PluginBuildRoot>$(MSBuildProjectDirectory)/bin/$(Configuration)</PluginBuildRoot>
+    <OutputPath>$(PluginBuildRoot)/bin/</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MusicaVj.Logitech.Core/MusicaVj.Logitech.Core.csproj" />
+    <Reference Include="PluginApi">
+      <HintPath>$(PluginApiDir)PluginApi.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidatePluginApi" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(PluginApiDir)PluginApi.dll')"
+           Text="PluginApi.dll was not found at $(PluginApiDir). Install current Logitech Options+ / Logi Plugin Service, or pass -p:PluginApiDir=/absolute/path/." />
+  </Target>
+
+  <Target Name="CopyPackage" AfterTargets="Build">
+    <ItemGroup>
+      <PackageFiles Include="package/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PackageFiles)"
+          DestinationFolder="$(PluginBuildRoot)/%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="WriteDevelopmentLink" AfterTargets="CopyPackage" Condition="'$(SkipPluginLink)' != 'true'">
+    <MakeDir Directories="$(PluginDir)" />
+    <WriteLinesToFile File="$(PluginDir)$(MSBuildProjectName).link"
+                      Lines="$(PluginBuildRoot)/"
+                      Overwrite="true" />
+  </Target>
+
+  <Target Name="RemoveDevelopmentLink" AfterTargets="Clean" Condition="'$(SkipPluginLink)' != 'true'">
+    <Delete Files="$(PluginDir)$(MSBuildProjectName).link" />
+  </Target>
+</Project>

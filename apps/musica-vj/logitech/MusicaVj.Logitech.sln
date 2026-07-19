@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35327.3
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicaVj.Logitech.Core", "src/MusicaVj.Logitech.Core/MusicaVj.Logitech.Core.csproj", "{A2FD54CB-0267-46F8-9707-D0DFA6AF5D2F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicaVj.Logitech.Plugin", "src/MusicaVj.Logitech.Plugin/MusicaVj.Logitech.Plugin.csproj", "{6805D3C5-770E-4BC9-A5B9-6457A789A33B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicaVj.Logitech.Core.Tests", "tests/MusicaVj.Logitech.Core.Tests/MusicaVj.Logitech.Core.Tests.csproj", "{DAFCFCA8-04E6-4132-8178-F1B2D019B2B5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A2FD54CB-0267-46F8-9707-D0DFA6AF5D2F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2FD54CB-0267-46F8-9707-D0DFA6AF5D2F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2FD54CB-0267-46F8-9707-D0DFA6AF5D2F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2FD54CB-0267-46F8-9707-D0DFA6AF5D2F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6805D3C5-770E-4BC9-A5B9-6457A789A33B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6805D3C5-770E-4BC9-A5B9-6457A789A33B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6805D3C5-770E-4BC9-A5B9-6457A789A33B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6805D3C5-770E-4BC9-A5B9-6457A789A33B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DAFCFCA8-04E6-4132-8178-F1B2D019B2B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DAFCFCA8-04E6-4132-8178-F1B2D019B2B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DAFCFCA8-04E6-4132-8178-F1B2D019B2B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DAFCFCA8-04E6-4132-8178-F1B2D019B2B5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
