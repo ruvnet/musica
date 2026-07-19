@@ -17,6 +17,9 @@ export interface RenderStats {
 type StatsListener = (stats: RenderStats) => void;
 type SceneListener = (scene: VisualSceneId) => void;
 const PARTICLE_COUNT = 7_000;
+const FLOW_PARTICLE_COUNT = 12_000;
+const VOLUMETRIC_BEAM_COUNT = 28;
+const AFTERIMAGE_PANEL_COUNT = 10;
 const TERRAIN_SEGMENTS = 64;
 const SPECTRAL_TRAIL_COUNT = 18;
 const SPECTRAL_POINTS = 128;
@@ -31,6 +34,9 @@ export interface VisualAudioResponse {
   spectralHeight: number;
   waveformAmplitude: number;
   hazeOpacity: number;
+  flowCurl: number;
+  beamIntensity: number;
+  afterimageOpacity: number;
 }
 
 export interface VisualArtDirection {
@@ -86,12 +92,14 @@ export function frequencyBandEnergy(
 
 export function mapVisualAudioResponse(
   bassEnergy: number,
+  midEnergy: number,
   highEnergy: number,
   beatPulse: number,
   intensity: number,
 ): VisualAudioResponse {
   const boundedIntensity = Math.max(0.05, Math.min(1, intensity));
   const bass = Math.max(0, Math.min(1, bassEnergy));
+  const mid = Math.max(0, Math.min(1, midEnergy));
   const high = Math.max(0, Math.min(1, highEnergy));
   const beat = Math.max(0, Math.min(1, beatPulse));
   return {
@@ -101,6 +109,9 @@ export function mapVisualAudioResponse(
     spectralHeight: (0.32 + bass * 0.88) * boundedIntensity,
     waveformAmplitude: (0.16 + beat * 0.84) * boundedIntensity,
     hazeOpacity: (0.1 + high * 0.42) * boundedIntensity,
+    flowCurl: (0.18 + mid * 0.72 + beat * 0.42) * boundedIntensity,
+    beamIntensity: (0.08 + bass * 0.48 + high * 0.38 + beat * 0.5) * boundedIntensity,
+    afterimageOpacity: (0.04 + beat * 0.48 + high * 0.14) * boundedIntensity,
   };
 }
 
@@ -132,14 +143,22 @@ export class VisualEngine {
   private readonly terrainGroup = new THREE.Group();
   private readonly signalBloomGroup = new THREE.Group();
   private readonly atmosphereGroup = new THREE.Group();
+  private readonly kineticFieldGroup = new THREE.Group();
+  private readonly volumetricGroup = new THREE.Group();
+  private readonly afterimageGroup = new THREE.Group();
   private readonly floorGroup = new THREE.Group();
   private readonly tunnelRings: THREE.Mesh[] = [];
   private readonly spectralTrails: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
   private readonly spectralReflections: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
   private readonly bloomMaterial: THREE.ShaderMaterial;
+  private readonly flowMaterial: THREE.ShaderMaterial;
+  private readonly beamMaterial: THREE.ShaderMaterial;
+  private readonly afterimageMaterials: THREE.ShaderMaterial[] = [];
   private readonly hazeMaterial: THREE.ShaderMaterial;
   private readonly atmosphereMaterial: THREE.PointsMaterial;
   private bloomPoints?: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private flowPoints?: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private readonly volumetricBeams: Array<THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>> = [];
   private readonly waveformRibbon: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly waveformGlow: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly waveformReflection: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
@@ -201,6 +220,8 @@ export class VisualEngine {
     this.scene.add(fill);
 
     this.bloomMaterial = this.createBloomMaterial();
+    this.flowMaterial = this.createFlowMaterial();
+    this.beamMaterial = this.createBeamMaterial();
     this.hazeMaterial = this.createHazeMaterial();
     this.atmosphereMaterial = this.createAtmosphere();
     const waveform = this.createWaveformRibbon();
@@ -211,6 +232,9 @@ export class VisualEngine {
     this.core = this.createCore();
     this.createTunnel();
     this.createBloom();
+    this.createKineticField();
+    this.createVolumetricBeams();
+    this.createAfterimagePanels();
     this.createSignalBloom();
     this.createFloor();
     this.terrainGroup.add(this.terrain);
@@ -220,6 +244,9 @@ export class VisualEngine {
       this.bloomGroup,
       this.terrainGroup,
       this.signalBloomGroup,
+      this.kineticFieldGroup,
+      this.volumetricGroup,
+      this.afterimageGroup,
       this.atmosphereGroup,
       this.core,
     );
@@ -263,6 +290,7 @@ export class VisualEngine {
       }
     });
     this.composer.dispose();
+    this.beamMaterial.dispose();
     this.branding.material.dispose();
     this.brandingTexture.dispose();
     this.renderer.dispose();
@@ -277,6 +305,9 @@ export class VisualEngine {
     this.terrainGroup.visible = theme.mode === "terrain";
     this.core.visible = theme.mode !== "terrain";
     this.signalBloomGroup.visible = true;
+    this.kineticFieldGroup.visible = true;
+    this.volumetricGroup.visible = true;
+    this.afterimageGroup.visible = true;
     this.atmosphereGroup.visible = true;
     this.floorGroup.visible = true;
     for (const trail of this.spectralTrails) {
@@ -370,7 +401,7 @@ export class VisualEngine {
     const high = frequencyBandEnergy(metrics.frequency, 48_000, 6_000, 16_000);
     const transportPulse = Math.pow(Math.max(0, 1 - metrics.beatPhase), 8) * metrics.masterLevel;
     const beatPulse = Math.max(transportPulse, this.measuredBeatPulse());
-    const response = mapVisualAudioResponse(low, high, beatPulse, this.intensity);
+    const response = mapVisualAudioResponse(low, mid, high, beatPulse, this.intensity);
     const pulse = Math.max(metrics.masterLevel, low * 0.9) * this.intensity;
 
     const performedMotion = (0.45 + this.artDirection.motion * 0.9) * (0.4 + this.temporal.camera * 1.2);
@@ -378,11 +409,13 @@ export class VisualEngine {
     this.camera.position.y = 0.35 + Math.cos(time * (0.5 + this.artDirection.motion * 0.7)) * response.cameraDisplacement * 0.12 * performedMotion;
     this.camera.position.z = 9 - response.cameraDisplacement * performedMotion;
     this.bloomPoints?.geometry.setDrawRange(0, response.particleCount);
+    this.flowPoints?.geometry.setDrawRange(0, Math.round(FLOW_PARTICLE_COUNT * (0.36 + high * 0.64)));
 
     this.updateTunnel(time, low, mid, high);
     this.updateBloom(time, pulse, high);
     this.updateTerrain(time, metrics);
     this.updateSignalBloom(time, metrics, response, low, mid, high);
+    this.updateKineticField(time, response, low, mid, high);
     this.core.rotation.x = time * 0.21 + mid * 0.4;
     this.core.rotation.y = time * 0.34 + low * 0.6;
     const strobeGate = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (12 + this.temporal.strobe * 44))), 0.22);
@@ -463,6 +496,53 @@ export class VisualEngine {
     this.bloomMaterial.uniforms.uIntensity.value = this.intensity;
     this.bloomMaterial.uniforms.uPointSize.value = 1.2 + high * 3.2 + this.temporal.trail * 1.1;
     this.bloomGroup.rotation.z = time * (0.012 + this.artDirection.motion * 0.075 + this.temporal.morph * 0.035);
+  }
+
+  private updateKineticField(
+    time: number,
+    response: VisualAudioResponse,
+    low: number,
+    mid: number,
+    high: number,
+  ): void {
+    const theme = visualSceneById(this.currentScene);
+    const motion = 0.28 + this.artDirection.motion * 1.3;
+    const atmosphere = 0.18 + this.artDirection.atmosphere * 1.15;
+    const sculpture = 0.24 + this.artDirection.sculpture * 1.1;
+    this.flowMaterial.uniforms.uTime.value = time;
+    this.flowMaterial.uniforms.uBass.value = low;
+    this.flowMaterial.uniforms.uMid.value = mid;
+    this.flowMaterial.uniforms.uHigh.value = high;
+    this.flowMaterial.uniforms.uIntensity.value = this.intensity;
+    this.flowMaterial.uniforms.uFlow.value = response.flowCurl * (0.65 + motion);
+    this.flowMaterial.uniforms.uPointSize.value = 0.9 + high * 2.8 + this.temporal.trail * 1.8;
+    this.kineticFieldGroup.rotation.y = time * 0.018 * motion;
+    this.kineticFieldGroup.rotation.z = Math.sin(time * 0.04) * 0.08 * this.temporal.morph;
+    this.kineticFieldGroup.position.z = theme.mode === "terrain" ? -2.8 : -1.2;
+
+    const beamIntensity = Math.min(1.2, response.beamIntensity * atmosphere);
+    this.volumetricGroup.rotation.z = time * (0.006 + this.temporal.camera * 0.02);
+    this.volumetricGroup.rotation.y = Math.sin(time * 0.05) * 0.12 * this.temporal.camera;
+    for (let index = 0; index < this.volumetricBeams.length; index += 1) {
+      const beam = this.volumetricBeams[index]!;
+      const phase = index / Math.max(1, this.volumetricBeams.length - 1);
+      const spread = 1.4 + sculpture * 1.8 + response.radialPulse * 0.32;
+      beam.scale.set(0.55 + high * 0.9 + phase * 0.38, spread, 1);
+      beam.rotation.z = phase * Math.PI * 2 + time * (0.025 + motion * 0.035);
+      beam.position.z = -8.8 - Math.sin(time * 0.25 + phase * 7.0) * (0.9 + response.cameraDisplacement);
+      beam.material.uniforms.uTime.value = time;
+      beam.material.uniforms.uIntensity.value = beamIntensity;
+      beam.material.uniforms.uBass.value = low;
+      beam.material.uniforms.uPhase.value = phase;
+    }
+
+    for (let index = 0; index < this.afterimageMaterials.length; index += 1) {
+      const material = this.afterimageMaterials[index]!;
+      const delay = index / Math.max(1, this.afterimageMaterials.length - 1);
+      material.uniforms.uTime.value = time - delay * (0.18 + this.temporal.trail * 0.72);
+      material.uniforms.uOpacity.value = response.afterimageOpacity * Math.pow(1 - delay, 1.5) * (0.34 + this.temporal.trail * 0.82);
+      material.uniforms.uWarp.value = response.flowCurl * (0.6 + delay * 1.2);
+    }
   }
 
   private updateSignalBloom(
@@ -576,6 +656,18 @@ export class VisualEngine {
     const accent = new THREE.Color(theme.accent);
     this.bloomMaterial.uniforms.uColorA.value = color;
     this.bloomMaterial.uniforms.uColorB.value = accent;
+    this.flowMaterial.uniforms.uColorA.value = color;
+    this.flowMaterial.uniforms.uColorB.value = accent;
+    this.beamMaterial.uniforms.uColorA.value = color;
+    this.beamMaterial.uniforms.uColorB.value = accent;
+    for (const beam of this.volumetricBeams) {
+      beam.material.uniforms.uColorA.value = color;
+      beam.material.uniforms.uColorB.value = accent;
+    }
+    for (const material of this.afterimageMaterials) {
+      material.uniforms.uColorA.value = color;
+      material.uniforms.uColorB.value = accent;
+    }
     this.atmosphereMaterial.color = color;
     this.waveformGlow.material.color = accent;
     this.waveformReflection.material.color = color;
@@ -710,6 +802,224 @@ export class VisualEngine {
           float alpha = smoothstep(0.5, 0.06, distanceToCenter);
           vec3 color = mix(uColorA, uColorB, vSeed + uEnergy * 0.2);
           gl_FragColor = vec4(color, alpha * (0.38 + uEnergy * 0.62));
+        }
+      `,
+    });
+  }
+
+  private createKineticField(): void {
+    const positions = new Float32Array(FLOW_PARTICLE_COUNT * 3);
+    const seeds = new Float32Array(FLOW_PARTICLE_COUNT);
+    const lanes = new Float32Array(FLOW_PARTICLE_COUNT);
+    let randomState = 0x44ddee;
+    const random = () => {
+      randomState = Math.imul(randomState ^ (randomState >>> 15), 1 | randomState);
+      randomState ^= randomState + Math.imul(randomState ^ (randomState >>> 7), 61 | randomState);
+      return ((randomState ^ (randomState >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let index = 0; index < FLOW_PARTICLE_COUNT; index += 1) {
+      const lane = Math.floor(random() * 9);
+      const radius = 1.1 + random() * 7.8;
+      const angle = random() * Math.PI * 2;
+      positions[index * 3] = Math.cos(angle) * radius;
+      positions[index * 3 + 1] = (random() - 0.5) * 7.8 + Math.sin(lane * 1.73) * 0.32;
+      positions[index * 3 + 2] = -3 - random() * 13;
+      seeds[index] = random();
+      lanes[index] = lane / 8;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    geometry.setAttribute("aLane", new THREE.BufferAttribute(lanes, 1));
+    const points = new THREE.Points(geometry, this.flowMaterial);
+    points.renderOrder = 16;
+    this.flowPoints = points;
+    this.kineticFieldGroup.add(points);
+  }
+
+  private createFlowMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uBass: { value: 0 },
+        uMid: { value: 0 },
+        uHigh: { value: 0 },
+        uIntensity: { value: 0.7 },
+        uFlow: { value: 0.2 },
+        uPointSize: { value: 1.3 },
+        uColorA: { value: new THREE.Color(0xff3f91) },
+        uColorB: { value: new THREE.Color(0x58ffe0) },
+      },
+      vertexShader: `
+        attribute float aSeed;
+        attribute float aLane;
+        uniform float uTime;
+        uniform float uBass;
+        uniform float uMid;
+        uniform float uHigh;
+        uniform float uIntensity;
+        uniform float uFlow;
+        uniform float uPointSize;
+        varying float vSeed;
+        varying float vEnergy;
+        void main() {
+          vSeed = aSeed;
+          vEnergy = clamp(uBass * 0.45 + uMid * 0.35 + uHigh * 0.5, 0.0, 1.0);
+          vec3 p = position;
+          float lane = aLane * 6.2831853;
+          float stream = fract(aSeed + uTime * (0.025 + uFlow * 0.05));
+          p.z = mix(5.8, -18.0, stream);
+          float curlA = sin(p.z * 0.42 + lane + uTime * (0.65 + uFlow));
+          float curlB = cos(p.z * 0.31 + aSeed * 17.0 - uTime * (0.4 + uFlow * 0.7));
+          float radius = length(p.xy) * (0.82 + uBass * 0.22) + curlB * uFlow * 0.8;
+          float angle = atan(p.y, p.x) + curlA * uFlow * 0.3 + uTime * (0.035 + aLane * 0.05);
+          p.x = cos(angle) * radius + curlB * 0.28 * uIntensity;
+          p.y = sin(angle) * radius * (0.62 + uMid * 0.28) + curlA * 0.5 * uIntensity;
+          p.xy *= 0.8 + uIntensity * 0.32;
+          vec4 view = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * view;
+          gl_PointSize = (uPointSize + aSeed * 1.8 + vEnergy * 2.2) * (150.0 / max(1.0, -view.z));
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        uniform float uHigh;
+        varying float vSeed;
+        varying float vEnergy;
+        void main() {
+          vec2 p = gl_PointCoord - 0.5;
+          float d = length(p);
+          float core = smoothstep(0.48, 0.03, d);
+          float filament = smoothstep(0.5, 0.16, abs(p.x * p.y) * 8.0 + d * 0.55);
+          vec3 color = mix(uColorA, uColorB, fract(vSeed * 1.7 + vEnergy + uHigh * 0.35));
+          gl_FragColor = vec4(color, core * filament * (0.22 + vEnergy * 0.66));
+        }
+      `,
+    });
+  }
+
+  private createVolumetricBeams(): void {
+    const geometry = new THREE.PlaneGeometry(1, 8, 1, 16);
+    for (let index = 0; index < VOLUMETRIC_BEAM_COUNT; index += 1) {
+      const material = this.beamMaterial.clone();
+      const progress = index / VOLUMETRIC_BEAM_COUNT;
+      material.uniforms.uPhase.value = progress;
+      const beam = new THREE.Mesh(geometry, material);
+      const angle = progress * Math.PI * 2;
+      beam.position.set(Math.cos(angle) * 2.4, 0.2 + Math.sin(angle * 2.0) * 0.4, -7.8 - progress * 4.5);
+      beam.rotation.z = angle;
+      beam.rotation.x = Math.PI * 0.5;
+      beam.renderOrder = -10;
+      this.volumetricBeams.push(beam);
+      this.volumetricGroup.add(beam);
+    }
+  }
+
+  private createBeamMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uIntensity: { value: 0.2 },
+        uBass: { value: 0 },
+        uPhase: { value: 0 },
+        uColorA: { value: new THREE.Color(0xff3f91) },
+        uColorB: { value: new THREE.Color(0x58ffe0) },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uPhase;
+        uniform float uBass;
+        void main() {
+          vUv = uv;
+          vec3 p = position;
+          float taper = 1.0 - abs(uv.y - 0.5) * 1.6;
+          p.x *= 0.2 + max(0.0, taper) * (1.8 + uBass * 2.2);
+          p.z += sin(uv.y * 9.0 + uTime * 0.45 + uPhase * 6.2831853) * 0.2;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uIntensity;
+        uniform float uPhase;
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(41.17, 289.13))) * 43758.5453);
+        }
+        void main() {
+          vec2 p = vUv - 0.5;
+          float shaft = smoothstep(0.5, 0.02, abs(p.x)) * smoothstep(0.52, 0.0, abs(p.y));
+          float scan = sin(vUv.y * 26.0 - uTime * 1.7 + uPhase * 6.2831853) * 0.5 + 0.5;
+          float grain = hash(floor(vUv * 160.0) + floor(uTime * 0.35));
+          vec3 color = mix(uColorA, uColorB, vUv.y + scan * 0.18);
+          gl_FragColor = vec4(color, shaft * (0.08 + scan * 0.14 + grain * 0.04) * uIntensity);
+        }
+      `,
+    });
+  }
+
+  private createAfterimagePanels(): void {
+    const geometry = new THREE.PlaneGeometry(15.4, 8.8, 1, 1);
+    for (let index = 0; index < AFTERIMAGE_PANEL_COUNT; index += 1) {
+      const material = this.createAfterimageMaterial();
+      const depth = -2.2 - index * 0.58;
+      const panel = new THREE.Mesh(geometry, material);
+      panel.position.set(0, 0.22, depth);
+      panel.renderOrder = -6 + index;
+      this.afterimageMaterials.push(material);
+      this.afterimageGroup.add(panel);
+    }
+  }
+
+  private createAfterimageMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uOpacity: { value: 0.08 },
+        uWarp: { value: 0.2 },
+        uColorA: { value: new THREE.Color(0xff3f91) },
+        uColorB: { value: new THREE.Color(0x58ffe0) },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uWarp;
+        void main() {
+          vUv = uv;
+          vec3 p = position;
+          p.x += sin(uv.y * 8.0 + uTime * 0.72) * 0.1 * uWarp;
+          p.y += cos(uv.x * 7.0 - uTime * 0.5) * 0.08 * uWarp;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uOpacity;
+        uniform float uWarp;
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        void main() {
+          vec2 p = vUv - 0.5;
+          float rings = abs(sin((length(p * vec2(1.25, 0.78)) * 18.0) - uTime * (1.8 + uWarp)));
+          float grid = smoothstep(0.98, 1.0, sin(vUv.x * 58.0 + uTime) * sin(vUv.y * 34.0 - uTime * 0.7));
+          float vignette = smoothstep(0.72, 0.08, length(p));
+          vec3 color = mix(uColorA, uColorB, vUv.x + rings * 0.22);
+          gl_FragColor = vec4(color, vignette * (0.035 + rings * 0.055 + grid * 0.16) * uOpacity);
         }
       `,
     });

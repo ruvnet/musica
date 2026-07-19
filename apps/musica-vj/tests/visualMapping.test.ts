@@ -28,8 +28,8 @@ describe("measured section scene mapping", () => {
   });
 
   it("maps bass, beats, and high-frequency energy to distinct visual controls", () => {
-    const quiet = mapVisualAudioResponse(0, 0, 0, 1);
-    const active = mapVisualAudioResponse(1, 1, 1, 1);
+    const quiet = mapVisualAudioResponse(0, 0, 0, 0, 1);
+    const active = mapVisualAudioResponse(1, 1, 1, 1, 1);
     expect(active.cameraDisplacement).toBeGreaterThan(quiet.cameraDisplacement);
     expect(active.radialPulse).toBeGreaterThan(quiet.radialPulse);
     expect(active.particleCount).toBeGreaterThan(quiet.particleCount);
@@ -37,16 +37,22 @@ describe("measured section scene mapping", () => {
     expect(active.spectralHeight).toBeGreaterThan(quiet.spectralHeight);
     expect(active.waveformAmplitude).toBeGreaterThan(quiet.waveformAmplitude);
     expect(active.hazeOpacity).toBeGreaterThan(quiet.hazeOpacity);
+    expect(active.flowCurl).toBeGreaterThan(quiet.flowCurl);
+    expect(active.beamIntensity).toBeGreaterThan(quiet.beamIntensity);
+    expect(active.afterimageOpacity).toBeGreaterThan(quiet.afterimageOpacity);
   });
 
   it("bounds the Signal Bloom design response for hostile analyser values", () => {
-    const response = mapVisualAudioResponse(Number.POSITIVE_INFINITY, -4, 9, 5);
+    const response = mapVisualAudioResponse(Number.POSITIVE_INFINITY, -4, -4, 9, 5);
     expect(response.cameraDisplacement).toBe(1.15);
     expect(response.radialPulse).toBe(1.6);
     expect(response.particleCount).toBe(1_750);
     expect(response.spectralHeight).toBe(1.2);
     expect(response.waveformAmplitude).toBe(1);
     expect(response.hazeOpacity).toBe(0.1);
+    expect(response.flowCurl).toBe(0.6);
+    expect(response.beamIntensity).toBe(1.06);
+    expect(response.afterimageOpacity).toBe(0.52);
   });
 
   it("keeps live artist macros inside performance-safe ranges", () => {
