@@ -107,7 +107,6 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
-const DEFAULT_REALTIME_GUIDE_LEVEL = 0.34;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
@@ -219,7 +218,6 @@ export class AudioEngine {
   private playing = false;
   private droppedLateSteps = 0;
   private realtimeStreamPrimary = false;
-  private realtimeGuideLevel = DEFAULT_REALTIME_GUIDE_LEVEL;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -388,43 +386,10 @@ export class AudioEngine {
       this.droppedLateSteps += lateSteps;
     }
     while (this.nextStepTime < context.currentTime + LOOK_AHEAD_SECONDS) {
-      this.scheduleStep(
-        this.currentStep,
-        this.transportStepCounter,
-        performanceStepTime(this.currentStep, this.transportStepCounter, this.nextStepTime, stepSeconds),
-      );
       this.nextStepTime += stepSeconds;
       this.currentStep = (this.currentStep + 1) % STEPS_PER_BAR;
       this.transportStepCounter += 1;
       this.emit();
-    }
-  }
-
-  private scheduleStep(step: number, absoluteStep: number, time: number): void {
-    for (const track of this.tracks.values()) {
-      if (track.loadedBuffer || !track.definition.pattern[step]) continue;
-      const noteIndex = Math.floor(absoluteStep / 2) % track.definition.notes.length;
-      const note = track.definition.notes[noteIndex];
-      switch (track.definition.instrument) {
-        case "drums":
-          this.triggerDrum(track, note, absoluteStep, time);
-          break;
-        case "bass":
-          this.triggerBass(track, note, time);
-          break;
-        case "poly":
-          this.triggerChord(track, note, time);
-          break;
-        case "lead":
-          this.triggerLead(track, note, time);
-          break;
-        case "voice":
-          this.triggerVoice(track, note, time);
-          break;
-        case "texture":
-          this.triggerTexture(track, note, time);
-          break;
-      }
     }
   }
 
@@ -846,13 +811,6 @@ export class AudioEngine {
     this.applyMix();
   }
 
-  setRealtimeGuideLevel(value: number): void {
-    const nextLevel = clamp(value, 0, 1);
-    if (Math.abs(this.realtimeGuideLevel - nextLevel) < 0.001) return;
-    this.realtimeGuideLevel = nextLevel;
-    this.applyMix();
-  }
-
   setRealtimeDeckControl(deck: RealtimeDeckId, update: Partial<RealtimeDeckControl>): void {
     const current = this.realtimeDeckControls[deck];
     const next = {
@@ -894,9 +852,9 @@ export class AudioEngine {
     }
     const anySolo = [...this.tracks.values()].some((track) => track.mix.solo);
     const now = this.context?.currentTime ?? 0;
-    const realtimeDuck = this.realtimeStreamPrimary ? this.realtimeGuideLevel : 1;
+    const realtimeDuck = this.realtimeStreamPrimary ? 0 : 1;
     for (const track of this.tracks.values()) {
-      const gain = effectiveTrackGain(track.mix, anySolo) * realtimeDuck;
+      const gain = track.loadedBuffer ? effectiveTrackGain(track.mix, anySolo) * realtimeDuck : 0;
       if (immediate) track.gain.gain.value = gain;
       else track.gain.gain.setTargetAtTime(gain, now, 0.012);
     }

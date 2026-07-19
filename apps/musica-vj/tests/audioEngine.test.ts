@@ -149,7 +149,7 @@ describe("audio engine state application", () => {
     expect(snapshot.tracks.find((track) => track.id === "lead")?.notes).toEqual(template.tracks.lead.notes.slice(0, 64));
   });
 
-  it("applies pan and solo state chosen before AudioContext initialization", async () => {
+  it("preserves control state while keeping local synth tracks silent", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();
     engine.setTrackPan("bass", 0.65);
@@ -161,7 +161,7 @@ describe("audio engine state application", () => {
       tracks: Map<string, { gain: FakeGainNode; pan: FakeStereoPannerNode }>;
     }).tracks;
     expect(runtimes.get("bass")?.pan.pan.value).toBe(0.65);
-    expect(runtimes.get("bass")?.gain.gain.value).toBeCloseTo((defaultPerformanceTemplate().tracks.bass.volume ?? 1) ** 2, 8);
+    expect(runtimes.get("bass")?.gain.gain.value).toBe(0);
     expect(runtimes.get("drums")?.gain.gain.value).toBe(0);
   });
 

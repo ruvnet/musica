@@ -10,14 +10,14 @@
 
 Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
 
-The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with three synchronized Lyria RealTime streams, six-track Web Audio synthesis, imported audio and MIDI clips, a curated MIDI-style startup song bank, AI-directed performance templates, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
+The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with synchronized Lyria RealTime arrangement and beat streams, a guarded vocalization lane, editable rhythm guidance, AI-directed performance templates, one-click Demo automation, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
 
 ## Current Direction
 
 | Layer | What Musica does now |
 |---|---|
 | **Agentic direction** | Meta-LLM can plan and apply a complete set state: prompt, template, BPM, scene, intensity, visual macros, temporal controls, and arrangement notes. Browser preview falls back to a deterministic local director. |
-| **Music performance** | Three named Lyria RealTime decks for main arrangement, sequencer guidance, and wordless vocalization, with per-stream volume, mute, pitch, and beat alignment; plus six local tracks, 16-step sequencing, Web Audio synthesis/effects, loop and MIDI import, performance templates, and generated-song analysis. |
+| **Music performance** | Lyria RealTime is the live output: a style-directed main arrangement and repeating beat deck are prebuffered and released on one Web Audio clock, with per-stream volume, mute, pitch, and beat alignment. The vocalization lane is muted by default because Lyria does not guarantee an isolated vocal stem. |
 | **Visual performance** | Eight visual-bank scenes, five VJ presets, audio-reactive Three.js systems, adaptive quality, scene color themes, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
 | **Live control** | Keyboard, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, macros, and temporal controls. |
 | **AI providers** | Rust-only governed boundaries for Gemini/Lyria music generation and Cognitum Meta-LLM planning; tokens stay out of React bundles and are checked by CI secret canaries. |
@@ -184,7 +184,7 @@ cargo test
 
 ## Musica VJ Studio
 
-[`apps/musica-vj`](apps/musica-vj) is a Mac-first Tauri 2 performance instrument built on Musica. It combines a six-track synthesizer and loop mixer, a 16-step sequencer, three audio-reactive Three.js scenes, official Logitech MX Creative Console controls, prompt-driven performance mutation, optional governed creative-music providers, and capability-probed vertical social capture that prefers H.264 and AAC.
+[`apps/musica-vj`](apps/musica-vj) is a Mac-first Tauri 2 performance instrument built on Musica. It combines synchronized Lyria RealTime decks, an editable beat-guidance grid, one-click Demo automation, audio-reactive Three.js scenes, official Logitech MX Creative Console controls, prompt-driven performance mutation, governed creative-music providers, and capability-probed vertical social capture that prefers H.264 and AAC.
 
 ```bash
 cd apps/musica-vj

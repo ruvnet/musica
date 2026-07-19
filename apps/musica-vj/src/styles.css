@@ -277,12 +277,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .realtime-grid input[type="number"] { width: 100%; min-width: 0; height: 22px; border: 1px solid var(--line); border-radius: 5px; color: #e5e5e8; background: rgba(2,3,6,.4); font: 600 8px "DM Mono"; }
 .realtime-toggles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .realtime-toggles label { display: flex; align-items: center; gap: 4px; min-width: 0; color: #737681; font: 600 6px "DM Mono"; white-space: nowrap; }
-.piano-keyboard { height: 54px; display: grid; grid-template-columns: repeat(25, minmax(0, 1fr)); gap: 2px; }
-.piano-keyboard button { position: relative; min-width: 0; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 0 0 4px 4px; color: #22242a; background: #dedfe5; cursor: pointer; }
-.piano-keyboard button.sharp { height: 35px; color: #d4d7e4; background: #161920; border-color: rgba(112,169,255,.2); z-index: 1; }
-.piano-keyboard button:active { background: var(--mint); }
-.piano-keyboard span { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); font: 700 6px "DM Mono"; }
-.realtime-actions { display: grid; grid-template-columns: 1fr 1fr 48px; gap: 5px; }
+.realtime-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .realtime-actions button { height: 26px; border: 1px solid rgba(112,169,255,.24); border-radius: 5px; color: #cbd7ff; background: rgba(112,169,255,.055); font: 700 7px "DM Mono"; cursor: pointer; }
 .realtime-actions button.active { color: var(--mint); border-color: rgba(117,244,197,.34); background: rgba(117,244,197,.09); }
 .realtime-actions button:disabled { opacity: .55; cursor: wait; }
@@ -400,6 +395,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .sequence-heading label b { color: #a2a6b0; font: 600 6px "DM Mono"; letter-spacing: 0; text-align: right; }
 .sequence-heading > button { width: 22px; height: 18px; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 4px; color: #888b94; background: transparent; font: 700 7px "DM Mono"; cursor: pointer; }
 .sequence-heading > button.active { color: #ff8caf; border-color: rgba(255,79,134,.3); background: rgba(255,79,134,.08); }
+.beat-midi-import { display: inline-flex; align-items: center; width: max-content; height: 20px; margin-top: 5px; padding: 0 8px; border: 1px solid rgba(53,220,255,.18); border-radius: 4px; color: #77a9b5; background: rgba(53,220,255,.035); font: 700 6px "DM Mono"; cursor: pointer; }
+.beat-midi-import:hover { border-color: rgba(53,220,255,.38); color: var(--mint); }
+.beat-midi-import input { display: none; }
 .step-grid { display: grid; gap: 4px; margin-top: 4px; user-select: none; touch-action: none; }
 .step-row { display: grid; grid-template-columns: 31px repeat(16, minmax(8px, 1fr)); gap: 3px; opacity: .62; }
 .step-row.selected { opacity: 1; }
