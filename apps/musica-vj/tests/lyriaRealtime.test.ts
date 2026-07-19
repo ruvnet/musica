@@ -4,6 +4,7 @@ import {
   DEFAULT_LYRIA_REALTIME_PROMPTS,
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
   LYRIA_REALTIME_STYLE_PRESETS,
+  compensateLyriaBpmForPitch,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   lyriaRealtimeStyleForTemplate,
@@ -30,6 +31,12 @@ function validConfig(config: LyriaRealtimeConfig): boolean {
 }
 
 describe("Lyria RealTime defaults", () => {
+  it("compensates source BPM so post-stream pitch changes remain beat locked", () => {
+    expect(compensateLyriaBpmForPitch(120, 0)).toBe(120);
+    expect(compensateLyriaBpmForPitch(120, 12)).toBe(60);
+    expect(compensateLyriaBpmForPitch(120, -12)).toBe(200);
+  });
+
   it("ships a valid realtime music config envelope", () => {
     expect(validConfig(DEFAULT_LYRIA_REALTIME_CONFIG)).toBe(true);
     expect(DEFAULT_LYRIA_REALTIME_CONFIG.scale).toBe("E_FLAT_MAJOR_C_MINOR");

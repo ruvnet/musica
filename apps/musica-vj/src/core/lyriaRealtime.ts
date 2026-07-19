@@ -17,6 +17,7 @@ export type LyriaRealtimeScale =
   | "SCALE_UNSPECIFIED";
 
 export type LyriaRealtimeMode = "QUALITY" | "DIVERSITY" | "VOCALIZATION";
+export type LyriaRealtimeDeckId = "main" | "sequence" | "vocal";
 
 export interface LyriaWeightedPrompt {
   text: string;
@@ -52,6 +53,7 @@ export interface LyriaRealtimeStylePreset {
 }
 
 export interface LyriaRealtimeStatus {
+  deck: LyriaRealtimeDeckId;
   available: boolean;
   provider: "lyria_realtime" | string;
   model: string;
@@ -67,6 +69,7 @@ export interface LyriaRealtimeStatus {
 }
 
 export interface LyriaRealtimeSession {
+  deck: LyriaRealtimeDeckId;
   id: string;
   provider: string;
   model: string;
@@ -79,6 +82,7 @@ export interface LyriaRealtimeSession {
 }
 
 export interface LyriaRealtimeAudioPoll {
+  deck: LyriaRealtimeDeckId;
   sessionId?: string;
   sampleRateHz: number;
   channels: number;
@@ -109,6 +113,10 @@ export const DEFAULT_LYRIA_REALTIME_PROMPTS: LyriaWeightedPrompt[] = [
 ];
 
 export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
+
+export function compensateLyriaBpmForPitch(masterBpm: number, semitones: number): number {
+  return Math.max(60, Math.min(200, Math.round(masterBpm / (2 ** (semitones / 12)))));
+}
 
 export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
   {
@@ -237,9 +245,10 @@ const TEMPLATE_STYLE_MAP: Record<string, string> = {
   "hyperpop-rush": "rock",
 };
 
-export async function getLyriaRealtimeStatus(): Promise<LyriaRealtimeStatus> {
+export async function getLyriaRealtimeStatus(deck: LyriaRealtimeDeckId = "main"): Promise<LyriaRealtimeStatus> {
   if (!isTauri()) {
     return {
+      deck,
       available: false,
       provider: "browser_preview",
       model: "models/lyria-realtime-exp",
@@ -252,7 +261,7 @@ export async function getLyriaRealtimeStatus(): Promise<LyriaRealtimeStatus> {
       streamedAudioBytes: 0,
     };
   }
-  return invoke<LyriaRealtimeStatus>("lyria_realtime_status");
+  return invoke<LyriaRealtimeStatus>("lyria_realtime_status", { deck });
 }
 
 export function lyriaRealtimeStyleById(id: string): LyriaRealtimeStylePreset {
@@ -294,24 +303,31 @@ export function createLyriaRealtimeRequestForTemplate(template: PerformanceTempl
   };
 }
 
-export async function startLyriaRealtime(request: LyriaRealtimeRequest): Promise<LyriaRealtimeSession> {
+export async function startLyriaRealtime(
+  request: LyriaRealtimeRequest,
+  deck: LyriaRealtimeDeckId = "main",
+): Promise<LyriaRealtimeSession> {
   if (!isTauri()) throw new Error("Lyria RealTime requires the desktop app");
-  return invoke<LyriaRealtimeSession>("lyria_realtime_start", { request });
+  return invoke<LyriaRealtimeSession>("lyria_realtime_start", { deck, request });
 }
 
-export async function updateLyriaRealtime(request: LyriaRealtimeRequest): Promise<LyriaRealtimeSession> {
+export async function updateLyriaRealtime(
+  request: LyriaRealtimeRequest,
+  deck: LyriaRealtimeDeckId = "main",
+): Promise<LyriaRealtimeSession> {
   if (!isTauri()) throw new Error("Lyria RealTime requires the desktop app");
-  return invoke<LyriaRealtimeSession>("lyria_realtime_update", { request });
+  return invoke<LyriaRealtimeSession>("lyria_realtime_update", { deck, request });
 }
 
-export async function stopLyriaRealtime(): Promise<void> {
+export async function stopLyriaRealtime(deck: LyriaRealtimeDeckId = "main"): Promise<void> {
   if (!isTauri()) return;
-  await invoke<void>("lyria_realtime_stop");
+  await invoke<void>("lyria_realtime_stop", { deck });
 }
 
-export async function pollLyriaRealtimeAudio(): Promise<LyriaRealtimeAudioPoll> {
+export async function pollLyriaRealtimeAudio(deck: LyriaRealtimeDeckId = "main"): Promise<LyriaRealtimeAudioPoll> {
   if (!isTauri()) {
     return {
+      deck,
       sampleRateHz: 48_000,
       channels: 2,
       audioFormat: "pcm16",
@@ -320,5 +336,5 @@ export async function pollLyriaRealtimeAudio(): Promise<LyriaRealtimeAudioPoll> 
       streamedAudioBytes: 0,
     };
   }
-  return invoke<LyriaRealtimeAudioPoll>("lyria_realtime_poll_audio");
+  return invoke<LyriaRealtimeAudioPoll>("lyria_realtime_poll_audio", { deck });
 }

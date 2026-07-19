@@ -182,6 +182,19 @@ describe("audio engine state application", () => {
     expect(lead?.pattern[2]).toBe(false);
   });
 
+  it("keeps independent bounded controls for each realtime deck", () => {
+    const engine = new AudioEngine();
+    engine.setRealtimeDeckControl("sequence", { volume: 0.63, pitchSemitones: 4, beatNudgeMs: -85 });
+    engine.setRealtimeDeckControl("vocal", { volume: 2, pitchSemitones: 20, beatNudgeMs: 900, muted: true });
+
+    const controls = (engine as unknown as {
+      realtimeDeckControls: Record<string, { volume: number; pitchSemitones: number; beatNudgeMs: number; muted: boolean }>;
+    }).realtimeDeckControls;
+    expect(controls.sequence).toMatchObject({ volume: 0.63, pitchSemitones: 4, beatNudgeMs: -85, muted: false });
+    expect(controls.vocal).toMatchObject({ volume: 1, pitchSemitones: 12, beatNudgeMs: 500, muted: true });
+    expect(controls.main).toMatchObject({ volume: 0.72, pitchSemitones: 0, beatNudgeMs: 0, muted: false });
+  });
+
   it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();

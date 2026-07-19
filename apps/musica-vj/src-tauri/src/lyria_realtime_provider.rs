@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     env,
     sync::{Arc, Mutex},
 };
@@ -26,6 +26,7 @@ const MAX_POLL_BYTES: usize = 48_000 * 2 * 2;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LyriaRealtimeStatus {
+    deck: LyriaRealtimeDeck,
     available: bool,
     provider: String,
     model: String,
@@ -38,6 +39,24 @@ pub(crate) struct LyriaRealtimeStatus {
     buffered_audio_bytes: usize,
     streamed_audio_bytes: usize,
     warning: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LyriaRealtimeDeck {
+    Main,
+    Sequence,
+    Vocal,
+}
+
+impl LyriaRealtimeDeck {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Sequence => "sequence",
+            Self::Vocal => "vocal",
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -100,6 +119,7 @@ pub(crate) struct LyriaRealtimeStartRequest {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LyriaRealtimeSession {
+    deck: LyriaRealtimeDeck,
     id: String,
     provider: String,
     model: String,
@@ -114,6 +134,7 @@ pub(crate) struct LyriaRealtimeSession {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LyriaRealtimeAudioPoll {
+    deck: LyriaRealtimeDeck,
     session_id: Option<String>,
     sample_rate_hz: u32,
     channels: u8,
@@ -149,7 +170,7 @@ enum RealtimeCommand {
 pub(crate) struct LyriaRealtimeProvider {
     enabled: bool,
     api_key: Option<String>,
-    active: Mutex<Option<ActiveSession>>,
+    active: Mutex<HashMap<LyriaRealtimeDeck, ActiveSession>>,
 }
 
 impl LyriaRealtimeProvider {
@@ -161,18 +182,18 @@ impl LyriaRealtimeProvider {
             api_key: env::var(API_KEY_ENV)
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
-            active: Mutex::new(None),
+            active: Mutex::new(HashMap::new()),
         }
     }
 
-    fn status(&self) -> LyriaRealtimeStatus {
+    fn status(&self, deck: LyriaRealtimeDeck) -> LyriaRealtimeStatus {
         let active = self.active.lock().ok();
         let active_session_id = active
             .as_ref()
-            .and_then(|guard| guard.as_ref().map(|active| active.session.id.clone()));
+            .and_then(|guard| guard.get(&deck).map(|active| active.session.id.clone()));
         let (buffered_audio_bytes, streamed_audio_bytes, warning) = active
             .as_ref()
-            .and_then(|guard| guard.as_ref())
+            .and_then(|guard| guard.get(&deck))
             .map(|active| active.shared.snapshot())
             .unwrap_or_default();
         let reason = if !self.enabled {
@@ -183,6 +204,7 @@ impl LyriaRealtimeProvider {
             None
         };
         LyriaRealtimeStatus {
+            deck,
             available: self.enabled && self.api_key.is_some(),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
@@ -198,7 +220,11 @@ impl LyriaRealtimeProvider {
         }
     }
 
-    fn start(&self, request: LyriaRealtimeStartRequest) -> Result<LyriaRealtimeSession, String> {
+    fn start(
+        &self,
+        deck: LyriaRealtimeDeck,
+        request: LyriaRealtimeStartRequest,
+    ) -> Result<LyriaRealtimeSession, String> {
         if !self.enabled {
             return Err(format!("{ENABLE_ENV}=true is required"));
         }
@@ -207,9 +233,10 @@ impl LyriaRealtimeProvider {
             .clone()
             .ok_or_else(|| format!("{API_KEY_ENV} is required"))?;
         validate_request(&request)?;
-        self.stop()?;
+        self.stop(deck)?;
         let session = LyriaRealtimeSession {
-            id: format!("lrt-{}", monotonic_millis()),
+            deck,
+            id: format!("lrt-{}-{}", deck.label(), monotonic_millis()),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
             state: "streaming".into(),
@@ -221,27 +248,40 @@ impl LyriaRealtimeProvider {
         };
         let shared = Arc::new(RealtimeShared::default());
         let (commands, receiver) = mpsc::unbounded_channel();
-        tokio::spawn(run_stream(api_key, request, receiver, Arc::clone(&shared)));
-        *self
-            .active
+        tokio::spawn(run_stream(
+            deck,
+            api_key,
+            request,
+            receiver,
+            Arc::clone(&shared),
+        ));
+        self.active
             .lock()
-            .map_err(|_| "Lyria RealTime session lock failed")? = Some(ActiveSession {
-            session: session.clone(),
-            commands,
-            shared,
-        });
+            .map_err(|_| "Lyria RealTime session lock failed")?
+            .insert(
+                deck,
+                ActiveSession {
+                    session: session.clone(),
+                    commands,
+                    shared,
+                },
+            );
         Ok(session)
     }
 
-    fn update(&self, request: LyriaRealtimeStartRequest) -> Result<LyriaRealtimeSession, String> {
+    fn update(
+        &self,
+        deck: LyriaRealtimeDeck,
+        request: LyriaRealtimeStartRequest,
+    ) -> Result<LyriaRealtimeSession, String> {
         validate_request(&request)?;
         let mut active = self
             .active
             .lock()
             .map_err(|_| "Lyria RealTime session lock failed")?;
         let active = active
-            .as_mut()
-            .ok_or("Lyria RealTime session is not active")?;
+            .get_mut(&deck)
+            .ok_or("Lyria RealTime deck is not active")?;
         active
             .commands
             .send(RealtimeCommand::Update(request.clone()))
@@ -251,12 +291,12 @@ impl LyriaRealtimeProvider {
         Ok(active.session.clone())
     }
 
-    fn stop(&self) -> Result<(), String> {
+    fn stop(&self, deck: LyriaRealtimeDeck) -> Result<(), String> {
         if let Some(active) = self
             .active
             .lock()
             .map_err(|_| "Lyria RealTime session lock failed")?
-            .take()
+            .remove(&deck)
         {
             let _ = active.commands.send(RealtimeCommand::Playback("STOP"));
             let _ = active.commands.send(RealtimeCommand::Close);
@@ -264,12 +304,13 @@ impl LyriaRealtimeProvider {
         Ok(())
     }
 
-    fn poll_audio(&self) -> LyriaRealtimeAudioPoll {
+    fn poll_audio(&self, deck: LyriaRealtimeDeck) -> LyriaRealtimeAudioPoll {
         let active = self.active.lock().ok();
-        if let Some(active) = active.as_ref().and_then(|guard| guard.as_ref()) {
+        if let Some(active) = active.as_ref().and_then(|guard| guard.get(&deck)) {
             let chunks = active.shared.drain_audio(MAX_POLL_BYTES);
             let (buffered_audio_bytes, streamed_audio_bytes, warning) = active.shared.snapshot();
             return LyriaRealtimeAudioPoll {
+                deck,
                 session_id: Some(active.session.id.clone()),
                 sample_rate_hz: SAMPLE_RATE_HZ,
                 channels: CHANNELS,
@@ -281,6 +322,7 @@ impl LyriaRealtimeProvider {
             };
         }
         LyriaRealtimeAudioPoll {
+            deck,
             session_id: None,
             sample_rate_hz: SAMPLE_RATE_HZ,
             channels: CHANNELS,
@@ -371,13 +413,14 @@ impl RealtimeShared {
 }
 
 async fn run_stream(
+    deck: LyriaRealtimeDeck,
     api_key: String,
     initial: LyriaRealtimeStartRequest,
     mut commands: mpsc::UnboundedReceiver<RealtimeCommand>,
     shared: Arc<RealtimeShared>,
 ) {
     if let Err(error) = run_stream_inner(api_key, initial, &mut commands, &shared).await {
-        eprintln!("Lyria RealTime stream stopped: {error}");
+        eprintln!("Lyria RealTime {} deck stopped: {error}", deck.label());
         shared.set_warning(error);
     }
 }
@@ -587,38 +630,43 @@ fn monotonic_millis() -> u128 {
 #[tauri::command]
 pub(crate) fn lyria_realtime_status(
     state: tauri::State<'_, LyriaRealtimeProvider>,
+    deck: LyriaRealtimeDeck,
 ) -> LyriaRealtimeStatus {
-    state.status()
+    state.status(deck)
 }
 
 #[tauri::command]
 pub(crate) async fn lyria_realtime_start(
     state: tauri::State<'_, LyriaRealtimeProvider>,
+    deck: LyriaRealtimeDeck,
     request: LyriaRealtimeStartRequest,
 ) -> Result<LyriaRealtimeSession, String> {
-    state.start(request)
+    state.start(deck, request)
 }
 
 #[tauri::command]
 pub(crate) async fn lyria_realtime_update(
     state: tauri::State<'_, LyriaRealtimeProvider>,
+    deck: LyriaRealtimeDeck,
     request: LyriaRealtimeStartRequest,
 ) -> Result<LyriaRealtimeSession, String> {
-    state.update(request)
+    state.update(deck, request)
 }
 
 #[tauri::command]
 pub(crate) async fn lyria_realtime_stop(
     state: tauri::State<'_, LyriaRealtimeProvider>,
+    deck: LyriaRealtimeDeck,
 ) -> Result<(), String> {
-    state.stop()
+    state.stop(deck)
 }
 
 #[tauri::command]
 pub(crate) async fn lyria_realtime_poll_audio(
     state: tauri::State<'_, LyriaRealtimeProvider>,
+    deck: LyriaRealtimeDeck,
 ) -> Result<LyriaRealtimeAudioPoll, String> {
-    Ok(state.poll_audio())
+    Ok(state.poll_audio(deck))
 }
 
 #[cfg(test)]
@@ -661,6 +709,22 @@ mod tests {
         invalid.config.only_bass_and_drums = true;
         invalid.config.mute_drums = true;
         assert!(validate_request(&invalid).is_err());
+    }
+
+    #[test]
+    fn accepts_named_multistream_decks() {
+        assert_eq!(
+            serde_json::from_str::<LyriaRealtimeDeck>(r#""main""#).unwrap(),
+            LyriaRealtimeDeck::Main
+        );
+        assert_eq!(
+            serde_json::from_str::<LyriaRealtimeDeck>(r#""sequence""#).unwrap(),
+            LyriaRealtimeDeck::Sequence
+        );
+        assert_eq!(
+            serde_json::from_str::<LyriaRealtimeDeck>(r#""vocal""#).unwrap(),
+            LyriaRealtimeDeck::Vocal
+        );
     }
 
     #[test]
