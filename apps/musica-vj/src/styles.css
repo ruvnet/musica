@@ -35,6 +35,7 @@ body {
 }
 
 .app-shell {
+  position: relative;
   height: 100%;
   min-width: 1080px;
   display: grid;
@@ -42,6 +43,40 @@ body {
   background-image: linear-gradient(rgba(222,195,255,.016) 1px, transparent 1px), linear-gradient(90deg, rgba(222,195,255,.016) 1px, transparent 1px);
   background-size: 28px 28px;
 }
+
+.lyria-buffer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 1, 7, .72);
+  backdrop-filter: blur(18px);
+}
+
+.lyria-buffer-dialog {
+  width: min(420px, calc(100vw - 36px));
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  border: 1px solid rgba(53,220,255,.22);
+  border-radius: 8px;
+  background: rgba(9, 7, 15, .94);
+  box-shadow: 0 24px 80px rgba(0,0,0,.44), 0 0 42px rgba(53,220,255,.08);
+}
+.lyria-buffer-dialog > span { color: var(--mint); font: 700 8px "DM Mono"; letter-spacing: .18em; }
+.lyria-buffer-dialog h2 { margin: 0; color: #f5f7ff; font: 700 20px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+.lyria-buffer-dialog p { margin: 0; color: #a1a5b0; font: 500 10px/1.55 "DM Mono"; }
+.lyria-buffer-dialog button { justify-self: start; height: 28px; padding: 0 12px; border: 1px solid rgba(255,79,134,.28); border-radius: 6px; color: #ff8caf; background: rgba(255,79,134,.055); font: 700 7px "DM Mono"; cursor: pointer; }
+.lyria-buffer-dialog button:disabled { opacity: .55; cursor: wait; }
+.buffer-orbit { width: 44px; height: 44px; position: relative; border: 1px solid rgba(53,220,255,.22); border-radius: 50%; animation: buffer-spin 1.7s linear infinite; }
+.buffer-orbit i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 14px var(--mint); }
+.buffer-orbit i:nth-child(1) { top: -4px; left: 18px; }
+.buffer-orbit i:nth-child(2) { right: 0; bottom: 5px; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+.buffer-orbit i:nth-child(3) { left: 1px; bottom: 7px; background: var(--acid); box-shadow: 0 0 14px rgba(216,255,72,.55); }
+.buffer-meter { display: flex; justify-content: space-between; gap: 12px; padding-top: 8px; border-top: 1px solid var(--line); font: 700 8px "DM Mono"; }
+.buffer-meter b { color: var(--mint); }
+.buffer-meter em { min-width: 0; color: #686c76; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .topbar {
   display: grid;
@@ -317,6 +352,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .shortcut-hint { color: #44464d; font: 400 7px "DM Mono"; letter-spacing: .08em; }
 
 @keyframes rec-pulse { to { box-shadow: 0 0 18px rgba(255,79,134,.24); } }
+@keyframes buffer-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1220px) {
   .app-shell { min-width: 980px; }

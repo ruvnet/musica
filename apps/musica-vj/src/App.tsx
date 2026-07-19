@@ -57,8 +57,15 @@ const LYRIA_KEYBOARD_NOTES = [
   60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
 ] as const;
 const LYRIA_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
-const LYRIA_STREAM_STARTUP_TIMEOUT_MS = 2_400;
+const LYRIA_STREAM_STARTUP_TIMEOUT_MS = 15_000;
 const LYRIA_STREAM_POLL_MS = 80;
+const LYRIA_LIVE_UPDATE_DEBOUNCE_MS = 420;
+
+interface LyriaBufferingState {
+  active: boolean;
+  message: string;
+  bytes: number;
+}
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -180,6 +187,8 @@ export function App() {
   const aiToneBankLoadedRef = useRef(false);
   const aiToneAssetCacheRef = useRef(new Map<string, ArrayBuffer>());
   const stepDragRef = useRef<{ active: boolean } | undefined>(undefined);
+  const lyriaBufferCancelRef = useRef(false);
+  const liveUpdateSignatureRef = useRef("");
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -212,6 +221,7 @@ export function App() {
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
   const [lyriaStreamBytes, setLyriaStreamBytes] = useState(0);
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
+  const [lyriaBuffering, setLyriaBuffering] = useState<LyriaBufferingState>({ active: false, message: "", bytes: 0 });
   const [autoDjMode, setAutoDjMode] = useState(false);
   const [autoDjStep, setAutoDjStep] = useState(0);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ available: false, provider: "checking" });
@@ -240,7 +250,7 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
-  const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded from the built-in MIDI song bank. Press play to wake the audio engine.`);
+  const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
 
   const selectedTrackSnapshot = useMemo(
     () => snapshot.tracks.find((track) => track.id === selectedTrack) ?? snapshot.tracks[0],
@@ -309,10 +319,32 @@ export function App() {
     }
   }, [aiToneBusy, loadAiTonePreset]);
 
+  const stopTransportAndRealtime = useCallback(async (announce = false) => {
+    lyriaBufferCancelRef.current = true;
+    engineRef.current.stop();
+    engineRef.current.setRealtimeStreamPrimary(false);
+    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    if (!lyriaSession) {
+      if (announce) setNotice("Transport stopped.");
+      return;
+    }
+    setLyriaRealtimeBusy(true);
+    try {
+      await stopLyriaRealtime();
+      setLyriaSession(undefined);
+      if (announce) setNotice("Transport and Lyria RealTime stream stopped.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not stop Lyria RealTime stream");
+    } finally {
+      setLyriaRealtimeBusy(false);
+    }
+  }, [lyriaSession, lyriaStreamBytes]);
+
   const ingestRealtimeAudioPoll = useCallback(async (): Promise<number> => {
     const poll = await pollLyriaRealtimeAudio();
     if (poll.warning) setLyriaRealtimeStatus((current) => ({ ...current, warning: poll.warning }));
     setLyriaStreamBytes(poll.streamedAudioBytes);
+    setLyriaBuffering((current) => current.active ? { ...current, bytes: poll.streamedAudioBytes } : current);
     let bytesScheduled = 0;
     for (const chunk of poll.chunks) {
       bytesScheduled += chunk.length;
@@ -325,6 +357,7 @@ export function App() {
     const deadline = performance.now() + LYRIA_STREAM_STARTUP_TIMEOUT_MS;
     let receivedBytes = 0;
     while (receivedBytes === 0 && performance.now() < deadline) {
+      if (lyriaBufferCancelRef.current) return 0;
       receivedBytes += await ingestRealtimeAudioPoll();
       if (receivedBytes === 0) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, LYRIA_STREAM_POLL_MS));
@@ -334,32 +367,50 @@ export function App() {
   }, [ingestRealtimeAudioPoll]);
 
   const handleTransportToggle = useCallback(async () => {
+    if (snapshotRef.current.playing) {
+      await stopTransportAndRealtime();
+      return;
+    }
     if (!snapshotRef.current.playing) {
       await loadDefaultAiToneBank(false);
       if (lyriaRealtimeStatus.available && !lyriaSession && !lyriaRealtimeBusy) {
         setLyriaRealtimeBusy(true);
+        lyriaBufferCancelRef.current = false;
+        setLyriaBuffering({ active: true, message: "Buffering Lyria RealTime stream", bytes: lyriaStreamBytes });
         try {
           setLyriaSession(await startLyriaRealtime(realtimeRequest));
+          liveUpdateSignatureRef.current = JSON.stringify(realtimeRequest);
           engineRef.current.setRealtimeStreamPrimary(true);
-          void waitForRealtimeAudioFrames().then((receivedBytes) => {
-            if (receivedBytes === 0) setNotice("Lyria RealTime is armed, but no audio frames arrived yet.");
-          });
+          const receivedBytes = await waitForRealtimeAudioFrames();
+          if (receivedBytes === 0) {
+            setLyriaBuffering({ active: true, message: "Still waiting for Lyria audio frames", bytes: lyriaStreamBytes });
+            setNotice("Lyria RealTime is armed, but no audio frames arrived yet.");
+            return;
+          }
+          setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes + receivedBytes });
         } catch (error) {
           engineRef.current.setRealtimeStreamPrimary(false);
+          setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
           setNotice(error instanceof Error ? error.message : "Lyria RealTime start failed");
           return;
         } finally {
           setLyriaRealtimeBusy(false);
         }
       } else if (lyriaSession) {
+        lyriaBufferCancelRef.current = false;
+        setLyriaBuffering({ active: true, message: "Re-buffering Lyria RealTime stream", bytes: lyriaStreamBytes });
         engineRef.current.setRealtimeStreamPrimary(true);
-        void waitForRealtimeAudioFrames().then((receivedBytes) => {
-          if (receivedBytes === 0) setNotice("Lyria RealTime is active, but no fresh audio frames arrived yet.");
-        });
+        const receivedBytes = await waitForRealtimeAudioFrames();
+        if (receivedBytes === 0) {
+          setLyriaBuffering({ active: true, message: "Still waiting for Lyria audio frames", bytes: lyriaStreamBytes });
+          setNotice("Lyria RealTime is active, but no fresh audio frames arrived yet.");
+          return;
+        }
+        setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes + receivedBytes });
       }
     }
     await engineRef.current.toggle();
-  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, realtimeRequest, waitForRealtimeAudioFrames]);
+  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, lyriaStreamBytes, realtimeRequest, stopTransportAndRealtime, waitForRealtimeAudioFrames]);
 
   const refreshLyriaRealtimeStatus = useCallback(async () => {
     try {
@@ -380,6 +431,7 @@ export function App() {
         ? await updateLyriaRealtime(realtimeRequest)
         : await startLyriaRealtime(realtimeRequest);
       setLyriaSession(session);
+      liveUpdateSignatureRef.current = JSON.stringify(realtimeRequest);
       engineRef.current.setRealtimeStreamPrimary(true);
       await refreshLyriaRealtimeStatus();
       setNotice(`${session.model} ${lyriaSession ? "updated" : "armed"}: ${session.config.bpm} BPM · density ${Math.round(session.config.density * 100)}.`);
@@ -401,6 +453,7 @@ export function App() {
     try {
       const session = await updateLyriaRealtime(request);
       setLyriaSession(session);
+      liveUpdateSignatureRef.current = JSON.stringify(request);
       setNotice(`${label} sent to Lyria RealTime: ${session.config.bpm} BPM · density ${Math.round(session.config.density * 100)}.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Lyria RealTime update failed");
@@ -412,9 +465,11 @@ export function App() {
   const stopRealtimeSession = useCallback(async () => {
     setLyriaRealtimeBusy(true);
     try {
+      lyriaBufferCancelRef.current = true;
       await stopLyriaRealtime();
       setLyriaSession(undefined);
       engineRef.current.setRealtimeStreamPrimary(false);
+      setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
       await refreshLyriaRealtimeStatus();
       setNotice("Lyria RealTime session stopped.");
     } catch (error) {
@@ -422,7 +477,23 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [refreshLyriaRealtimeStatus]);
+  }, [lyriaStreamBytes, refreshLyriaRealtimeStatus]);
+
+  const cancelLyriaBuffering = useCallback(async () => {
+    lyriaBufferCancelRef.current = true;
+    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    setLyriaRealtimeBusy(true);
+    try {
+      await stopLyriaRealtime();
+      setLyriaSession(undefined);
+      engineRef.current.setRealtimeStreamPrimary(false);
+      setNotice("Lyria RealTime buffering cancelled.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not cancel Lyria buffering");
+    } finally {
+      setLyriaRealtimeBusy(false);
+    }
+  }, [lyriaStreamBytes]);
 
   const triggerKeyboardNote = useCallback(async (note: number) => {
     await engineRef.current.initialize();
@@ -875,6 +946,24 @@ export function App() {
   }, [autoDjMode, lyriaSession, triggerKeyboardNote]);
 
   useEffect(() => {
+    if (!lyriaSession || lyriaBuffering.active) return;
+    const signature = JSON.stringify(realtimeRequest);
+    if (signature === liveUpdateSignatureRef.current) return;
+    const timer = window.setTimeout(() => {
+      void updateLyriaRealtime(realtimeRequest)
+        .then((session) => {
+          liveUpdateSignatureRef.current = signature;
+          setLyriaSession(session);
+          setNotice(`Live Lyria stream updated: ${session.config.bpm} BPM · density ${Math.round(session.config.density * 100)}.`);
+        })
+        .catch((error) => {
+          setNotice(error instanceof Error ? error.message : "Live Lyria update failed");
+        });
+    }, LYRIA_LIVE_UPDATE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [lyriaBuffering.active, lyriaSession, realtimeRequest]);
+
+  useEffect(() => {
     if (!lyriaSession) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
@@ -1163,6 +1252,21 @@ export function App() {
 
   return (
     <main className="app-shell">
+      {lyriaBuffering.active && (
+        <div className="lyria-buffer-overlay" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Buffering Lyria RealTime stream">
+          <div className="lyria-buffer-dialog">
+            <div className="buffer-orbit" aria-hidden="true"><i /><i /><i /></div>
+            <span>LYRIA REALTIME</span>
+            <h2>{lyriaBuffering.message}</h2>
+            <p>Holding transport until live PCM frames arrive. The final output will route the Lyria stream first, then keep Musica as a low guide layer for performance controls.</p>
+            <div className="buffer-meter">
+              <b>{Math.round(Math.max(lyriaBuffering.bytes, lyriaStreamBytes) / 1024)} KB</b>
+              <em>{lyriaSession?.model ?? lyriaRealtimeStatus.model}</em>
+            </div>
+            <button onClick={() => void cancelLyriaBuffering()}>CANCEL</button>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand" aria-label="Musica VJ">
           <span className="brand-mark">M</span>
@@ -1170,7 +1274,7 @@ export function App() {
         </div>
 
         <div className="transport" aria-label="Transport controls">
-          <button className="icon-button" onClick={() => engineRef.current.stop()} aria-label="Stop">■</button>
+          <button className="icon-button" onClick={() => void stopTransportAndRealtime(true)} aria-label="Stop">■</button>
           <button
             className={`play-button ${snapshot.playing ? "is-playing" : ""}`}
             onClick={() => void handleTransportToggle()}
