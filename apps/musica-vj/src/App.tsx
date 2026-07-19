@@ -27,6 +27,8 @@ import {
   LYRIA_REALTIME_STYLE_PRESETS,
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
   compensateLyriaBpmForPitch,
+  createLyriaSequenceConfig,
+  createLyriaSequencePrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   getLyriaRealtimeStatus,
@@ -121,15 +123,6 @@ const DEFAULT_STRUCTURE = `0:00 atmospheric intro
 1:35 larger second drop
 2:15 short outro`;
 
-const TRACK_GUIDE_LABELS: Record<TrackId, string> = {
-  drums: "drums",
-  bass: "bass",
-  chords: "chords",
-  lead: "lead",
-  voice: "vocal texture",
-  texture: "atmosphere",
-};
-
 interface SceneVisualSettings {
   intensity: number;
   artDirection: VisualArtDirection;
@@ -176,23 +169,6 @@ function sequencerSignature(snapshot: EngineSnapshot): string {
       track.solo ? "s" : "-",
     ].join(":")),
   ].join("|");
-}
-
-function sequencerGuidePrompt(snapshot: EngineSnapshot): string {
-  const hasSolo = snapshot.tracks.some((track) => track.solo);
-  const activeTracks = snapshot.tracks
-    .filter((track) => !track.muted && (!hasSolo || track.solo) && track.volume > 0.03)
-    .map((track) => {
-      const activeSteps = track.pattern.filter(Boolean).length;
-      if (activeSteps === 0) return "";
-      const density = activeSteps >= 12 ? "dense" : activeSteps >= 7 ? "medium" : "sparse";
-      return `${TRACK_GUIDE_LABELS[track.id]} ${density}`;
-    })
-    .filter(Boolean);
-  if (activeTracks.length === 0) {
-    return "follow Musica sequencer: stripped breakdown, minimal pulse, leave space, no vocals";
-  }
-  return `follow Musica sequencer at ${snapshot.bpm} BPM: ${activeTracks.join(", ")}; make muted or empty lanes drop out; instrumental only`;
 }
 
 function cloneVisualSettings(settings: SceneVisualSettings): SceneVisualSettings {
@@ -337,7 +313,7 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
-  const [localGuideLevel, setLocalGuideLevel] = useState(0.34);
+  const [localGuideLevel, setLocalGuideLevel] = useState(0);
   const [collapsedPanels, setCollapsedPanels] = useState<Set<StudioPanelId>>(() => new Set([
     "audio-templates",
     "audio-tones",
@@ -356,7 +332,6 @@ export function App() {
   const hasUserSuppliedLyrics = !instrumental && lyrics.trim().length > 0;
   const generationIsActive = generation !== undefined && ["queued", "processing"].includes(generation.status);
   const sequencerGuideSignature = useMemo(() => sequencerSignature(snapshot), [snapshot]);
-  const liveSequencerGuide = useMemo(() => sequencerGuidePrompt(snapshot), [sequencerGuideSignature]);
   const paidGenerationReady =
     lyriaAvailable &&
     prompt.trim().length > 0 &&
@@ -377,19 +352,9 @@ export function App() {
     [lyriaDeckControls.main.pitchSemitones, lyriaPrompts, lyriaRealtimeConfig, snapshot.bpm],
   );
   const sequenceRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: [
-      { text: liveSequencerGuide.slice(0, 240), weight: 1.25 },
-      { text: "tight looped sequencer layer, precise rhythmic accents, sparse arrangement, instrumental only", weight: 0.82 },
-    ],
-    config: {
-      ...lyriaRealtimeConfig,
-      bpm: compensateLyriaBpmForPitch(snapshot.bpm, lyriaDeckControls.sequence.pitchSemitones),
-      guidance: Math.min(6, lyriaRealtimeConfig.guidance + 0.7),
-      density: Math.max(0.18, Math.min(0.82, lyriaRealtimeConfig.density)),
-      brightness: Math.max(0.2, Math.min(0.78, lyriaRealtimeConfig.brightness)),
-      musicGenerationMode: "QUALITY",
-    },
-  }), [liveSequencerGuide, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
+    weightedPrompts: createLyriaSequencePrompts(snapshot),
+    config: createLyriaSequenceConfig(snapshot, lyriaRealtimeConfig, lyriaDeckControls.sequence.pitchSemitones),
+  }), [lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, sequencerGuideSignature]);
   const vocalRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
     weightedPrompts: [
       { text: `wordless vocalization layer for ${activeLyriaStyle.label}, expressive choir vowels and rhythmic syllables`, weight: 1.15 },
@@ -1724,7 +1689,42 @@ export function App() {
           </div>
 
           <div className="sequencer panel">
-            <div className="panel-heading"><span>SEQUENCE / {selectedTrackSnapshot?.name.toUpperCase()}</span><b>1 BAR · 1/16</b></div>
+            <div className="panel-heading sequence-heading">
+              <span>SEQUENCE / {selectedTrackSnapshot?.name.toUpperCase()}</span>
+              <strong className={sequenceLyriaSession ? "online" : ""}><i /> LYRIA</strong>
+              <label>
+                <em>VOL</em>
+                <input type="range" min="0" max="1" step="0.01" value={lyriaDeckControls.sequence.volume} onChange={(event) => setLyriaDeckControls((current) => ({
+                  ...current,
+                  sequence: { ...current.sequence, volume: Number(event.target.value) },
+                }))} />
+                <b>{Math.round(lyriaDeckControls.sequence.volume * 100)}</b>
+              </label>
+              <label>
+                <em>PITCH</em>
+                <input type="range" min="-7" max="7" step="1" value={lyriaDeckControls.sequence.pitchSemitones} onChange={(event) => setLyriaDeckControls((current) => ({
+                  ...current,
+                  sequence: { ...current.sequence, pitchSemitones: Number(event.target.value) },
+                }))} />
+                <b>{lyriaDeckControls.sequence.pitchSemitones > 0 ? `+${lyriaDeckControls.sequence.pitchSemitones}` : lyriaDeckControls.sequence.pitchSemitones}</b>
+              </label>
+              <label>
+                <em>BEAT</em>
+                <input type="range" min="-250" max="250" step="5" value={lyriaDeckControls.sequence.beatNudgeMs} onChange={(event) => setLyriaDeckControls((current) => ({
+                  ...current,
+                  sequence: { ...current.sequence, beatNudgeMs: Number(event.target.value) },
+                }))} />
+                <b>{lyriaDeckControls.sequence.beatNudgeMs}</b>
+              </label>
+              <button
+                className={lyriaDeckControls.sequence.muted ? "active" : ""}
+                onClick={() => setLyriaDeckControls((current) => ({
+                  ...current,
+                  sequence: { ...current.sequence, muted: !current.sequence.muted },
+                }))}
+                title="Mute Lyria sequence stream"
+              >M</button>
+            </div>
             <div className="step-grid" data-testid="step-grid">
               {snapshot.tracks.map((track) => (
                 <div className={`step-row ${track.id === selectedTrack ? "selected" : ""}`} key={track.id}>

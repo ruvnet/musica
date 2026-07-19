@@ -5,11 +5,14 @@ import {
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
   LYRIA_REALTIME_STYLE_PRESETS,
   compensateLyriaBpmForPitch,
+  createLyriaSequenceConfig,
+  createLyriaSequencePrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   lyriaRealtimeStyleForTemplate,
   type LyriaRealtimeConfig,
 } from "../src/core/lyriaRealtime";
+import { createEngineSnapshotFromTemplate } from "../src/audio/AudioEngine";
 import { PERFORMANCE_TEMPLATES, performanceTemplateById } from "../src/core/presets";
 
 function validConfig(config: LyriaRealtimeConfig): boolean {
@@ -35,6 +38,32 @@ describe("Lyria RealTime defaults", () => {
     expect(compensateLyriaBpmForPitch(120, 0)).toBe(120);
     expect(compensateLyriaBpmForPitch(120, 12)).toBe(60);
     expect(compensateLyriaBpmForPitch(120, -12)).toBe(200);
+  });
+
+  it("encodes the editable 16-step grid into the dedicated Lyria sequence prompts", () => {
+    const state = createEngineSnapshotFromTemplate(performanceTemplateById("warehouse-techno"));
+    const drums = state.tracks.find((track) => track.id === "drums")!;
+    const expectedPulse = drums.pattern.map((active) => (active ? "x" : "-")).join("");
+    const prompts = createLyriaSequencePrompts(state);
+
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain(`DR:${expectedPulse}`);
+    expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
+    expect(prompts.length).toBeLessThanOrEqual(4);
+  });
+
+  it("maps sequence lane activity into Lyria drum, bass, and density controls", () => {
+    const state = createEngineSnapshotFromTemplate(performanceTemplateById("warehouse-techno"));
+    const drums = state.tracks.find((track) => track.id === "drums")!;
+    const bass = state.tracks.find((track) => track.id === "bass")!;
+    drums.muted = true;
+    bass.solo = true;
+    const config = createLyriaSequenceConfig(state, DEFAULT_LYRIA_REALTIME_CONFIG, 0);
+
+    expect(config.muteDrums).toBe(true);
+    expect(config.muteBass).toBe(false);
+    expect(config.onlyBassAndDrums).toBe(false);
+    expect(config.density).toBeGreaterThan(0);
+    expect(config.guidance).toBeGreaterThan(DEFAULT_LYRIA_REALTIME_CONFIG.guidance);
   });
 
   it("ships a valid realtime music config envelope", () => {

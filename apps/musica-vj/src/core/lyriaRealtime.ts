@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { PerformanceTemplate } from "./types";
+import type { PerformanceTemplate, TrackId, TrackSnapshot } from "./types";
 
 export type LyriaRealtimeScale =
   | "C_MAJOR_A_MINOR"
@@ -116,6 +116,88 @@ export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
 
 export function compensateLyriaBpmForPitch(masterBpm: number, semitones: number): number {
   return Math.max(60, Math.min(200, Math.round(masterBpm / (2 ** (semitones / 12)))));
+}
+
+export interface LyriaSequenceState {
+  bpm: number;
+  tracks: TrackSnapshot[];
+}
+
+const SEQUENCE_TRACK_CODES: Record<TrackId, string> = {
+  drums: "DR",
+  bass: "BS",
+  chords: "CH",
+  lead: "LD",
+  voice: "VO",
+  texture: "TX",
+};
+
+function effectiveSequenceTracks(state: LyriaSequenceState): TrackSnapshot[] {
+  const hasSolo = state.tracks.some((track) => track.solo);
+  return state.tracks.filter((track) => (
+    !track.muted
+    && (!hasSolo || track.solo)
+    && track.volume > 0.03
+    && track.pattern.some(Boolean)
+  ));
+}
+
+function pulseString(track: TrackSnapshot): string {
+  return track.pattern.slice(0, 16).map((active) => (active ? "x" : "-")).join("");
+}
+
+function lanePrompt(tracks: TrackSnapshot[], label: string): string | undefined {
+  if (tracks.length === 0) return undefined;
+  const lanes = tracks.map((track) => {
+    const notes = track.id === "drums" || track.notes.length === 0
+      ? ""
+      : ` notes:${[...new Set(track.notes)].slice(0, 8).join(".")}`;
+    return `${SEQUENCE_TRACK_CODES[track.id]}:${pulseString(track)} vol:${Math.round(track.volume * 100)}${notes}`;
+  });
+  return `${label}; ${lanes.join("; ")}; x is hit, - is rest`;
+}
+
+export function createLyriaSequencePrompts(state: LyriaSequenceState): LyriaWeightedPrompt[] {
+  const active = effectiveSequenceTracks(state);
+  const prompts = [
+    lanePrompt(active.filter((track) => track.id === "drums" || track.id === "bass"), `obey this exact 16-step rhythm at ${state.bpm} BPM`),
+    lanePrompt(active.filter((track) => track.id === "chords" || track.id === "lead"), "follow this 16-step musical pulse"),
+    lanePrompt(active.filter((track) => track.id === "voice" || track.id === "texture"), "follow this 16-step texture pulse"),
+  ].filter((prompt): prompt is string => Boolean(prompt));
+  if (prompts.length === 0) {
+    return [{ text: `minimal breakdown at ${state.bpm} BPM, no drums, no bass, near silence, instrumental only`, weight: 1.5 }];
+  }
+  return [
+    ...prompts.map((text, index) => ({ text: text.slice(0, 240), weight: index === 0 ? 1.7 : 1.45 })),
+    { text: "dedicated sequencer output, tight one-bar loop, immediate accents, no intro, no fills, instrumental only", weight: 1.2 },
+  ].slice(0, 4);
+}
+
+export function createLyriaSequenceConfig(
+  state: LyriaSequenceState,
+  base: LyriaRealtimeConfig,
+  pitchSemitones: number,
+): LyriaRealtimeConfig {
+  const active = effectiveSequenceTracks(state);
+  const drumsActive = active.some((track) => track.id === "drums");
+  const bassActive = active.some((track) => track.id === "bass");
+  const melodicActive = active.some((track) => !["drums", "bass"].includes(track.id));
+  const activeStepCount = active.reduce((sum, track) => sum + track.pattern.filter(Boolean).length, 0);
+  const availableSteps = Math.max(16, active.length * 16);
+  const patternDensity = activeStepCount / availableSteps;
+  return {
+    ...base,
+    bpm: compensateLyriaBpmForPitch(state.bpm, pitchSemitones),
+    guidance: Math.min(6, base.guidance + 1.15),
+    density: Math.max(0.08, Math.min(0.9, patternDensity * 1.35)),
+    brightness: Math.max(0.18, Math.min(0.82, base.brightness + (melodicActive ? 0.08 : -0.08))),
+    temperature: Math.min(base.temperature, 0.95),
+    topK: Math.min(base.topK, 32),
+    muteBass: !bassActive,
+    muteDrums: !drumsActive,
+    onlyBassAndDrums: drumsActive && bassActive && !melodicActive,
+    musicGenerationMode: "QUALITY",
+  };
 }
 
 export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
