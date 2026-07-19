@@ -1,5 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { WebMidi } from "webmidi";
 import type { ControlAction, ControlMessage } from "../core/types";
 
 export interface ControllerStatus {
@@ -57,7 +58,7 @@ export class ControlRouter {
   private controlListeners = new Set<ControlListener>();
   private statusListeners = new Set<StatusListener>();
   private unlistenBridge?: UnlistenFn;
-  private midi?: MIDIAccess;
+  private webMidiStarted = false;
   private started = false;
   private lifecycle: Promise<void> = Promise.resolve();
   private status: ControllerStatus = {
@@ -97,9 +98,13 @@ export class ControlRouter {
       const { unregisterAll } = await import("@tauri-apps/plugin-global-shortcut");
       await unregisterAll().catch(() => undefined);
     }
-    for (const input of this.midi?.inputs.values() ?? []) input.onmidimessage = null;
-    if (this.midi) this.midi.onstatechange = null;
-    this.midi = undefined;
+    if (this.webMidiStarted) {
+      for (const input of WebMidi.inputs) input.removeListener();
+      WebMidi.removeListener("connected");
+      WebMidi.removeListener("disconnected");
+      WebMidi.disable();
+      this.webMidiStarted = false;
+    }
     this.status = {
       keyboard: true,
       globalShortcuts: false,
@@ -166,56 +171,55 @@ export class ControlRouter {
   }
 
   private async startMidi(): Promise<void> {
-    if (!navigator.requestMIDIAccess) return;
     try {
-      this.midi = await navigator.requestMIDIAccess({ sysex: false, software: false });
+      await WebMidi.enable({ sysex: false });
+      this.webMidiStarted = true;
       this.bindMidiInputs();
-      this.midi.onstatechange = () => this.bindMidiInputs();
+      WebMidi.addListener("connected", () => this.bindMidiInputs());
+      WebMidi.addListener("disconnected", () => this.bindMidiInputs());
     } catch (error) {
       console.info("MIDI access is unavailable in this webview", error);
     }
   }
 
   private bindMidiInputs(): void {
-    if (!this.midi) return;
-    const inputNames: string[] = [];
-    for (const input of this.midi.inputs.values()) {
-      inputNames.push(input.name ?? input.id);
-      input.onmidimessage = (event) => this.onMidiMessage(event);
+    if (!this.webMidiStarted) return;
+    const inputNames = WebMidi.inputs.map((input) => input.name);
+    for (const input of WebMidi.inputs) {
+      input.removeListener("noteon");
+      input.removeListener("controlchange");
+      input.addListener("noteon", (event) => this.onMidiNote(event.note.number, event.rawValue ?? 0));
+      input.addListener("controlchange", (event) => this.onMidiControl(event.controller.number, event.rawValue ?? 64));
     }
     this.status.midiInputs = inputNames;
     this.status.midi = inputNames.length > 0;
     this.emitStatus();
   }
 
-  private onMidiMessage(event: MIDIMessageEvent): void {
-    const data = event.data;
-    if (!data || data.length < 2) return;
-    const status = data[0] & 0xf0;
-    const key = data[1];
-    const value = data[2] ?? 0;
-    if (status === 0x90 && value > 0) {
-      if (key >= 36 && key <= 41) this.dispatch("track.trigger", key - 36, "midi");
-      else if (key === 42) this.dispatch("transport.toggle", 0, "midi");
-      else if (key === 43) this.dispatch("transport.record", 0, "midi");
-      else if (key >= 48 && key <= 55) this.dispatch("visual.scene.select", key - 48, "midi");
-      else if (key >= 60 && key <= 71) this.dispatch("performance.template.select", key - 60, "midi");
-    } else if (status === 0xb0) {
-      const normalized = (value - 64) / 63;
-      if (key === 1) this.dispatch("master.delta", normalized, "midi");
-      if (key === 2) this.dispatch("visual.intensity.delta", normalized, "midi");
-      if (key === 3) this.dispatch("tempo.delta", normalized, "midi");
-      if (key === 4) this.dispatch("visual.sculpture.delta", normalized, "midi");
-      if (key === 5) this.dispatch("visual.motion.delta", normalized, "midi");
-      if (key === 6) this.dispatch("visual.atmosphere.delta", normalized, "midi");
-      if (key === 7) this.dispatch("visual.ribbon.delta", normalized, "midi");
-      if (key === 8) this.dispatch("visual.temporal.speed.delta", normalized, "midi");
-      if (key === 9) this.dispatch("visual.temporal.strobe.delta", normalized, "midi");
-      if (key === 10) this.dispatch("visual.temporal.trail.delta", normalized, "midi");
-      if (key === 11) this.dispatch("visual.temporal.morph.delta", normalized, "midi");
-      if (key === 12) this.dispatch("visual.temporal.camera.delta", normalized, "midi");
-      if (key === 13) this.dispatch("visual.temporal.phase.delta", normalized, "midi");
-    }
+  private onMidiNote(key: number, velocity: number): void {
+    if (velocity <= 0) return;
+    if (key >= 36 && key <= 41) this.dispatch("track.trigger", key - 36, "midi");
+    else if (key === 42) this.dispatch("transport.toggle", 0, "midi");
+    else if (key === 43) this.dispatch("transport.record", 0, "midi");
+    else if (key >= 48 && key <= 55) this.dispatch("visual.scene.select", key - 48, "midi");
+    else if (key >= 60 && key <= 71) this.dispatch("performance.template.select", key - 60, "midi");
+  }
+
+  private onMidiControl(key: number, value: number): void {
+    const normalized = (value - 64) / 63;
+    if (key === 1) this.dispatch("master.delta", normalized, "midi");
+    if (key === 2) this.dispatch("visual.intensity.delta", normalized, "midi");
+    if (key === 3) this.dispatch("tempo.delta", normalized, "midi");
+    if (key === 4) this.dispatch("visual.sculpture.delta", normalized, "midi");
+    if (key === 5) this.dispatch("visual.motion.delta", normalized, "midi");
+    if (key === 6) this.dispatch("visual.atmosphere.delta", normalized, "midi");
+    if (key === 7) this.dispatch("visual.ribbon.delta", normalized, "midi");
+    if (key === 8) this.dispatch("visual.temporal.speed.delta", normalized, "midi");
+    if (key === 9) this.dispatch("visual.temporal.strobe.delta", normalized, "midi");
+    if (key === 10) this.dispatch("visual.temporal.trail.delta", normalized, "midi");
+    if (key === 11) this.dispatch("visual.temporal.morph.delta", normalized, "midi");
+    if (key === 12) this.dispatch("visual.temporal.camera.delta", normalized, "midi");
+    if (key === 13) this.dispatch("visual.temporal.phase.delta", normalized, "midi");
   }
 
   private emitStatus(): void {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AudioEngine,
   importedAudioStartTime,
+  performanceStepTime,
   rebaseTempoClock,
 } from "../src/audio/AudioEngine";
 
@@ -9,6 +10,21 @@ class FakeAudioParam {
   value = 0;
 
   setTargetAtTime(value: number): this {
+    this.value = value;
+    return this;
+  }
+
+  setValueAtTime(value: number): this {
+    this.value = value;
+    return this;
+  }
+
+  linearRampToValueAtTime(value: number): this {
+    this.value = value;
+    return this;
+  }
+
+  exponentialRampToValueAtTime(value: number): this {
     this.value = value;
     return this;
   }
@@ -45,6 +61,14 @@ class FakeCompressorNode extends FakeAudioNode {
   release = new FakeAudioParam();
 }
 
+class FakeDelayNode extends FakeAudioNode {
+  delayTime = new FakeAudioParam();
+}
+
+class FakeConvolverNode extends FakeAudioNode {
+  buffer: AudioBuffer | null = null;
+}
+
 class FakeAudioBuffer {
   private readonly data: Float32Array[];
 
@@ -77,6 +101,14 @@ class FakeAudioContext {
 
   createDynamicsCompressor(): DynamicsCompressorNode {
     return new FakeCompressorNode() as unknown as DynamicsCompressorNode;
+  }
+
+  createDelay(): DelayNode {
+    return new FakeDelayNode() as unknown as DelayNode;
+  }
+
+  createConvolver(): ConvolverNode {
+    return new FakeConvolverNode() as unknown as ConvolverNode;
   }
 
   createAnalyser(): AnalyserNode {
@@ -120,6 +152,14 @@ describe("audio engine state application", () => {
   it("starts one-shot imports immediately while preserving bar quantization for loops", () => {
     expect(importedAudioStartTime(false, 10, 12.5)).toBeCloseTo(10.01, 8);
     expect(importedAudioStartTime(true, 10, 12.5)).toBe(12.5);
+  });
+
+  it("adds bounded swing and humanization to synthesized steps", () => {
+    const straight = performanceStepTime(0, 0, 4, 0.125);
+    const swung = performanceStepTime(1, 1, 4.125, 0.125);
+    expect(Math.abs(straight - 4)).toBeLessThanOrEqual(0.004);
+    expect(swung).toBeGreaterThan(4.125);
+    expect(swung).toBeLessThan(4.15);
   });
 
   it("preserves bar phase and aligns the next scheduler step after a live tempo change", () => {

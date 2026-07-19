@@ -10,7 +10,7 @@ import {
   secondsPerStep,
   STEPS_PER_BAR,
 } from "../core/music";
-import { TRACK_IDS, type AudioMetrics, type PerformanceTemplate, type TrackDefinition, type TrackId, type TrackMix, type TrackSnapshot } from "../core/types";
+import { TRACK_IDS, type AudioMetrics, type PerformanceTemplate, type TrackDefinition, type TrackId, type TrackMix, type TrackSnapshot, type TrackTemplate } from "../core/types";
 import {
   analyzeDecodedPcm,
   inspectEncodedAudio,
@@ -25,6 +25,7 @@ interface TrackRuntime {
   gain: GainNode;
   pan: StereoPannerNode;
   analyser: AnalyserNode;
+  fxSend: GainNode;
   meterBuffer: Uint8Array<ArrayBuffer>;
   loadedBuffer?: AudioBuffer;
   loadedFile?: string;
@@ -82,6 +83,12 @@ export interface TempoClockRebase {
   currentStep: number;
 }
 
+export function performanceStepTime(step: number, absoluteStep: number, scheduledTime: number, stepSeconds: number): number {
+  const swing = step % 2 === 1 ? stepSeconds * 0.16 : 0;
+  const humanize = ((((absoluteStep * 1103515245 + 12345) >>> 8) & 0xff) / 255 - 0.5) * 0.006;
+  return scheduledTime + swing + humanize;
+}
+
 export function rebaseTempoClock(
   currentTime: number,
   transportStartedAt: number,
@@ -117,6 +124,11 @@ export class AudioEngine {
   private tracks = new Map<TrackId, TrackRuntime>();
   private masterGain?: GainNode;
   private compressor?: DynamicsCompressorNode;
+  private fxDelay?: DelayNode;
+  private fxFeedback?: GainNode;
+  private fxWet?: GainNode;
+  private reverb?: ConvolverNode;
+  private reverbWet?: GainNode;
   private masterAnalyser?: AnalyserNode;
   private captureDestination?: MediaStreamAudioDestinationNode;
   private noiseBuffer?: AudioBuffer;
@@ -143,19 +155,32 @@ export class AudioEngine {
     const context = new AudioContext({ latencyHint: "interactive", sampleRate: 48_000 });
     const masterGain = context.createGain();
     const compressor = context.createDynamicsCompressor();
+    const fxDelay = context.createDelay(1.5);
+    const fxFeedback = context.createGain();
+    const fxWet = context.createGain();
+    const reverb = context.createConvolver();
+    const reverbWet = context.createGain();
     const masterAnalyser = context.createAnalyser();
     const captureDestination = context.createMediaStreamDestination();
 
     masterGain.gain.value = this.masterVolume * this.masterVolume;
-    compressor.threshold.value = -12;
-    compressor.knee.value = 8;
-    compressor.ratio.value = 8;
-    compressor.attack.value = 0.003;
-    compressor.release.value = 0.18;
+    compressor.threshold.value = -16;
+    compressor.knee.value = 10;
+    compressor.ratio.value = 5;
+    compressor.attack.value = 0.004;
+    compressor.release.value = 0.24;
+    fxDelay.delayTime.value = secondsPerStep(this.bpm) * 3;
+    fxFeedback.gain.value = 0.34;
+    fxWet.gain.value = 0.24;
+    reverb.buffer = this.createImpulseResponse(context, 1.7, 2.4);
+    reverbWet.gain.value = 0.18;
     masterAnalyser.fftSize = 2048;
     masterAnalyser.smoothingTimeConstant = 0.76;
 
     masterGain.connect(compressor);
+    fxDelay.connect(fxFeedback).connect(fxDelay);
+    fxDelay.connect(fxWet).connect(compressor);
+    reverb.connect(reverbWet).connect(compressor);
     compressor.connect(masterAnalyser);
     masterAnalyser.connect(context.destination);
     masterAnalyser.connect(captureDestination);
@@ -163,6 +188,11 @@ export class AudioEngine {
     this.context = context;
     this.masterGain = masterGain;
     this.compressor = compressor;
+    this.fxDelay = fxDelay;
+    this.fxFeedback = fxFeedback;
+    this.fxWet = fxWet;
+    this.reverb = reverb;
+    this.reverbWet = reverbWet;
     this.masterAnalyser = masterAnalyser;
     this.captureDestination = captureDestination;
     this.frequencyBuffer = new Uint8Array(masterAnalyser.frequencyBinCount);
@@ -184,16 +214,21 @@ export class AudioEngine {
     const gain = context.createGain();
     const pan = context.createStereoPanner();
     const analyser = context.createAnalyser();
+    const fxSend = context.createGain();
     const mix = { ...(this.pendingMix.get(definition.id) ?? defaultMix()) };
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.68;
     gain.gain.value = effectiveTrackGain(mix, false);
     pan.pan.value = mix.pan;
+    fxSend.gain.value = this.defaultFxSend(definition.id);
 
     input.connect(gain);
     gain.connect(pan);
     pan.connect(analyser);
     analyser.connect(master);
+    analyser.connect(fxSend);
+    if (this.fxDelay) fxSend.connect(this.fxDelay);
+    if (this.reverb) fxSend.connect(this.reverb);
 
     this.tracks.set(definition.id, {
       definition,
@@ -202,6 +237,7 @@ export class AudioEngine {
       gain,
       pan,
       analyser,
+      fxSend,
       meterBuffer: new Uint8Array(analyser.fftSize),
       loadedLoop: true,
     });
@@ -263,7 +299,11 @@ export class AudioEngine {
       this.droppedLateSteps += lateSteps;
     }
     while (this.nextStepTime < context.currentTime + LOOK_AHEAD_SECONDS) {
-      this.scheduleStep(this.currentStep, this.transportStepCounter, this.nextStepTime);
+      this.scheduleStep(
+        this.currentStep,
+        this.transportStepCounter,
+        performanceStepTime(this.currentStep, this.transportStepCounter, this.nextStepTime, stepSeconds),
+      );
       this.nextStepTime += stepSeconds;
       this.currentStep = (this.currentStep + 1) % STEPS_PER_BAR;
       this.transportStepCounter += 1;
@@ -318,14 +358,24 @@ export class AudioEngine {
     const step = absoluteStep % STEPS_PER_BAR;
     if (note <= 36) {
       const oscillator = context.createOscillator();
+      const click = context.createBufferSource();
+      const clickFilter = context.createBiquadFilter();
+      const clickEnvelope = context.createGain();
       const envelope = context.createGain();
+      click.buffer = this.noiseBuffer ?? null;
+      clickFilter.type = "highpass";
+      clickFilter.frequency.value = 2200;
       oscillator.type = "sine";
       oscillator.frequency.setValueAtTime(step % 8 === 0 ? 152 : 112, time);
       oscillator.frequency.exponentialRampToValueAtTime(42, time + 0.22);
       envelope.gain.setValueAtTime(step % 8 === 0 ? 0.92 : 0.62, time);
       envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.32);
+      clickEnvelope.gain.setValueAtTime(step % 8 === 0 ? 0.16 : 0.09, time);
+      clickEnvelope.gain.exponentialRampToValueAtTime(0.001, time + 0.026);
       oscillator.connect(envelope).connect(track.input);
+      click.connect(clickFilter).connect(clickEnvelope).connect(track.input);
       this.startSource(oscillator, time, time + 0.34);
+      this.startSource(click, time, time + 0.04);
       return;
     }
 
@@ -334,55 +384,74 @@ export class AudioEngine {
     const envelope = context.createGain();
     source.buffer = this.noiseBuffer ?? null;
     filter.type = note === 38 ? "bandpass" : "highpass";
-    filter.Q.value = note === 38 ? 1.8 : 0.7;
-    filter.frequency.value = note === 38 ? 980 : note >= 46 ? 5200 : 7600;
-    envelope.gain.setValueAtTime(note === 38 ? 0.38 : note >= 46 ? 0.18 : 0.1, time);
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + (note === 38 ? 0.22 : note >= 46 ? 0.18 : 0.055));
+    filter.Q.value = note === 38 ? 2.4 : note >= 46 ? 0.9 : 0.65;
+    filter.frequency.value = note === 38 ? 840 : note >= 46 ? 4800 : 8200;
+    envelope.gain.setValueAtTime(note === 38 ? 0.42 : note >= 46 ? 0.2 : 0.09, time);
+    envelope.gain.exponentialRampToValueAtTime(0.001, time + (note === 38 ? 0.26 : note >= 46 ? 0.24 : 0.052));
     source.connect(filter).connect(envelope).connect(track.input);
-    this.startSource(source, time, time + (note === 38 ? 0.24 : 0.2));
+    this.startSource(source, time, time + (note === 38 ? 0.3 : 0.25));
   }
 
   private triggerBass(track: TrackRuntime, note: number, time: number): void {
     const context = this.requireContext();
-    const oscillator = context.createOscillator();
+    const sub = context.createOscillator();
+    const mid = context.createOscillator();
     const filter = context.createBiquadFilter();
     const envelope = context.createGain();
-    oscillator.type = "sawtooth";
-    oscillator.frequency.value = midiToFrequency(note);
+    const subGain = context.createGain();
+    const midGain = context.createGain();
+    sub.type = "sine";
+    sub.frequency.value = midiToFrequency(note - 12);
+    mid.type = "sawtooth";
+    mid.frequency.value = midiToFrequency(note);
+    mid.detune.value = -5;
     filter.type = "lowpass";
-    filter.Q.value = 5;
-    filter.frequency.setValueAtTime(780, time);
-    filter.frequency.exponentialRampToValueAtTime(190, time + 0.24);
+    filter.Q.value = 7;
+    filter.frequency.setValueAtTime(980, time);
+    filter.frequency.exponentialRampToValueAtTime(145, time + 0.28);
     envelope.gain.setValueAtTime(0.001, time);
-    envelope.gain.exponentialRampToValueAtTime(0.3, time + 0.012);
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
-    oscillator.connect(filter).connect(envelope).connect(track.input);
-    this.startSource(oscillator, time, time + 0.32);
+    envelope.gain.exponentialRampToValueAtTime(0.34, time + 0.018);
+    envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.42);
+    subGain.gain.value = 0.9;
+    midGain.gain.value = 0.42;
+    sub.connect(subGain).connect(filter);
+    mid.connect(midGain).connect(filter);
+    filter.connect(envelope).connect(track.input);
+    this.startSource(sub, time, time + 0.44);
+    this.startSource(mid, time, time + 0.44);
   }
 
   private triggerChord(track: TrackRuntime, root: number, time: number): void {
-    for (const interval of [0, 3, 7]) this.triggerTone(track, root + interval, time, 0.56, "triangle", 0.1, 1500);
+    for (const [index, interval] of [0, 3, 7, 10].entries()) {
+      this.triggerTone(track, root + interval, time + index * 0.006, 0.9, "triangle", 0.07, 1800, index % 2 === 0 ? -6 : 7, 0.08);
+    }
   }
 
   private triggerLead(track: TrackRuntime, note: number, time: number): void {
-    this.triggerTone(track, note, time, 0.25, "square", 0.13, 3200, 8);
+    this.triggerTone(track, note, time, 0.28, "sawtooth", 0.09, 4200, -9, 0.012);
+    this.triggerTone(track, note + 12, time + 0.002, 0.22, "square", 0.045, 5200, 11, 0.006);
   }
 
   private triggerVoice(track: TrackRuntime, note: number, time: number): void {
     const context = this.requireContext();
     const source = context.createBufferSource();
     const formant = context.createBiquadFilter();
+    const secondFormant = context.createBiquadFilter();
     const envelope = context.createGain();
     source.buffer = this.noiseBuffer ?? null;
     formant.type = "bandpass";
-    formant.Q.value = 14;
-    formant.frequency.setValueAtTime(midiToFrequency(note) * 4, time);
-    formant.frequency.linearRampToValueAtTime(midiToFrequency(note) * 5.5, time + 0.42);
+    formant.Q.value = 10;
+    secondFormant.type = "bandpass";
+    secondFormant.Q.value = 8;
+    formant.frequency.setValueAtTime(midiToFrequency(note) * 3.2, time);
+    formant.frequency.linearRampToValueAtTime(midiToFrequency(note) * 4.8, time + 0.42);
+    secondFormant.frequency.setValueAtTime(midiToFrequency(note) * 6.2, time);
+    secondFormant.frequency.linearRampToValueAtTime(midiToFrequency(note) * 5.6, time + 0.42);
     envelope.gain.setValueAtTime(0.001, time);
-    envelope.gain.linearRampToValueAtTime(0.23, time + 0.06);
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.48);
-    source.connect(formant).connect(envelope).connect(track.input);
-    this.startSource(source, time, time + 0.5);
+    envelope.gain.linearRampToValueAtTime(0.18, time + 0.08);
+    envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.62);
+    source.connect(formant).connect(secondFormant).connect(envelope).connect(track.input);
+    this.startSource(source, time, time + 0.66);
   }
 
   private triggerTexture(track: TrackRuntime, note: number, time: number): void {
@@ -390,19 +459,31 @@ export class AudioEngine {
     const carrier = context.createOscillator();
     const modulator = context.createOscillator();
     const modGain = context.createGain();
+    const air = context.createBufferSource();
+    const airFilter = context.createBiquadFilter();
     const envelope = context.createGain();
+    const airEnvelope = context.createGain();
     carrier.type = "sine";
     carrier.frequency.value = midiToFrequency(note);
     modulator.type = "sine";
     modulator.frequency.value = midiToFrequency(note - 17);
-    modGain.gain.value = 38;
+    modGain.gain.value = 26;
+    air.buffer = this.noiseBuffer ?? null;
+    airFilter.type = "bandpass";
+    airFilter.frequency.value = midiToFrequency(note + 24);
+    airFilter.Q.value = 3.6;
     envelope.gain.setValueAtTime(0.001, time);
-    envelope.gain.linearRampToValueAtTime(0.12, time + 0.2);
-    envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.9);
+    envelope.gain.linearRampToValueAtTime(0.1, time + 0.28);
+    envelope.gain.exponentialRampToValueAtTime(0.001, time + 1.45);
+    airEnvelope.gain.setValueAtTime(0.001, time);
+    airEnvelope.gain.linearRampToValueAtTime(0.052, time + 0.45);
+    airEnvelope.gain.exponentialRampToValueAtTime(0.001, time + 1.6);
     modulator.connect(modGain).connect(carrier.frequency);
     carrier.connect(envelope).connect(track.input);
-    this.startSource(modulator, time, time + 0.92);
-    this.startSource(carrier, time, time + 0.92);
+    air.connect(airFilter).connect(airEnvelope).connect(track.input);
+    this.startSource(modulator, time, time + 1.48);
+    this.startSource(carrier, time, time + 1.48);
+    this.startSource(air, time, time + 1.62);
   }
 
   private triggerTone(
@@ -414,6 +495,7 @@ export class AudioEngine {
     level: number,
     cutoff: number,
     detune = 0,
+    attack = 0.015,
   ): void {
     const context = this.requireContext();
     const oscillator = context.createOscillator();
@@ -426,7 +508,7 @@ export class AudioEngine {
     filter.frequency.value = cutoff;
     filter.Q.value = 2;
     envelope.gain.setValueAtTime(0.001, time);
-    envelope.gain.exponentialRampToValueAtTime(level, time + 0.015);
+    envelope.gain.exponentialRampToValueAtTime(level, time + attack);
     envelope.gain.exponentialRampToValueAtTime(0.001, time + duration);
     oscillator.connect(filter).connect(envelope).connect(track.input);
     this.startSource(oscillator, time, time + duration + 0.02);
@@ -605,6 +687,7 @@ export class AudioEngine {
       this.transportStepCounter = Math.max(this.transportStepCounter, rebased.currentStep);
     }
     this.bpm = nextBpm;
+    this.fxDelay?.delayTime.setTargetAtTime(secondsPerStep(nextBpm) * 3, this.context?.currentTime ?? 0, 0.08);
     if (this.playing) this.schedulerTick();
     this.emit();
   }
@@ -617,9 +700,19 @@ export class AudioEngine {
 
   applyPerformanceTemplate(template: PerformanceTemplate): void {
     this.setBpm(template.bpm);
+    this.applyTrackTemplates(template.tracks);
+  }
+
+  applyImportedMidi(tracks: Partial<Record<TrackId, TrackTemplate>>, bpm?: number): void {
+    if (bpm !== undefined) this.setBpm(bpm);
+    this.applyTrackTemplates(tracks);
+  }
+
+  private applyTrackTemplates(tracks: Partial<Record<TrackId, TrackTemplate>>): void {
     const definitions = this.tracks.size > 0 ? [...this.tracks.values()].map((track) => track.definition) : this.definitions;
     for (const definition of definitions) {
-      const trackTemplate = template.tracks[definition.id];
+      const trackTemplate = tracks[definition.id];
+      if (!trackTemplate) continue;
       definition.pattern = patternFromSteps(trackTemplate.pattern);
       definition.notes = trackTemplate.notes.slice(0, 64);
       const mix = this.tracks.get(definition.id)?.mix ?? this.pendingMix.get(definition.id);
@@ -752,6 +845,31 @@ export class AudioEngine {
       channel[index] = (((seed ^ (seed >>> 14)) >>> 0) / 2147483648 - 1) * 0.72;
     }
     return buffer;
+  }
+
+  private createImpulseResponse(context: AudioContext, seconds: number, decay: number): AudioBuffer {
+    const length = Math.max(1, Math.floor(context.sampleRate * seconds));
+    const buffer = context.createBuffer(2, length, context.sampleRate);
+    let seed = 0x72657662;
+    for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+      const channel = buffer.getChannelData(channelIndex);
+      for (let index = 0; index < length; index += 1) {
+        seed = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        seed ^= seed + Math.imul(seed ^ (seed >>> 7), 61 | seed);
+        const noise = ((seed ^ (seed >>> 14)) >>> 0) / 2147483648 - 1;
+        channel[index] = noise * (1 - index / length) ** decay;
+      }
+    }
+    return buffer;
+  }
+
+  private defaultFxSend(id: TrackId): number {
+    if (id === "drums") return 0.08;
+    if (id === "bass") return 0.03;
+    if (id === "chords") return 0.28;
+    if (id === "lead") return 0.22;
+    if (id === "voice") return 0.34;
+    return 0.46;
   }
 
   private audibleStep(): number {
