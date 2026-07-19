@@ -15,7 +15,7 @@ Musica VJ Studio is the flagship Musica performance surface: a live AI-directed 
 | Area | Current implementation |
 |---|---|
 | Agentic direction | Meta-LLM or local agent planner can choose a template, BPM, scene, prompt, visual intensity, art-direction macros, temporal controls, and arrangement notes, then apply the whole performance state |
-| Music | Six independent drum, bass, chord, lead, breath, and texture tracks with volume, pan, mute, solo, step editing, prompt seeded mutation, performance templates, imported audio loops, MIDI-file import, and Lyria/Gemini generated song loading |
+| Music | Six independent drum, bass, chord, lead, breath, and texture tracks with volume, pan, mute, solo, step editing, a curated MIDI-style default song bank, prompt seeded mutation, performance templates, imported audio loops, MIDI-file import, and Lyria/Gemini generated song or loop loading |
 | Synth and effects | Layered drum voices, sub-plus-mid bass, four-voice chord pads, dual-oscillator leads, formant breath, FM/noise texture beds, swing/humanization, tempo delay, feedback, convolution reverb, per-track send levels, and bus compression |
 | Timing | Web Audio sample clock with a 25 ms scheduler that maintains a 120 ms native event queue |
 | Visuals | Three.js WebGL 2 tunnel, bloom, and terrain engines with eight themed visual-bank scenes, audio analysis, reflective waveform ribbon, haze, editorial telemetry, bloom, adaptive pixel ratio, and four playable art-direction macros |
@@ -78,7 +78,7 @@ The left-side Artist Macros turn Signal Bloom into a visual instrument: Sculptur
 
 The visual bank includes Neon Fold, Signal Bloom, Spectral Field, Laser Grid, Aurora Veil, Black Monolith, Pulse Field, and Chroma Wave. VJ presets such as Peak Rave, Cinema Fog, Hyperspace, and Glass Ambient apply scene, intensity, macro, and temporal settings without changing the music. Temporal controls shape realtime animation speed, strobe gating, trail persistence, geometry morph depth, camera movement, and phase offset.
 
-Performance templates apply both sound and visuals: Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, and Cinematic Pulse. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, and optional temporal controls.
+Performance templates apply both sound and visuals: Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, Cinematic Pulse, UK Garage Neon, Afro Cosmic House, IDM Crystalline, and Hyperpop Rush. The studio boots into UK Garage Neon from the curated MIDI-style song bank so the first play is already musical. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, and optional temporal controls.
 
 MIDI support uses open-source building blocks where they are strongest: WEBMIDI.js handles live browser controller input, while `@tonejs/midi` parses `.mid` and `.midi` files into editable Musica track templates. Loading a MIDI file through any track's Load button maps percussion, bass, chords, lead, breath, and texture material into the six-track sequencer and applies the first MIDI tempo when available. Audio files still load as clips on the selected track.
 
@@ -133,11 +133,22 @@ MUSICA_CREATIVE_TERMS_VERSION=reviewed_2026_07_18 \
 npm run tauri dev
 ```
 
+For local GCP CLI authentication instead of an API key, first run `gcloud auth application-default login`, then launch with:
+
+```sh
+MUSICA_CREATIVE_ENABLED=true \
+MUSICA_CREATIVE_PROVIDER=lyria_3_pro \
+MUSICA_GCP_AUTH=gcloud \
+MUSICA_CREATIVE_MAX_GENERATION_USD=0.32 \
+npm run tauri dev
+```
+
 | Setting | Meaning |
 |---|---|
 | `MUSICA_CREATIVE_ENABLED` | Must be `true`; leave unset to guarantee provider-disabled behavior |
 | `MUSICA_CREATIVE_PROVIDER` | Must be `lyria_3_pro` for this adapter |
-| `GEMINI_API_KEY` | Required Rust-only credential; never passed to React or persisted in project data |
+| `GEMINI_API_KEY` | Rust-only credential; preferred when present and never passed to React or persisted in project data |
+| `MUSICA_GCP_AUTH` | Set to `gcloud` to use `gcloud auth application-default print-access-token` when `GEMINI_API_KEY` is unset |
 | `MUSICA_CREATIVE_MAX_GENERATION_USD` | Cumulative reserved-plus-recorded generation ceiling for the running process; defaults to USD 0.32 |
 | `MUSICA_CREATIVE_REQUEST_TIMEOUT_SECONDS` | Lyria request deadline; defaults to 600 seconds and must be between 60 and 900 seconds |
 | `MUSICA_CREATIVE_RETAIN_PROMPTS` | Set to `false` or `0` to retain only the prompt hash in the private receipt; defaults to retaining the compiled prompt |
@@ -147,7 +158,7 @@ The model and endpoint are fixed in the adapter as `lyria-3-pro-preview` and the
 
 The credential is consumed only by Rust application code, but an operator who launches `npm run tauri dev` with `GEMINI_API_KEY` in the shell also gives that environment variable to development child processes, including the Vite process. Vite does not bundle a non-`VITE_` variable, and the production secret scan checks this boundary, but development process inheritance is not equivalent to Keychain isolation. Use a dedicated low-quota test key and do not run untrusted development tooling in that environment.
 
-Use the generation panel to describe the complete track, set 31 to 180 seconds and 60 to 200 BPM, choose instrumental or vocal output, add optional lyrics and timed sections, choose MP3 or WAV, affirm rights for supplied lyrics, and approve the displayed cost. Submission creates a local asynchronous task. Cancellation before provider dispatch releases the reservation. Cancellation after dispatch leaves the task in `processing`, marks cancellation requested, and keeps polling because Google exposes no cancellation operation; a late valid result is retained and is not auto-loaded. On completion, the selected track receives the generated song as one-shot audio, and Musica measures its encoded metadata and decoded waveform, BS.1770-style integrated loudness, BPM, beat grid, onset map, spectral profile, confidence-gated musical key, probable sections, and recommended visual scene. Analysis selects a dominant-energy channel for waveform, beat, key, and spectrum so anti-phase stereo does not cancel; loudness K-weights and gates each channel before summing energy. Bass drives camera displacement, detected beats drive radial pulse, high-frequency energy controls particle count, and measured section boundaries switch terrain, bloom, or tunnel scenes during playback. Provider text is preserved as lyrics or structure when returned but is never used as measured audio metadata.
+Use the generation panel to describe the complete track, set 31 to 180 seconds and 60 to 200 BPM, choose instrumental or vocal output, add optional lyrics and timed sections, choose MP3 or WAV, affirm rights for supplied lyrics, and approve the displayed cost. The same panel has key, tonal-center, production-intensity, and avoid-list controls. `GENERATE BETTER LOOP` uses those controls to request a 32-second, seamless, instrumental, bar-accurate WAV loop through the same governed Lyria/Gemini path and loads the result as a bar-quantized loop on the selected track. Standard song generation still loads as one-shot audio. Submission creates a local asynchronous task. Cancellation before provider dispatch releases the reservation. Cancellation after dispatch leaves the task in `processing`, marks cancellation requested, and keeps polling because Google exposes no cancellation operation; a late valid result is retained and is not auto-loaded. On completion, Musica measures encoded metadata and decoded waveform, BS.1770-style integrated loudness, BPM, beat grid, onset map, spectral profile, confidence-gated musical key, probable sections, and recommended visual scene. Analysis selects a dominant-energy channel for waveform, beat, key, and spectrum so anti-phase stereo does not cancel; loudness K-weights and gates each channel before summing energy. Bass drives camera displacement, detected beats drive radial pulse, high-frequency energy controls particle count, and measured section boundaries switch terrain, bloom, or tunnel scenes during playback. Provider text is preserved as lyrics or structure when returned but is never used as measured audio metadata.
 
 Each completed task is staged beneath the Tauri application-data `generated/<task-id>` directory as create-new private files: the original MP3 or WAV, the exact provider response, and `receipt.json`. A dispatched failure attempts and finishes immutable `failure-receipt.json` storage before the task becomes visibly terminal; a successful receipt stores the typed failure, validated Google request ID when available, dispatch state, cancellation state, and whether the USD 0.08 reservation was released or conservatively recorded as potentially charged. The successful generation receipt includes content hashes, requested and measured media fields, the fixed-price basis, provider request ID, prompt or prompt hash, rights declaration, and provenance expectations. The mutable frontend convenience index stores summarized analysis rather than waveform, onset, or beat arrays and is capped at 500 entries and 2 MiB. Google documents SynthID watermarking and C2PA support; Musica currently records both as expected but does not detect SynthID or cryptographically validate C2PA. The receipts are workflow evidence, not a copyright or licensing guarantee.
 

@@ -124,6 +124,16 @@ pub(super) struct GenerationRequest {
     #[serde(default)]
     pub(super) reference_assets: Vec<ReferenceAsset>,
     #[serde(default)]
+    pub(super) seamless_loop: bool,
+    #[serde(default)]
+    pub(super) key: Option<String>,
+    #[serde(default)]
+    pub(super) tonal_center: Option<String>,
+    #[serde(default)]
+    pub(super) negative_prompt: Option<String>,
+    #[serde(default)]
+    pub(super) production_intensity: Option<f32>,
+    #[serde(default)]
     pub(super) max_cost_usd: Option<f64>,
     #[serde(default = "one_candidate")]
     pub(super) candidate_count: u8,
@@ -222,6 +232,36 @@ impl GenerationRequest {
                 "reference assets are limited to 10",
             ));
         }
+        if self
+            .key
+            .as_ref()
+            .is_some_and(|value| !valid_short_music_token(value, 40))
+        {
+            return Err(ProviderError::Validation("key is invalid"));
+        }
+        if self
+            .tonal_center
+            .as_ref()
+            .is_some_and(|value| !valid_short_music_token(value, 80))
+        {
+            return Err(ProviderError::Validation("tonalCenter is invalid"));
+        }
+        if self.negative_prompt.as_ref().is_some_and(|value| {
+            value.chars().count() > 800
+                || value.chars().any(|character| {
+                    character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+                })
+        }) {
+            return Err(ProviderError::Validation("negativePrompt is invalid"));
+        }
+        if self
+            .production_intensity
+            .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+        {
+            return Err(ProviderError::Validation(
+                "productionIntensity must be between 0 and 1",
+            ));
+        }
         for asset in &self.reference_assets {
             if asset.mime_type.trim().is_empty()
                 || asset.storage_uri.trim().is_empty()
@@ -253,6 +293,15 @@ impl GenerationRequest {
         }
         Ok(())
     }
+}
+
+fn valid_short_music_token(value: &str, max_chars: usize) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed.chars().count() <= max_chars
+        && trimmed
+            .chars()
+            .all(|character| !character.is_control() && character != '"' && character != '\\')
 }
 
 #[derive(Clone, Serialize)]
@@ -1014,6 +1063,11 @@ mod tests {
             structure: Vec::new(),
             output_format: AudioOutputFormat::Mp3,
             reference_assets: Vec::new(),
+            seamless_loop: false,
+            key: None,
+            tonal_center: None,
+            negative_prompt: None,
+            production_intensity: None,
             max_cost_usd: None,
             candidate_count: 1,
             max_attempts: 1,

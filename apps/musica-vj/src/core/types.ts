@@ -178,6 +178,11 @@ export interface GenerationRequest {
   structure?: GenerationSection[];
   outputFormat?: "mp3" | "wav";
   referenceAssets?: ReferenceAsset[];
+  seamlessLoop?: boolean;
+  key?: string;
+  tonalCenter?: string;
+  negativePrompt?: string;
+  productionIntensity?: number;
   maxCostUsd?: number;
   candidateCount?: number;
   maxAttempts?: number;

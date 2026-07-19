@@ -10,7 +10,14 @@ import {
   secondsPerStep,
 } from "../src/core/music";
 import { countLateSteps } from "../src/audio/AudioEngine";
-import { PERFORMANCE_TEMPLATES, VISUAL_SCENES } from "../src/core/presets";
+import {
+  DEFAULT_MIDI_SONG_BANK_IDS,
+  DEFAULT_PERFORMANCE_TEMPLATE_ID,
+  PERFORMANCE_TEMPLATES,
+  VISUAL_SCENES,
+  defaultPerformanceTemplate,
+  midiSongBankTemplates,
+} from "../src/core/presets";
 
 describe("music invariants", () => {
   it("converts concert A to 440 Hz", () => {
@@ -89,5 +96,16 @@ describe("music invariants", () => {
       Object.values(template.tracks).some((track) => track.notes.length > 16),
     );
     expect(templatesWithLongLanes.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("boots from the curated MIDI song bank instead of the base procedural pattern", () => {
+    const defaultTemplate = defaultPerformanceTemplate();
+    const bank = midiSongBankTemplates();
+
+    expect(defaultTemplate.id).toBe(DEFAULT_PERFORMANCE_TEMPLATE_ID);
+    expect(DEFAULT_MIDI_SONG_BANK_IDS).toContain(defaultTemplate.id as (typeof DEFAULT_MIDI_SONG_BANK_IDS)[number]);
+    expect(bank.length).toBeGreaterThanOrEqual(6);
+    expect(defaultTemplate.tracks.lead.notes.length).toBeGreaterThan(16);
+    expect(bank.filter((template) => template.tracks.lead.notes.length > 16).length).toBeGreaterThanOrEqual(4);
   });
 });

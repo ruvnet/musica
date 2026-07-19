@@ -10,14 +10,14 @@
 
 Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
 
-The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with six-track Web Audio synthesis, imported audio and MIDI clips, AI-directed performance templates, Meta-LLM set planning, governed Gemini/Lyria generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
+The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with six-track Web Audio synthesis, imported audio and MIDI clips, a curated MIDI-style startup song bank, AI-directed performance templates, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
 
 ## Current Direction
 
 | Layer | What Musica does now |
 |---|---|
 | **Agentic direction** | Meta-LLM can plan and apply a complete set state: prompt, template, BPM, scene, intensity, visual macros, temporal controls, and arrangement notes. Browser preview falls back to a deterministic local director. |
-| **Music performance** | Six live tracks, 16-step sequencing, layered Web Audio synthesis, tempo delay, convolution reverb, loop import, MIDI-file import, WEBMIDI.js controller input, prompt mutation, performance templates, per-track mix, one-shot generated song loading, and BPM/section analysis for imported or generated clips. |
+| **Music performance** | Six live tracks, 16-step sequencing, curated MIDI-style default song bank, layered Web Audio synthesis, tempo delay, convolution reverb, loop import, MIDI-file import, WEBMIDI.js controller input, prompt mutation, performance templates, per-track mix, one-shot generated song loading, seamless Gemini/Lyria loop loading, and BPM/section analysis for imported or generated clips. |
 | **Visual performance** | Eight visual-bank scenes, five VJ presets, audio-reactive Three.js systems, adaptive quality, scene color themes, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
 | **Live control** | Keyboard, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, macros, and temporal controls. |
 | **AI providers** | Rust-only governed boundaries for Gemini/Lyria music generation and Cognitum Meta-LLM planning; tokens stay out of React bundles and are checked by CI secret canaries. |
@@ -63,6 +63,8 @@ MUSICA_META_LLM_API_TOKEN=replace_with_token \
 MUSICA_META_LLM_MODEL=meta-llm \
 npm run tauri dev
 ```
+
+Google Lyria/Gemini generation can use either a Rust-only `GEMINI_API_KEY` or local GCP CLI application-default credentials with `MUSICA_GCP_AUTH=gcloud`.
 
 See [apps/musica-vj/README.md](apps/musica-vj/README.md) for the complete studio documentation, controller mappings, MIDI notes, import behavior, provider setup, screenshots, release artifacts, and verification commands.
 

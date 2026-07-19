@@ -10,6 +10,7 @@ import {
   secondsPerStep,
   STEPS_PER_BAR,
 } from "../core/music";
+import { defaultPerformanceTemplate } from "../core/presets";
 import { TRACK_IDS, type AudioMetrics, type PerformanceTemplate, type TrackDefinition, type TrackId, type TrackMix, type TrackSnapshot, type TrackTemplate } from "../core/types";
 import {
   analyzeDecodedPcm,
@@ -117,6 +118,32 @@ export function rebaseTempoClock(
   };
 }
 
+export function createEngineSnapshotFromTemplate(template: PerformanceTemplate): EngineSnapshot {
+  const definitions = createTrackDefinitions(template.id);
+  const tracks = definitions.map((definition) => {
+    const templateTrack = template.tracks[definition.id];
+    const mix = defaultMix();
+    return {
+      ...definition,
+      pattern: patternFromSteps(templateTrack.pattern),
+      notes: templateTrack.notes.slice(0, 64),
+      ...mix,
+      volume: clamp(templateTrack.volume ?? mix.volume, 0, 1),
+      pan: clamp(templateTrack.pan ?? mix.pan, -1, 1),
+      muted: false,
+      solo: false,
+    };
+  });
+  return {
+    tracks,
+    bpm: template.bpm,
+    playing: false,
+    currentStep: 0,
+    masterVolume: 0.82,
+    droppedLateSteps: 0,
+  };
+}
+
 export class AudioEngine {
   private context?: AudioContext;
   private definitions = createTrackDefinitions();
@@ -145,6 +172,13 @@ export class AudioEngine {
   private transportStartedAt = 0;
   private playing = false;
   private droppedLateSteps = 0;
+
+  constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
+    this.definitions = createTrackDefinitions(initialTemplate.id);
+    this.pendingMix = new Map<TrackId, TrackMix>(this.definitions.map((track) => [track.id, defaultMix()]));
+    this.bpm = initialTemplate.bpm;
+    this.applyTrackTemplates(initialTemplate.tracks, false);
+  }
 
   async initialize(): Promise<void> {
     if (this.context) {
@@ -708,7 +742,7 @@ export class AudioEngine {
     this.applyTrackTemplates(tracks);
   }
 
-  private applyTrackTemplates(tracks: Partial<Record<TrackId, TrackTemplate>>): void {
+  private applyTrackTemplates(tracks: Partial<Record<TrackId, TrackTemplate>>, emit = true): void {
     const definitions = this.tracks.size > 0 ? [...this.tracks.values()].map((track) => track.definition) : this.definitions;
     for (const definition of definitions) {
       const trackTemplate = tracks[definition.id];
@@ -727,7 +761,7 @@ export class AudioEngine {
         runtime.pan.pan.setTargetAtTime(runtime.mix.pan, this.context?.currentTime ?? 0, 0.012);
       }
     }
-    this.applyMix();
+    if (emit) this.applyMix();
   }
 
   mutate(seedPhrase: string): void {

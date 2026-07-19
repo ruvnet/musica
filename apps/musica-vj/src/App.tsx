@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AudioEngine, type EngineSnapshot } from "./audio/AudioEngine";
+import { AudioEngine, createEngineSnapshotFromTemplate, type EngineSnapshot } from "./audio/AudioEngine";
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
 import {
@@ -13,8 +13,7 @@ import {
   type CompositionSection,
   type StructuredComposition,
 } from "./core/composition";
-import { createTrackDefinitions, defaultMix } from "./core/music";
-import { DEFAULT_TEMPORAL_CONTROLS, PERFORMANCE_TEMPLATES, SOCIAL_PRESETS, VISUAL_PRESETS, VISUAL_SCENES, performanceTemplateById } from "./core/presets";
+import { DEFAULT_TEMPORAL_CONTROLS, PERFORMANCE_TEMPLATES, SOCIAL_PRESETS, VISUAL_PRESETS, VISUAL_SCENES, defaultPerformanceTemplate, performanceTemplateById } from "./core/presets";
 import {
   cancelGeneration,
   downloadGeneratedAudio,
@@ -27,20 +26,13 @@ import { importMidiPerformance } from "./core/midiImport";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
 import {
-  DEFAULT_ART_DIRECTION,
   VisualEngine,
   type RenderStats,
   type VisualArtDirection,
 } from "./visual/VisualEngine";
 
-const INITIAL_SNAPSHOT: EngineSnapshot = {
-  tracks: createTrackDefinitions().map((track) => ({ ...track, ...defaultMix() })),
-  bpm: 112,
-  playing: false,
-  currentStep: 0,
-  masterVolume: 0.82,
-  droppedLateSteps: 0,
-};
+const DEFAULT_TEMPLATE = defaultPerformanceTemplate();
+const INITIAL_SNAPSHOT: EngineSnapshot = createEngineSnapshotFromTemplate(DEFAULT_TEMPLATE);
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -88,8 +80,8 @@ export function App() {
   const visualRef = useRef<VisualEngine | null>(null);
   const recorderRef = useRef<SocialRecorder | null>(null);
   const selectedTrackRef = useRef<TrackId>("drums");
-  const selectedSceneRef = useRef<VisualSceneId>("bloom");
-  const intensityRef = useRef(0.72);
+  const selectedSceneRef = useRef<VisualSceneId>(DEFAULT_TEMPLATE.scene);
+  const intensityRef = useRef(DEFAULT_TEMPLATE.intensity);
   const snapshotRef = useRef(INITIAL_SNAPSHOT);
   const selectedPresetRef = useRef<SocialPreset>(SOCIAL_PRESETS[2]);
   const generationLockRef = useRef(false);
@@ -99,10 +91,10 @@ export function App() {
 
   const [snapshot, setSnapshot] = useState(INITIAL_SNAPSHOT);
   const [selectedTrack, setSelectedTrack] = useState<TrackId>("drums");
-  const [selectedScene, setSelectedScene] = useState<VisualSceneId>("bloom");
-  const [intensity, setIntensity] = useState(0.72);
-  const [artDirection, setArtDirection] = useState<VisualArtDirection>({ ...DEFAULT_ART_DIRECTION });
-  const [temporalControls, setTemporalControls] = useState<VisualTemporalControls>({ ...DEFAULT_TEMPORAL_CONTROLS });
+  const [selectedScene, setSelectedScene] = useState<VisualSceneId>(DEFAULT_TEMPLATE.scene);
+  const [intensity, setIntensity] = useState(DEFAULT_TEMPLATE.intensity);
+  const [artDirection, setArtDirection] = useState<VisualArtDirection>(DEFAULT_TEMPLATE.artDirection);
+  const [temporalControls, setTemporalControls] = useState<VisualTemporalControls>(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
   const [controllerStatus, setControllerStatus] = useState(INITIAL_CONTROLLER_STATUS);
   const [renderStats, setRenderStats] = useState<RenderStats>({ fps: 0, frameTimeMs: 0, pixelRatio: 1, quality: "adaptive" });
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>({ available: false, provider: "checking" });
@@ -110,9 +102,13 @@ export function App() {
   const [agentGoal, setAgentGoal] = useState("Make this set evolve into a darker peak-time system with sharper drums and a clearer visual hook.");
   const [agentPlan, setAgentPlan] = useState<AgentPlan>();
   const [agentBusy, setAgentBusy] = useState(false);
-  const [prompt, setPrompt] = useState("melodic techno, cinematic electronica, hypnotic and euphoric, warm analog synthesizers");
+  const [prompt, setPrompt] = useState(DEFAULT_TEMPLATE.prompt);
   const [generationDuration, setGenerationDuration] = useState(150);
-  const [generationBpm, setGenerationBpm] = useState(128);
+  const [generationBpm, setGenerationBpm] = useState(DEFAULT_TEMPLATE.bpm);
+  const [generationKey, setGenerationKey] = useState("F minor");
+  const [tonalCenter, setTonalCenter] = useState("deep F sub bass, bright minor chord stabs, crisp metallic top loop");
+  const [productionIntensity, setProductionIntensity] = useState(0.82);
+  const [negativePrompt, setNegativePrompt] = useState("muddy low end, weak kick, random fills, long intro, long fade out, washed out transients");
   const [instrumental, setInstrumental] = useState(true);
   const [generationLanguage, setGenerationLanguage] = useState<(typeof LYRIA_VOCAL_LANGUAGES)[number]>("English");
   const [lyrics, setLyrics] = useState("");
@@ -127,7 +123,7 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
-  const [notice, setNotice] = useState("Ready. Press play to wake the audio engine.");
+  const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded from the built-in MIDI song bank. Press play to wake the audio engine.`);
 
   const selectedTrackSnapshot = useMemo(
     () => snapshot.tracks.find((track) => track.id === selectedTrack) ?? snapshot.tracks[0],
@@ -181,6 +177,10 @@ export function App() {
     const visual = new VisualEngine(canvas, engineRef.current);
     visualRef.current = visual;
     visual.start();
+    visual.setScene(DEFAULT_TEMPLATE.scene);
+    visual.setIntensity(DEFAULT_TEMPLATE.intensity);
+    visual.setArtDirection(DEFAULT_TEMPLATE.artDirection);
+    visual.setTemporalControls(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
     const recorder = new SocialRecorder(canvas, engineRef.current, visual);
     recorderRef.current = recorder;
     const unlistenStats = visual.subscribeStats(setRenderStats);
@@ -468,7 +468,7 @@ export function App() {
     setNotice("Local performance DNA mutated from the prompt.");
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (loopMode = false) => {
     if (generationLockRef.current) return;
     if (activeGenerationIdRef.current) {
       setNotice("The current paid generation must finish or be cancelled before another candidate is submitted.");
@@ -495,27 +495,44 @@ export function App() {
 
       const normalized = prompt.trim();
       if (!normalized) throw new Error("Creative direction is required");
-      const structure = parseStructure(structureText, generationDuration);
+      const targetDuration = loopMode ? 32 : generationDuration;
+      const targetOutputFormat = loopMode ? "wav" : outputFormat;
+      const structure = loopMode
+        ? [
+            { time: "0:00", section: "bar 1 downbeat" },
+            { time: "0:08", section: "variation enters" },
+            { time: "0:16", section: "midpoint lift" },
+            { time: "0:24", section: "return phrase" },
+          ]
+        : parseStructure(structureText, targetDuration);
       const specification: StructuredComposition = {
-        durationSeconds: generationDuration,
+        durationSeconds: targetDuration,
         genre: [normalized],
         bpm: generationBpm,
         timeSignature: "4/4",
+        loop: loopMode ? { enabled: true, bars: 16, seamless: true } : undefined,
+        tonal: {
+          key: generationKey.trim() || undefined,
+          tonalCenter: tonalCenter.trim() || undefined,
+          intensity: productionIntensity,
+          negativePrompt: negativePrompt.trim() || undefined,
+        },
         vocals: {
-          enabled: !instrumental,
-          language: instrumental ? undefined : generationLanguage,
-          lyrics: !instrumental && lyrics.trim() ? lyrics.trim() : undefined,
+          enabled: loopMode ? false : !instrumental,
+          language: loopMode || instrumental ? undefined : generationLanguage,
+          lyrics: !loopMode && !instrumental && lyrics.trim() ? lyrics.trim() : undefined,
         },
         structure,
-        socialHook: { startSeconds: 0, durationSeconds: Math.min(12, generationDuration) },
+        socialHook: { startSeconds: 0, durationSeconds: Math.min(12, targetDuration) },
         visualSyncCues: [
           "clear beat transients",
           "audible section changes",
           "dynamic contrast for synchronized Three.js scenes",
+          loopMode ? "bar-accurate downbeat for seamless visual loop capture" : "song-scale arrangement changes",
         ],
-        outputFormat,
+        outputFormat: targetOutputFormat,
       };
-      const route = selectGenerationRoute(specification);
+      const route = selectGenerationRoute(specification, loopMode ? {} : undefined);
       if (!route.availableInV1 || route.route !== "pro") throw new Error(route.reason);
       const reservation = reserveGenerationCost("pro", 1, LYRIA_PRO_PRICE_USD);
       compiledPrompt = compileLyriaPrompt(specification);
@@ -525,16 +542,21 @@ export function App() {
       task = await generateMusic({
         prompt: compiledPrompt,
         durationSeconds: specification.durationSeconds,
-        instrumental,
-        language: instrumental ? undefined : generationLanguage,
+        instrumental: loopMode ? true : instrumental,
+        language: loopMode || instrumental ? undefined : generationLanguage,
         bpm: generationBpm,
-        lyrics: !instrumental && lyrics.trim() ? lyrics.trim() : undefined,
+        lyrics: !loopMode && !instrumental && lyrics.trim() ? lyrics.trim() : undefined,
         structure: structure.map((section) => ({
           timeSeconds: timestampToSeconds(section.time) ?? 0,
           section: section.section,
         })),
-        outputFormat,
+        outputFormat: targetOutputFormat,
         referenceAssets: [],
+        seamlessLoop: loopMode,
+        key: generationKey.trim() || undefined,
+        tonalCenter: tonalCenter.trim() || undefined,
+        negativePrompt: negativePrompt.trim() || undefined,
+        productionIntensity,
         maxCostUsd: reservation.reservedCostUsd,
         candidateCount: 1,
         maxAttempts: 1,
@@ -545,7 +567,7 @@ export function App() {
       activeGenerationIdRef.current = task.id;
       setGeneration(task);
       setBudgetConfirmed(false);
-      setNotice(`Reserved $${(task.reservedCostUsd ?? reservation.reservedCostUsd).toFixed(2)}. Lyria is generating asynchronously…`);
+      setNotice(`Reserved $${(task.reservedCostUsd ?? reservation.reservedCostUsd).toFixed(2)}. Lyria is generating ${loopMode ? "a seamless loop" : "asynchronously"}…`);
 
       let consecutiveStatusErrors = 0;
       while (["queued", "processing"].includes(task.status)) {
@@ -575,8 +597,8 @@ export function App() {
           const loaded = await engineRef.current.loadAudioFile(
             targetTrackId,
             bytes,
-            `${task.title ?? task.id}.${outputFormat}`,
-            { declaredMimeType: task.audioMimeType, loop: false, requireEncodedValidation: true },
+            `${task.title ?? task.id}.${targetOutputFormat}`,
+            { declaredMimeType: task.audioMimeType, loop: loopMode, requireEncodedValidation: true },
           );
           if (loaded.analysis.bpm !== null) engineRef.current.setBpm(loaded.analysis.bpm);
           changeScene(loaded.analysis.recommendedScene);
@@ -590,7 +612,7 @@ export function App() {
           const outputWarning = task.errorCode === "output_shorter_than_requested"
             ? " Provider output was materially shorter than requested."
             : "";
-          outcomeNotice = `${(loaded.encoded?.codec ?? outputFormat).toUpperCase()} loaded one-shot into ${targetTrackId}: ${loaded.analysis.durationSeconds.toFixed(1)}s · ${(sourceRate / 1000).toFixed(1)} kHz source · ${sourceChannels} ch · ${measuredBpm} · ${musicalKey}.${outputWarning}`;
+          outcomeNotice = `${(loaded.encoded?.codec ?? targetOutputFormat).toUpperCase()} loaded ${loopMode ? "as a bar-quantized loop" : "one-shot"} into ${targetTrackId}: ${loaded.analysis.durationSeconds.toFixed(1)}s · ${(sourceRate / 1000).toFixed(1)} kHz source · ${sourceChannels} ch · ${measuredBpm} · ${musicalKey}.${outputWarning}`;
         }
       } else if (task.status === "failed") {
         throw new Error(task.errorCode ? `Lyria generation failed: ${task.errorCode}` : "Lyria generation failed");
@@ -858,6 +880,28 @@ export function App() {
                   <em>BPM</em>
                 </label>
                 <label>
+                  <span>KEY</span>
+                  <input
+                    aria-label="Generated music key"
+                    maxLength={40}
+                    value={generationKey}
+                    onChange={(event) => setGenerationKey(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>INTENSITY</span>
+                  <input
+                    aria-label="Production intensity"
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={productionIntensity}
+                    onChange={(event) => setProductionIntensity(Number(event.target.value))}
+                  />
+                  <em>{Math.round(productionIntensity * 100)}</em>
+                </label>
+                <label>
                   <span>FORMAT</span>
                   <select
                     aria-label="Generated audio format"
@@ -901,6 +945,26 @@ export function App() {
                 />
               </label>
 
+              <label className="generation-textarea">
+                <span>TONAL CENTER / SOUND DESIGN</span>
+                <textarea
+                  aria-label="Tonal center and sound design"
+                  value={tonalCenter}
+                  maxLength={800}
+                  onChange={(event) => setTonalCenter(event.target.value)}
+                />
+              </label>
+
+              <label className="generation-textarea">
+                <span>AVOID</span>
+                <textarea
+                  aria-label="Negative music prompt"
+                  value={negativePrompt}
+                  maxLength={800}
+                  onChange={(event) => setNegativePrompt(event.target.value)}
+                />
+              </label>
+
               <label className="generation-textarea structure-field">
                 <span>STRUCTURE · MM:SS SECTION</span>
                 <textarea
@@ -927,6 +991,9 @@ export function App() {
 
               <button className="generate-button" onClick={() => void handleGenerate()} disabled={!paidGenerationReady}>
                 {generating ? "GENERATING WITH LYRIA…" : lyriaAvailable ? "GENERATE WITH LYRIA · $0.08" : "LYRIA 3 PRO OFFLINE"}
+              </button>
+              <button className="generate-button loop-generate-button" onClick={() => void handleGenerate(true)} disabled={!paidGenerationReady}>
+                {generating ? "GENERATING LOOP…" : lyriaAvailable ? "GENERATE BETTER LOOP · GCP/GEMINI" : "GCP/GEMINI LOOP OFFLINE"}
               </button>
               {generationIsActive && (
                 <button
