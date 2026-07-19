@@ -28,6 +28,19 @@ describe("control routing", () => {
     await router.stop();
   });
 
+  it("maps the hardware play/pause keyboard key to transport toggle", async () => {
+    const router = new ControlRouter();
+    const listener = vi.fn();
+    router.subscribe(listener);
+    await router.start();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "MediaPlayPause" }));
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+      action: "transport.toggle",
+      source: "keyboard",
+    }));
+    await router.stop();
+  });
+
   it("calculates tap tempo from the median interval", () => {
     const tap = new TapTempo();
     expect(tap.tap(1_000)).toBeUndefined();

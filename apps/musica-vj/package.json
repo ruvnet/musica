@@ -11,6 +11,8 @@
     "test:run": "vitest run --coverage=false",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
+    "dev:lyria": "node scripts/dev-lyria-env.mjs",
+    "dev:lyria:gcloud": "node scripts/dev-lyria-gcloud.mjs",
     "render:samples": "node scripts/render-samples.mjs",
     "verify:samples": "node scripts/verify-samples.mjs",
     "verify:samples:reproducible": "node scripts/verify-reproducibility.mjs",

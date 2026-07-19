@@ -61,6 +61,7 @@ These artifacts are for validation and internal distribution. Public macOS relea
 | Input | Action |
 |---|---|
 | Space | Play or pause |
+| Keyboard media Play/Pause | Play or pause |
 | R | Start or stop capture |
 | T | Tap tempo |
 | Enter | Trigger the selected track |
@@ -123,25 +124,23 @@ A runtime environment variable cannot widen the compiled provider allowlist. The
 Lyria is a separate provider adapter for complete songs. It is optional, paid, and disabled unless all required settings are present in the Tauri process environment:
 
 ```sh
-MUSICA_CREATIVE_ENABLED=true \
-MUSICA_CREATIVE_PROVIDER=lyria_3_pro \
-GEMINI_API_KEY=replace_with_your_google_api_key \
-MUSICA_CREATIVE_MAX_GENERATION_USD=0.32 \
-MUSICA_CREATIVE_REQUEST_TIMEOUT_SECONDS=600 \
-MUSICA_CREATIVE_RETAIN_PROMPTS=false \
-MUSICA_CREATIVE_TERMS_VERSION=reviewed_2026_07_18 \
-npm run tauri dev
+GEMINI_API_KEY=replace_with_your_google_api_key
+npm run dev:lyria
 ```
 
-For local GCP CLI authentication instead of an API key, first run `gcloud auth application-default login`, then launch with:
+`dev:lyria` loads `GEMINI_API_KEY` from the shell or the nearest parent `.env` file, probes the Gemini Models endpoint to catch invalid or over-restricted keys before launch, starts Tauri with `MUSICA_CREATIVE_ENABLED=true` and `MUSICA_CREATIVE_PROVIDER=lyria_3_pro`, and keeps the key out of tracked source. The repository ignores `.env` and `.env.*`; do not commit local provider credentials.
+
+For local GCP CLI authentication instead of an API key, first sign in with application-default credentials scoped for Google Cloud APIs, then launch with:
 
 ```sh
-MUSICA_CREATIVE_ENABLED=true \
-MUSICA_CREATIVE_PROVIDER=lyria_3_pro \
-MUSICA_GCP_AUTH=gcloud \
-MUSICA_CREATIVE_MAX_GENERATION_USD=0.32 \
-npm run tauri dev
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/generative-language.retriever
+gcloud auth application-default set-quota-project ruv-dev
+npm run dev:lyria:gcloud
 ```
+
+If Google requires an OAuth client for the Gemini scope, create a Google Auth Platform desktop OAuth client, download it as `client_secret.json`, and add `--client-id-file=client_secret.json` to the `application-default login` command.
+
+`dev:lyria:gcloud` checks that `gcloud` is installed, verifies application-default credentials without printing the access token, probes the Gemini Models endpoint for OAuth scope access, then starts Tauri with `MUSICA_CREATIVE_ENABLED=true`, `MUSICA_CREATIVE_PROVIDER=lyria_3_pro`, and `MUSICA_GCP_AUTH=gcloud`. It defaults the running-process generation ceiling to USD 0.32 and prompt retention to hashed receipts unless those environment variables are already set. A normal `gcloud auth login` token is not enough for this path because it can lack the scopes required by the Gemini Interactions API.
 
 | Setting | Meaning |
 |---|---|

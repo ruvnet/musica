@@ -242,6 +242,11 @@ export function App() {
   }, [snapshot]);
 
   useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = snapshot.playing ? "playing" : "paused";
+  }, [snapshot.playing]);
+
+  useEffect(() => {
     selectedPresetRef.current = selectedPreset;
   }, [selectedPreset]);
 
@@ -1284,7 +1289,7 @@ export function App() {
             </select>
           </label>
           {lastRecording && <button className="save-button" onClick={() => void saveLastRecording()}>SAVE LAST CAPTURE</button>}
-          <span className="shortcut-hint">SPACE PLAY · R RECORD · ARROWS NAVIGATE</span>
+          <span className="shortcut-hint">SPACE/MEDIA PLAY · R RECORD · ARROWS NAVIGATE</span>
         </div>
       </footer>
     </main>

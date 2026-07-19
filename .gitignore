@@ -1,6 +1,8 @@
 /target
 Cargo.lock
 !/Cargo.lock
+.env
+.env.*
 *.wav
 *.mp3
 *.flac
