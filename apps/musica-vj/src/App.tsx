@@ -26,8 +26,11 @@ import { importMidiPerformance } from "./core/midiImport";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
 import {
+  VISUAL_ANIMATION_STYLES,
   VisualEngine,
+  normalizeAnimationStyle,
   type RenderStats,
+  type VisualAnimationStyle,
   type VisualArtDirection,
 } from "./visual/VisualEngine";
 
@@ -51,6 +54,69 @@ const DEFAULT_STRUCTURE = `0:00 atmospheric intro
 1:12 breakdown
 1:35 larger second drop
 2:15 short outro`;
+
+interface SceneVisualSettings {
+  intensity: number;
+  artDirection: VisualArtDirection;
+  temporal: VisualTemporalControls;
+  animationStyle: VisualAnimationStyle;
+}
+
+type SceneVisualSettingsMap = Record<VisualSceneId, SceneVisualSettings>;
+
+const DEFAULT_SCENE_VISUAL_SETTINGS: SceneVisualSettings = {
+  intensity: DEFAULT_TEMPLATE.intensity,
+  artDirection: DEFAULT_TEMPLATE.artDirection,
+  temporal: DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+  animationStyle: defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene),
+};
+
+function defaultAnimationStyleForScene(scene: VisualSceneId): VisualAnimationStyle {
+  switch (scene) {
+    case "tunnel":
+    case "lasergrid":
+      return "warp";
+    case "terrain":
+    case "aurora":
+      return "scan";
+    case "monolith":
+      return "minimal";
+    case "pulsefield":
+      return "shards";
+    case "bloom":
+    case "chromawave":
+    default:
+      return "flow";
+  }
+}
+
+function cloneVisualSettings(settings: SceneVisualSettings): SceneVisualSettings {
+  return {
+    intensity: Math.max(0.05, Math.min(1, settings.intensity)),
+    artDirection: { ...settings.artDirection },
+    temporal: { ...settings.temporal },
+    animationStyle: normalizeAnimationStyle(settings.animationStyle),
+  };
+}
+
+function createInitialSceneVisualSettings(): SceneVisualSettingsMap {
+  return Object.fromEntries(
+    VISUAL_SCENES.map((scene) => {
+      const visualPreset = VISUAL_PRESETS.find((preset) => preset.scene === scene.id);
+      const performanceTemplate = PERFORMANCE_TEMPLATES.find((template) => template.scene === scene.id);
+      const settings = visualPreset ?? performanceTemplate ?? DEFAULT_SCENE_VISUAL_SETTINGS;
+      return [
+        scene.id,
+        cloneVisualSettings({
+          intensity: settings.intensity,
+          artDirection: settings.artDirection,
+          temporal: settings.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+          animationStyle: defaultAnimationStyleForScene(scene.id),
+        }),
+      ];
+    }),
+  ) as SceneVisualSettingsMap;
+}
 
 function parseStructure(value: string, durationSeconds: number): CompositionSection[] {
   const lines = value
@@ -88,6 +154,10 @@ export function App() {
   const cancellationLockRef = useRef(false);
   const activeGenerationIdRef = useRef<string | undefined>(undefined);
   const submissionRequestIdRef = useRef<string | undefined>(undefined);
+  const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
+    ...createInitialSceneVisualSettings(),
+    [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
+  });
 
   const [snapshot, setSnapshot] = useState(INITIAL_SNAPSHOT);
   const [selectedTrack, setSelectedTrack] = useState<TrackId>("drums");
@@ -95,6 +165,8 @@ export function App() {
   const [intensity, setIntensity] = useState(DEFAULT_TEMPLATE.intensity);
   const [artDirection, setArtDirection] = useState<VisualArtDirection>(DEFAULT_TEMPLATE.artDirection);
   const [temporalControls, setTemporalControls] = useState<VisualTemporalControls>(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
+  const [animationStyle, setAnimationStyle] = useState<VisualAnimationStyle>(defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene));
+  const [sceneVisualSettings, setSceneVisualSettings] = useState<SceneVisualSettingsMap>(() => sceneVisualSettingsRef.current);
   const [controllerStatus, setControllerStatus] = useState(INITIAL_CONTROLLER_STATUS);
   const [renderStats, setRenderStats] = useState<RenderStats>({ fps: 0, frameTimeMs: 0, pixelRatio: 1, quality: "adaptive" });
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>({ available: false, provider: "checking" });
@@ -162,12 +234,20 @@ export function App() {
   }, [temporalControls]);
 
   useEffect(() => {
+    visualRef.current?.setAnimationStyle(animationStyle);
+  }, [animationStyle]);
+
+  useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
 
   useEffect(() => {
     selectedPresetRef.current = selectedPreset;
   }, [selectedPreset]);
+
+  useEffect(() => {
+    sceneVisualSettingsRef.current = sceneVisualSettings;
+  }, [sceneVisualSettings]);
 
   useEffect(() => engineRef.current.subscribe(setSnapshot), []);
 
@@ -181,12 +261,23 @@ export function App() {
     visual.setIntensity(DEFAULT_TEMPLATE.intensity);
     visual.setArtDirection(DEFAULT_TEMPLATE.artDirection);
     visual.setTemporalControls(DEFAULT_TEMPLATE.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
+    visual.setAnimationStyle(defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene));
     const recorder = new SocialRecorder(canvas, engineRef.current, visual);
     recorderRef.current = recorder;
     const unlistenStats = visual.subscribeStats(setRenderStats);
     const unlistenScene = visual.subscribeScene((scene) => {
       selectedSceneRef.current = scene;
       setSelectedScene(scene);
+      const settings = sceneVisualSettingsRef.current[scene] ?? DEFAULT_SCENE_VISUAL_SETTINGS;
+      setIntensity(settings.intensity);
+      intensityRef.current = settings.intensity;
+      setArtDirection(settings.artDirection);
+      setTemporalControls(settings.temporal);
+      setAnimationStyle(settings.animationStyle);
+      visual.setIntensity(settings.intensity);
+      visual.setArtDirection(settings.artDirection);
+      visual.setTemporalControls(settings.temporal);
+      visual.setAnimationStyle(settings.animationStyle);
     });
     const unlistenResults = recorder.subscribeResults((result) => {
       setRecording(false);
@@ -209,11 +300,40 @@ export function App() {
     };
   }, []);
 
+  const applySceneSettings = useCallback((settings: SceneVisualSettings) => {
+    const next = cloneVisualSettings(settings);
+    setIntensity(next.intensity);
+    intensityRef.current = next.intensity;
+    visualRef.current?.setIntensity(next.intensity);
+    setArtDirection(next.artDirection);
+    visualRef.current?.setArtDirection(next.artDirection);
+    setTemporalControls(next.temporal);
+    visualRef.current?.setTemporalControls(next.temporal);
+    setAnimationStyle(next.animationStyle);
+    visualRef.current?.setAnimationStyle(next.animationStyle);
+  }, []);
+
+  const saveSceneSettings = useCallback((scene: VisualSceneId, settings: Partial<SceneVisualSettings>) => {
+    setSceneVisualSettings((current) => {
+      const existing = current[scene] ?? DEFAULT_SCENE_VISUAL_SETTINGS;
+      return {
+        ...current,
+        [scene]: cloneVisualSettings({
+          intensity: settings.intensity ?? existing.intensity,
+          artDirection: settings.artDirection ?? existing.artDirection,
+          temporal: settings.temporal ?? existing.temporal,
+          animationStyle: settings.animationStyle ?? existing.animationStyle,
+        }),
+      };
+    });
+  }, []);
+
   const changeScene = useCallback((scene: VisualSceneId) => {
     setSelectedScene(scene);
     selectedSceneRef.current = scene;
     visualRef.current?.setScene(scene);
-  }, []);
+    applySceneSettings(sceneVisualSettings[scene] ?? DEFAULT_SCENE_VISUAL_SETTINGS);
+  }, [applySceneSettings, sceneVisualSettings]);
 
   const changeTrack = useCallback((track: TrackId) => {
     selectedTrackRef.current = track;
@@ -225,49 +345,80 @@ export function App() {
     setIntensity(value);
     intensityRef.current = value;
     visualRef.current?.setIntensity(value);
-  }, []);
+    saveSceneSettings(selectedSceneRef.current, { intensity: value });
+  }, [saveSceneSettings]);
 
   const changeArtDirection = useCallback((key: keyof VisualArtDirection, value: number) => {
-    setArtDirection((current) => ({ ...current, [key]: Math.max(0, Math.min(1, value)) }));
-  }, []);
+    setArtDirection((current) => {
+      const next = { ...current, [key]: Math.max(0, Math.min(1, value)) };
+      saveSceneSettings(selectedSceneRef.current, { artDirection: next });
+      return next;
+    });
+  }, [saveSceneSettings]);
 
   const changeTemporalControl = useCallback((key: keyof VisualTemporalControls, value: number) => {
-    setTemporalControls((current) => ({ ...current, [key]: Math.max(0, Math.min(1, value)) }));
-  }, []);
+    setTemporalControls((current) => {
+      const next = { ...current, [key]: Math.max(0, Math.min(1, value)) };
+      saveSceneSettings(selectedSceneRef.current, { temporal: next });
+      return next;
+    });
+  }, [saveSceneSettings]);
+
+  const changeAnimationStyle = useCallback((style: VisualAnimationStyle) => {
+    const next = normalizeAnimationStyle(style);
+    setAnimationStyle(next);
+    visualRef.current?.setAnimationStyle(next);
+    saveSceneSettings(selectedSceneRef.current, { animationStyle: next });
+  }, [saveSceneSettings]);
 
   const applyVisualPreset = useCallback((presetId: string) => {
     const preset = VISUAL_PRESETS.find((candidate) => candidate.id === presetId) ?? VISUAL_PRESETS[0];
+    const settings = {
+      intensity: preset.intensity,
+      artDirection: preset.artDirection,
+      temporal: preset.temporal,
+      animationStyle: sceneVisualSettings[preset.scene]?.animationStyle ?? defaultAnimationStyleForScene(preset.scene),
+    };
+    saveSceneSettings(preset.scene, settings);
     changeScene(preset.scene);
-    changeIntensity(preset.intensity);
-    setArtDirection(preset.artDirection);
-    setTemporalControls(preset.temporal);
+    applySceneSettings(settings);
     setNotice(`${preset.name} visual preset applied.`);
-  }, [changeIntensity, changeScene]);
+  }, [applySceneSettings, changeScene, saveSceneSettings, sceneVisualSettings]);
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
     engineRef.current.applyPerformanceTemplate(template);
     setPrompt(template.prompt);
     setGenerationBpm(template.bpm);
+    const settings = {
+      intensity: template.intensity,
+      artDirection: template.artDirection,
+      temporal: template.temporal ?? sceneVisualSettings[template.scene]?.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+      animationStyle: sceneVisualSettings[template.scene]?.animationStyle ?? defaultAnimationStyleForScene(template.scene),
+    };
+    saveSceneSettings(template.scene, settings);
     changeScene(template.scene);
-    changeIntensity(template.intensity);
-    setArtDirection(template.artDirection);
-    if (template.temporal) setTemporalControls(template.temporal);
+    applySceneSettings(settings);
     setNotice(`${template.name} template applied across rhythm, mix, and visuals.`);
-  }, [changeIntensity, changeScene]);
+  }, [applySceneSettings, changeScene, saveSceneSettings, sceneVisualSettings]);
 
   const applyAgentPlan = useCallback((plan: AgentPlan) => {
     const template = performanceTemplateById(plan.templateId);
     engineRef.current.applyPerformanceTemplate({ ...template, bpm: plan.bpm, scene: plan.scene, intensity: plan.intensity, artDirection: plan.artDirection });
     setPrompt(plan.prompt);
     setGenerationBpm(plan.bpm);
+    const settings = {
+      intensity: plan.intensity,
+      artDirection: plan.artDirection,
+      temporal: plan.temporal ?? template.temporal ?? sceneVisualSettings[plan.scene]?.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS },
+      animationStyle: sceneVisualSettings[plan.scene]?.animationStyle ?? defaultAnimationStyleForScene(plan.scene),
+    };
+    saveSceneSettings(plan.scene, settings);
     changeScene(plan.scene);
-    changeIntensity(plan.intensity);
-    setArtDirection(plan.artDirection);
-    setTemporalControls(plan.temporal ?? template.temporal ?? { ...DEFAULT_TEMPORAL_CONTROLS });
+    applySceneSettings(settings);
     setAgentPlan(plan);
     setNotice(`Agent applied: ${plan.title}.`);
-  }, [changeIntensity, changeScene]);
+  }, [applySceneSettings, changeScene, saveSceneSettings, sceneVisualSettings]);
 
   const stopRecording = useCallback(async () => {
     const recorder = recorderRef.current;
@@ -741,6 +892,25 @@ export function App() {
             ))}
           </div>
 
+          <section className="template-bank animation-style-bank" aria-label="Scene animation style">
+            <div className="artist-macros-heading">
+              <span>ANIMATION</span><b>{selectedSceneMeta.label}</b>
+            </div>
+            <div className="animation-style-grid">
+              {VISUAL_ANIMATION_STYLES.map((style) => (
+                <button
+                  key={style.id}
+                  className={style.id === animationStyle ? "selected" : ""}
+                  title={style.description}
+                  onClick={() => changeAnimationStyle(style.id)}
+                >
+                  <strong>{style.label}</strong>
+                  <span>{style.description}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
           <section className="template-bank" aria-label="Performance templates">
             <div className="artist-macros-heading">
               <span>TEMPLATES</span><b>{PERFORMANCE_TEMPLATES.length}</b>
@@ -770,13 +940,13 @@ export function App() {
           </section>
 
           <label className="control-block">
-            <span><b>REACTIVITY</b><em>{Math.round(intensity * 100)}%</em></span>
+            <span><b>REACTIVITY · SCENE</b><em>{Math.round(intensity * 100)}%</em></span>
             <input type="range" min="0.05" max="1" step="0.01" value={intensity} onChange={(event) => changeIntensity(Number(event.target.value))} />
           </label>
 
           <section className="artist-macros" aria-label="Live visual instrument controls">
             <div className="artist-macros-heading">
-              <span>ARTIST MACROS</span><b>LIVE</b>
+              <span>ARTIST MACROS</span><b>{selectedSceneMeta.label}</b>
             </div>
             {([
               ["sculpture", "SCULPTURE"],
@@ -801,7 +971,7 @@ export function App() {
 
           <section className="artist-macros temporal-controls" aria-label="Temporal visual controls">
             <div className="artist-macros-heading">
-              <span>TEMPORAL</span><b>LIVE</b>
+              <span>TEMPORAL</span><b>{selectedSceneMeta.label}</b>
             </div>
             {([
               ["speed", "SPEED"],

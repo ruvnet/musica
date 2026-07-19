@@ -46,6 +46,35 @@ export interface VisualArtDirection {
   ribbon: number;
 }
 
+export const VISUAL_ANIMATION_STYLES = [
+  { id: "flow", label: "FLOW", description: "liquid particle streams" },
+  { id: "orbit", label: "ORBIT", description: "rotating camera sculpture" },
+  { id: "warp", label: "WARP", description: "forward tunnel thrust" },
+  { id: "shards", label: "SHARDS", description: "fragmented crystalline hits" },
+  { id: "scan", label: "SCAN", description: "raster sweeps and wave scans" },
+  { id: "minimal", label: "MIN", description: "restrained architectural motion" },
+] as const;
+
+export type VisualAnimationStyle = (typeof VISUAL_ANIMATION_STYLES)[number]["id"];
+
+interface AnimationStyleFactors {
+  styleIndex: number;
+  cameraOrbit: number;
+  cameraPush: number;
+  tunnelTravel: number;
+  tunnelTwist: number;
+  bloomScale: number;
+  bloomSpin: number;
+  flowScale: number;
+  flowDraw: number;
+  beamScale: number;
+  afterimageScale: number;
+  terrainWave: number;
+  waveformScale: number;
+  coreSpin: number;
+  opacityScale: number;
+}
+
 export const DEFAULT_ART_DIRECTION: Readonly<VisualArtDirection> = Object.freeze({
   sculpture: 0.78,
   motion: 0.46,
@@ -73,6 +102,10 @@ export function normalizeTemporalControls(controls: VisualTemporalControls): Vis
     camera: bounded(controls.camera),
     phase: bounded(controls.phase),
   };
+}
+
+export function normalizeAnimationStyle(style: string | undefined): VisualAnimationStyle {
+  return VISUAL_ANIMATION_STYLES.some((candidate) => candidate.id === style) ? style as VisualAnimationStyle : "flow";
 }
 
 export function frequencyBandEnergy(
@@ -110,8 +143,8 @@ export function mapVisualAudioResponse(
     waveformAmplitude: (0.16 + beat * 0.84) * boundedIntensity,
     hazeOpacity: (0.1 + high * 0.42) * boundedIntensity,
     flowCurl: (0.18 + mid * 0.72 + beat * 0.42) * boundedIntensity,
-    beamIntensity: (0.08 + bass * 0.48 + high * 0.38 + beat * 0.5) * boundedIntensity,
-    afterimageOpacity: (0.04 + beat * 0.48 + high * 0.14) * boundedIntensity,
+    beamIntensity: (0.05 + bass * 0.32 + high * 0.24 + beat * 0.34) * boundedIntensity,
+    afterimageOpacity: (0.025 + beat * 0.28 + high * 0.08) * boundedIntensity,
   };
 }
 
@@ -174,6 +207,7 @@ export class VisualEngine {
   private intensity = 0.72;
   private artDirection: VisualArtDirection = { ...DEFAULT_ART_DIRECTION };
   private temporal: VisualTemporalControls = { ...DEFAULT_TEMPORAL_CONTROLS };
+  private animationStyle: VisualAnimationStyle = "flow";
   private pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
   private frameTimeEma = 16.67;
   private lastFrameAt = performance.now();
@@ -195,7 +229,7 @@ export class VisualEngine {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 0.86;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.autoClear = false;
 
@@ -255,7 +289,7 @@ export class VisualEngine {
     this.composer = new EffectComposer(this.renderer);
     this.composer.setPixelRatio(this.pixelRatio);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.composer.addPass(new UnrealBloomPass(size, 1.18, 0.76, 0.09));
+    this.composer.addPass(new UnrealBloomPass(size, 0.72, 0.86, 0.18));
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement ?? canvas);
@@ -312,7 +346,7 @@ export class VisualEngine {
     this.floorGroup.visible = true;
     for (const trail of this.spectralTrails) {
       trail.visible = theme.mode === "bloom";
-      trail.material.opacity = 0.68;
+      trail.material.opacity = 0.46;
     }
     for (const reflection of this.spectralReflections) reflection.visible = theme.mode === "bloom";
     this.applySceneTheme(scene);
@@ -346,6 +380,17 @@ export class VisualEngine {
 
   getTemporalControls(): VisualTemporalControls {
     return { ...this.temporal };
+  }
+
+  setAnimationStyle(style: VisualAnimationStyle): void {
+    this.animationStyle = normalizeAnimationStyle(style);
+    const styleFactors = this.animationStyleFactors();
+    this.flowMaterial.uniforms.uStyle.value = styleFactors.styleIndex;
+    this.bloomMaterial.uniforms.uStyle.value = styleFactors.styleIndex;
+  }
+
+  getAnimationStyle(): VisualAnimationStyle {
+    return this.animationStyle;
   }
 
   lockResolution(width: number, height: number): void {
@@ -403,24 +448,25 @@ export class VisualEngine {
     const beatPulse = Math.max(transportPulse, this.measuredBeatPulse());
     const response = mapVisualAudioResponse(low, mid, high, beatPulse, this.intensity);
     const pulse = Math.max(metrics.masterLevel, low * 0.9) * this.intensity;
+    const style = this.animationStyleFactors();
 
-    const performedMotion = (0.45 + this.artDirection.motion * 0.9) * (0.4 + this.temporal.camera * 1.2);
+    const performedMotion = (0.45 + this.artDirection.motion * 0.9) * (0.4 + this.temporal.camera * 1.2) * style.cameraOrbit;
     this.camera.position.x = Math.sin(time * (0.35 + this.artDirection.motion * 0.7)) * response.cameraDisplacement * 0.18 * performedMotion;
     this.camera.position.y = 0.35 + Math.cos(time * (0.5 + this.artDirection.motion * 0.7)) * response.cameraDisplacement * 0.12 * performedMotion;
-    this.camera.position.z = 9 - response.cameraDisplacement * performedMotion;
+    this.camera.position.z = 9 - response.cameraDisplacement * performedMotion * style.cameraPush;
     this.bloomPoints?.geometry.setDrawRange(0, response.particleCount);
-    this.flowPoints?.geometry.setDrawRange(0, Math.round(FLOW_PARTICLE_COUNT * (0.36 + high * 0.64)));
+    this.flowPoints?.geometry.setDrawRange(0, Math.round(FLOW_PARTICLE_COUNT * (0.24 + high * 0.76) * style.flowDraw));
 
-    this.updateTunnel(time, low, mid, high);
-    this.updateBloom(time, pulse, high);
-    this.updateTerrain(time, metrics);
-    this.updateSignalBloom(time, metrics, response, low, mid, high);
-    this.updateKineticField(time, response, low, mid, high);
-    this.core.rotation.x = time * 0.21 + mid * 0.4;
-    this.core.rotation.y = time * 0.34 + low * 0.6;
+    this.updateTunnel(time, low, mid, high, style);
+    this.updateBloom(time, pulse, high, style);
+    this.updateTerrain(time, metrics, style);
+    this.updateSignalBloom(time, metrics, response, low, mid, high, style);
+    this.updateKineticField(time, response, low, mid, high, style);
+    this.core.rotation.x = time * 0.21 * style.coreSpin + mid * 0.4;
+    this.core.rotation.y = time * 0.34 * style.coreSpin + low * 0.6;
     const strobeGate = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (12 + this.temporal.strobe * 44))), 0.22);
     this.core.scale.setScalar((0.85 + pulse * 1.35 + response.radialPulse) * (0.94 + strobeGate * 0.06));
-    this.core.material.emissiveIntensity = 0.8 + high * 4 * this.intensity;
+    this.core.material.emissiveIntensity = 0.45 + high * 2.15 * this.intensity;
 
     this.composer.render();
     if (this.branding.visible) {
@@ -476,26 +522,45 @@ export class VisualEngine {
     return Math.exp(-distance * 24);
   }
 
-  private updateTunnel(time: number, low: number, mid: number, high: number): void {
-    for (let index = 0; index < this.tunnelRings.length; index += 1) {
-      const ring = this.tunnelRings[index];
-      const travel = (index * 1.85 + time * (1.8 + this.artDirection.motion * 4.4 + this.temporal.speed * 3.2 + low * 8)) % 52;
-      ring.position.z = 7 - travel;
-      ring.rotation.z = time * (index % 2 === 0 ? 0.09 : -0.07) * (0.5 + this.temporal.morph) + index * 0.32;
-      const scale = 0.75 + Math.sin(time * (1.1 + this.temporal.morph * 1.8) + index * 0.7) * 0.09 + mid * 0.22;
-      ring.scale.setScalar(scale);
-      const material = ring.material as THREE.MeshBasicMaterial;
-      const strobe = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (16 + this.temporal.strobe * 50) + index)), 0.18);
-      material.opacity = Math.min(0.96, (0.2 + this.temporal.trail * 0.26 + high * 0.72 + (1 - travel / 52) * 0.28) * strobe);
+  private animationStyleFactors(): AnimationStyleFactors {
+    switch (this.animationStyle) {
+      case "orbit":
+        return { styleIndex: 1, cameraOrbit: 1.45, cameraPush: 0.82, tunnelTravel: 0.82, tunnelTwist: 1.55, bloomScale: 1.08, bloomSpin: 1.85, flowScale: 0.82, flowDraw: 0.8, beamScale: 0.82, afterimageScale: 0.72, terrainWave: 0.9, waveformScale: 0.86, coreSpin: 1.65, opacityScale: 0.92 };
+      case "warp":
+        return { styleIndex: 2, cameraOrbit: 1.12, cameraPush: 1.55, tunnelTravel: 1.72, tunnelTwist: 1.15, bloomScale: 0.9, bloomSpin: 1.08, flowScale: 1.42, flowDraw: 1, beamScale: 1.18, afterimageScale: 0.98, terrainWave: 1.04, waveformScale: 1, coreSpin: 1.2, opacityScale: 0.96 };
+      case "shards":
+        return { styleIndex: 3, cameraOrbit: 0.98, cameraPush: 1.08, tunnelTravel: 1.03, tunnelTwist: 0.72, bloomScale: 1.25, bloomSpin: 0.78, flowScale: 1.08, flowDraw: 0.72, beamScale: 1.32, afterimageScale: 0.62, terrainWave: 1.18, waveformScale: 0.92, coreSpin: 2.05, opacityScale: 0.9 };
+      case "scan":
+        return { styleIndex: 4, cameraOrbit: 0.7, cameraPush: 0.7, tunnelTravel: 0.68, tunnelTwist: 0.45, bloomScale: 0.72, bloomSpin: 0.48, flowScale: 0.62, flowDraw: 0.66, beamScale: 0.58, afterimageScale: 1.18, terrainWave: 1.5, waveformScale: 1.55, coreSpin: 0.52, opacityScale: 0.86 };
+      case "minimal":
+        return { styleIndex: 5, cameraOrbit: 0.42, cameraPush: 0.38, tunnelTravel: 0.42, tunnelTwist: 0.32, bloomScale: 0.48, bloomSpin: 0.26, flowScale: 0.36, flowDraw: 0.38, beamScale: 0.24, afterimageScale: 0.3, terrainWave: 0.5, waveformScale: 0.58, coreSpin: 0.35, opacityScale: 0.52 };
+      case "flow":
+      default:
+        return { styleIndex: 0, cameraOrbit: 1, cameraPush: 1, tunnelTravel: 1, tunnelTwist: 1, bloomScale: 1, bloomSpin: 1, flowScale: 1, flowDraw: 1, beamScale: 1, afterimageScale: 1, terrainWave: 1, waveformScale: 1, coreSpin: 1, opacityScale: 1 };
     }
   }
 
-  private updateBloom(time: number, energy: number, high: number): void {
+  private updateTunnel(time: number, low: number, mid: number, high: number, style: AnimationStyleFactors): void {
+    for (let index = 0; index < this.tunnelRings.length; index += 1) {
+      const ring = this.tunnelRings[index];
+      const travel = (index * 1.85 + time * (1.8 + this.artDirection.motion * 4.4 + this.temporal.speed * 3.2 + low * 8) * style.tunnelTravel) % 52;
+      ring.position.z = 7 - travel;
+      ring.rotation.z = time * (index % 2 === 0 ? 0.09 : -0.07) * (0.5 + this.temporal.morph) * style.tunnelTwist + index * 0.32;
+      const scale = 0.75 + Math.sin(time * (1.1 + this.temporal.morph * 1.8) * style.tunnelTwist + index * 0.7) * 0.09 + mid * 0.22 * style.opacityScale;
+      ring.scale.setScalar(scale);
+      const material = ring.material as THREE.MeshBasicMaterial;
+      const strobe = this.temporal.strobe <= 0.01 ? 1 : Math.pow(Math.max(0, Math.sin(time * (16 + this.temporal.strobe * 50) + index)), 0.18);
+      material.opacity = Math.min(0.68, (0.12 + this.temporal.trail * 0.17 + high * 0.42 + (1 - travel / 52) * 0.18) * strobe * style.opacityScale);
+    }
+  }
+
+  private updateBloom(time: number, energy: number, high: number, style: AnimationStyleFactors): void {
     this.bloomMaterial.uniforms.uTime.value = time;
     this.bloomMaterial.uniforms.uEnergy.value = energy;
-    this.bloomMaterial.uniforms.uIntensity.value = this.intensity;
-    this.bloomMaterial.uniforms.uPointSize.value = 1.2 + high * 3.2 + this.temporal.trail * 1.1;
-    this.bloomGroup.rotation.z = time * (0.012 + this.artDirection.motion * 0.075 + this.temporal.morph * 0.035);
+    this.bloomMaterial.uniforms.uIntensity.value = this.intensity * 0.78 * style.bloomScale;
+    this.bloomMaterial.uniforms.uPointSize.value = (1 + high * 2.3 + this.temporal.trail * 0.85) * style.bloomScale;
+    this.bloomMaterial.uniforms.uStyle.value = style.styleIndex;
+    this.bloomGroup.rotation.z = time * (0.012 + this.artDirection.motion * 0.075 + this.temporal.morph * 0.035) * style.bloomSpin;
   }
 
   private updateKineticField(
@@ -504,6 +569,7 @@ export class VisualEngine {
     low: number,
     mid: number,
     high: number,
+    style: AnimationStyleFactors,
   ): void {
     const theme = visualSceneById(this.currentScene);
     const motion = 0.28 + this.artDirection.motion * 1.3;
@@ -513,23 +579,24 @@ export class VisualEngine {
     this.flowMaterial.uniforms.uBass.value = low;
     this.flowMaterial.uniforms.uMid.value = mid;
     this.flowMaterial.uniforms.uHigh.value = high;
-    this.flowMaterial.uniforms.uIntensity.value = this.intensity;
-    this.flowMaterial.uniforms.uFlow.value = response.flowCurl * (0.65 + motion);
-    this.flowMaterial.uniforms.uPointSize.value = 0.9 + high * 2.8 + this.temporal.trail * 1.8;
-    this.kineticFieldGroup.rotation.y = time * 0.018 * motion;
+    this.flowMaterial.uniforms.uIntensity.value = this.intensity * 0.72 * style.flowScale;
+    this.flowMaterial.uniforms.uFlow.value = response.flowCurl * (0.65 + motion) * style.flowScale;
+    this.flowMaterial.uniforms.uPointSize.value = (0.75 + high * 1.85 + this.temporal.trail * 1.15) * Math.max(0.45, style.flowScale);
+    this.flowMaterial.uniforms.uStyle.value = style.styleIndex;
+    this.kineticFieldGroup.rotation.y = time * 0.018 * motion * style.tunnelTwist;
     this.kineticFieldGroup.rotation.z = Math.sin(time * 0.04) * 0.08 * this.temporal.morph;
     this.kineticFieldGroup.position.z = theme.mode === "terrain" ? -2.8 : -1.2;
 
-    const beamIntensity = Math.min(1.2, response.beamIntensity * atmosphere);
-    this.volumetricGroup.rotation.z = time * (0.006 + this.temporal.camera * 0.02);
+    const beamIntensity = Math.min(0.68, response.beamIntensity * atmosphere * style.beamScale);
+    this.volumetricGroup.rotation.z = time * (0.006 + this.temporal.camera * 0.02) * style.coreSpin;
     this.volumetricGroup.rotation.y = Math.sin(time * 0.05) * 0.12 * this.temporal.camera;
     for (let index = 0; index < this.volumetricBeams.length; index += 1) {
       const beam = this.volumetricBeams[index]!;
       const phase = index / Math.max(1, this.volumetricBeams.length - 1);
-      const spread = 1.4 + sculpture * 1.8 + response.radialPulse * 0.32;
-      beam.scale.set(0.55 + high * 0.9 + phase * 0.38, spread, 1);
-      beam.rotation.z = phase * Math.PI * 2 + time * (0.025 + motion * 0.035);
-      beam.position.z = -8.8 - Math.sin(time * 0.25 + phase * 7.0) * (0.9 + response.cameraDisplacement);
+      const spread = 1.4 + sculpture * 1.8 + response.radialPulse * 0.32 * style.beamScale;
+      beam.scale.set((0.55 + high * 0.9 + phase * 0.38) * Math.max(0.42, style.beamScale), spread, 1);
+      beam.rotation.z = phase * Math.PI * 2 + time * (0.025 + motion * 0.035) * style.coreSpin;
+      beam.position.z = -8.8 - Math.sin(time * 0.25 * style.tunnelTravel + phase * 7.0) * (0.9 + response.cameraDisplacement * style.cameraPush);
       beam.material.uniforms.uTime.value = time;
       beam.material.uniforms.uIntensity.value = beamIntensity;
       beam.material.uniforms.uBass.value = low;
@@ -540,8 +607,8 @@ export class VisualEngine {
       const material = this.afterimageMaterials[index]!;
       const delay = index / Math.max(1, this.afterimageMaterials.length - 1);
       material.uniforms.uTime.value = time - delay * (0.18 + this.temporal.trail * 0.72);
-      material.uniforms.uOpacity.value = response.afterimageOpacity * Math.pow(1 - delay, 1.5) * (0.34 + this.temporal.trail * 0.82);
-      material.uniforms.uWarp.value = response.flowCurl * (0.6 + delay * 1.2);
+      material.uniforms.uOpacity.value = response.afterimageOpacity * Math.pow(1 - delay, 1.5) * (0.2 + this.temporal.trail * 0.45) * style.afterimageScale;
+      material.uniforms.uWarp.value = response.flowCurl * (0.6 + delay * 1.2) * Math.max(0.35, style.flowScale);
     }
   }
 
@@ -552,6 +619,7 @@ export class VisualEngine {
     low: number,
     mid: number,
     high: number,
+    style: AnimationStyleFactors,
   ): void {
     const frequency = metrics.frequency;
     const frequencyMaxIndex = Math.max(0, frequency.length - 1);
@@ -576,8 +644,8 @@ export class VisualEngine {
             Math.floor(Math.pow(progress, 1.72) * frequencyMaxIndex * 0.78),
           );
           const spectrum = frequency.length > 0 ? (frequency[frequencyBin] ?? 0) / 255 : 0;
-          const drift = Math.sin(progress * 15 + time * 0.72 * motion + trailPhase)
-            * (0.05 + mid * 0.2 * motion);
+          const drift = Math.sin(progress * 15 + time * 0.72 * motion * style.waveformScale + trailPhase)
+            * (0.05 + mid * 0.2 * motion * style.waveformScale);
           const fan = 4.65 - envelope * (1.3 + response.spectralHeight * 0.78 * sculpture);
           const x = normalizedX * fan
             + Math.sin(progress * 8.4 + trailPhase) * (0.08 + sculpture * 0.1)
@@ -586,15 +654,15 @@ export class VisualEngine {
             + spectrum * (0.26 + response.spectralHeight * 2.8 * sculpture)
             + drift;
           const y = FLOOR_Y + ridge;
-          const z = depth + Math.cos(progress * 10 + trailPhase + time * 0.22 * motion)
-            * (0.05 + high * 0.2 * motion);
+          const z = depth + Math.cos(progress * 10 + trailPhase + time * 0.22 * motion * style.waveformScale)
+            * (0.05 + high * 0.2 * motion * style.waveformScale);
           positions.setXYZ(point, x, y, z);
           reflected.setXYZ(point, x, FLOOR_Y - (y - FLOOR_Y) * 0.22, z + 0.16);
         }
         positions.needsUpdate = true;
         reflected.needsUpdate = true;
-        trail.material.opacity = 0.36 + this.temporal.trail * 0.48;
-        reflection.material.opacity = 0.03 + this.temporal.trail * 0.08 + low * 0.12;
+        trail.material.opacity = (0.22 + this.temporal.trail * 0.34) * style.opacityScale;
+        reflection.material.opacity = 0.015 + this.temporal.trail * 0.045 + low * 0.075;
       }
     }
 
@@ -610,8 +678,8 @@ export class VisualEngine {
       );
       const sample = waveform.length > 0 ? ((waveform[waveformIndex] ?? 128) - 128) / 128 : 0;
       const x = -7.15 + progress * 14.3;
-      const y = FLOOR_Y + 0.72 + sample * (0.22 + response.waveformAmplitude * 1.35 * ribbon);
-      const z = -0.64 + Math.sin(progress * Math.PI * 4 + time * 0.9 * motion) * (0.015 + ribbon * 0.025);
+      const y = FLOOR_Y + 0.72 + sample * (0.22 + response.waveformAmplitude * 1.35 * ribbon * style.waveformScale);
+      const z = -0.64 + Math.sin(progress * Math.PI * 4 + time * 0.9 * motion * style.waveformScale) * (0.015 + ribbon * 0.025 * style.waveformScale);
       ribbonPositions.setXYZ(point, x, y, z);
       glowPositions.setXYZ(point, x, y, z + 0.025);
       reflectionPositions.setXYZ(point, x, FLOOR_Y - (y - FLOOR_Y) * 0.34, z + 0.12);
@@ -619,20 +687,20 @@ export class VisualEngine {
     ribbonPositions.needsUpdate = true;
     glowPositions.needsUpdate = true;
     reflectionPositions.needsUpdate = true;
-    this.waveformRibbon.material.opacity = Math.min(1, 0.36 + ribbon * 0.24 + this.temporal.trail * 0.18 + metrics.masterLevel * 0.2);
-    this.waveformGlow.material.opacity = 0.04 + response.waveformAmplitude * (0.18 + this.temporal.trail * 0.22) * ribbon;
-    this.waveformReflection.material.opacity = 0.02 + low * (0.06 + this.temporal.trail * 0.12) * ribbon;
+    this.waveformRibbon.material.opacity = Math.min(0.72, 0.24 + ribbon * 0.18 + this.temporal.trail * 0.12 + metrics.masterLevel * 0.12) * style.opacityScale;
+    this.waveformGlow.material.opacity = (0.02 + response.waveformAmplitude * (0.1 + this.temporal.trail * 0.14) * ribbon) * style.opacityScale;
+    this.waveformReflection.material.opacity = 0.01 + low * (0.04 + this.temporal.trail * 0.08) * ribbon;
 
     this.hazeMaterial.uniforms.uTime.value = time;
     this.hazeMaterial.uniforms.uEnergy.value = Math.min(1, high * 0.72 + metrics.masterLevel * 0.5);
-    this.hazeMaterial.uniforms.uIntensity.value = Math.min(0.82, response.hazeOpacity * atmosphere);
-    this.atmosphereMaterial.opacity = Math.min(0.78, 0.035 + response.hazeOpacity * 0.68 * atmosphere);
+    this.hazeMaterial.uniforms.uIntensity.value = Math.min(0.48, response.hazeOpacity * atmosphere * 0.72 * style.opacityScale);
+    this.atmosphereMaterial.opacity = Math.min(0.46, 0.02 + response.hazeOpacity * 0.42 * atmosphere * style.opacityScale);
     this.atmosphereGroup.rotation.y = time * 0.006 * motion;
     this.atmosphereGroup.rotation.z = Math.sin(time * 0.05 * motion) * 0.022 * atmosphere;
     this.floorGroup.position.x = Math.sin(time * 0.08 * motion) * 0.06 * motion;
   }
 
-  private updateTerrain(time: number, metrics: AudioMetrics): void {
+  private updateTerrain(time: number, metrics: AudioMetrics, style: AnimationStyleFactors): void {
     if (!this.terrainGroup.visible) return;
     const positions = this.terrain.geometry.attributes.position as THREE.BufferAttribute;
     const frequency = metrics.frequency;
@@ -642,12 +710,12 @@ export class VisualEngine {
       const normalized = y / TERRAIN_SEGMENTS;
       const bin = Math.min(frequency.length - 1, Math.floor(normalized * normalized * frequency.length * 0.75));
       const spectrum = frequency[bin] / 255;
-      const wave = Math.sin(x * (0.26 + this.temporal.morph * 0.22) + time * 1.8) * 0.18
-        + Math.cos(y * (0.18 + this.temporal.morph * 0.18) - time) * 0.12;
-      positions.setZ(index, wave + spectrum * (1.7 + this.temporal.morph * 1.8) * this.intensity);
+      const wave = Math.sin(x * (0.26 + this.temporal.morph * 0.22) + time * 1.8 * style.terrainWave) * 0.18
+        + Math.cos(y * (0.18 + this.temporal.morph * 0.18) - time * style.terrainWave) * 0.12;
+      positions.setZ(index, wave * style.terrainWave + spectrum * (1.7 + this.temporal.morph * 1.8) * this.intensity * style.terrainWave);
     }
     positions.needsUpdate = true;
-    this.terrain.material.opacity = 0.58 + metrics.masterLevel * 0.36;
+    this.terrain.material.opacity = (0.38 + metrics.masterLevel * 0.24) * style.opacityScale;
   }
 
   private applySceneTheme(scene: VisualSceneId): void {
@@ -768,6 +836,7 @@ export class VisualEngine {
         uEnergy: { value: 0 },
         uIntensity: { value: 0.7 },
         uPointSize: { value: 1.5 },
+        uStyle: { value: 0 },
         uColorA: { value: new THREE.Color(0xff3f91) },
         uColorB: { value: new THREE.Color(0x58ffe0) },
       },
@@ -777,6 +846,7 @@ export class VisualEngine {
         uniform float uEnergy;
         uniform float uIntensity;
         uniform float uPointSize;
+        uniform float uStyle;
         varying float vSeed;
         void main() {
           vSeed = aSeed;
@@ -784,24 +854,30 @@ export class VisualEngine {
           float angle = uTime * (0.08 + aSeed * 0.18) + p.z * 0.06;
           mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
           p.xy = rotation * p.xy;
+          float shard = step(2.5, uStyle) * (1.0 - step(3.5, uStyle));
+          float scan = step(3.5, uStyle) * (1.0 - step(4.5, uStyle));
+          float minimal = step(4.5, uStyle);
           p.xy *= 1.0 + uEnergy * (0.15 + aSeed * 0.48) * uIntensity;
-          p.z += sin(uTime * 0.8 + aSeed * 18.0) * (0.1 + uEnergy * 0.6);
+          p.xy += shard * vec2(sign(sin(aSeed * 81.0)), sign(cos(aSeed * 53.0))) * uEnergy * 0.72;
+          p.y += scan * sin(position.x * 3.5 + uTime * 2.4) * (0.08 + uEnergy * 0.35);
+          p.z += sin(uTime * 0.8 + aSeed * 18.0) * (0.1 + uEnergy * 0.6) * (1.0 - minimal * 0.55);
           vec4 view = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * view;
-          gl_PointSize = (uPointSize + aSeed * 2.2) * (180.0 / max(1.0, -view.z));
+          gl_PointSize = (uPointSize + aSeed * 2.2) * (180.0 / max(1.0, -view.z)) * (1.0 + shard * 0.32 - minimal * 0.4);
         }
       `,
       fragmentShader: `
         uniform vec3 uColorA;
         uniform vec3 uColorB;
         uniform float uEnergy;
+        uniform float uIntensity;
         varying float vSeed;
         void main() {
           vec2 centered = gl_PointCoord - 0.5;
           float distanceToCenter = length(centered);
           float alpha = smoothstep(0.5, 0.06, distanceToCenter);
           vec3 color = mix(uColorA, uColorB, vSeed + uEnergy * 0.2);
-          gl_FragColor = vec4(color, alpha * (0.38 + uEnergy * 0.62));
+          gl_FragColor = vec4(color, alpha * (0.035 + uEnergy * 0.16) * uIntensity);
         }
       `,
     });
@@ -850,6 +926,7 @@ export class VisualEngine {
         uIntensity: { value: 0.7 },
         uFlow: { value: 0.2 },
         uPointSize: { value: 1.3 },
+        uStyle: { value: 0 },
         uColorA: { value: new THREE.Color(0xff3f91) },
         uColorB: { value: new THREE.Color(0x58ffe0) },
       },
@@ -863,6 +940,7 @@ export class VisualEngine {
         uniform float uIntensity;
         uniform float uFlow;
         uniform float uPointSize;
+        uniform float uStyle;
         varying float vSeed;
         varying float vEnergy;
         void main() {
@@ -870,24 +948,33 @@ export class VisualEngine {
           vEnergy = clamp(uBass * 0.45 + uMid * 0.35 + uHigh * 0.5, 0.0, 1.0);
           vec3 p = position;
           float lane = aLane * 6.2831853;
-          float stream = fract(aSeed + uTime * (0.025 + uFlow * 0.05));
+          float orbit = step(0.5, uStyle) * (1.0 - step(1.5, uStyle));
+          float warp = step(1.5, uStyle) * (1.0 - step(2.5, uStyle));
+          float shard = step(2.5, uStyle) * (1.0 - step(3.5, uStyle));
+          float scan = step(3.5, uStyle) * (1.0 - step(4.5, uStyle));
+          float minimal = step(4.5, uStyle);
+          float stream = fract(aSeed + uTime * (0.025 + uFlow * 0.05 + warp * 0.06));
           p.z = mix(5.8, -18.0, stream);
           float curlA = sin(p.z * 0.42 + lane + uTime * (0.65 + uFlow));
           float curlB = cos(p.z * 0.31 + aSeed * 17.0 - uTime * (0.4 + uFlow * 0.7));
           float radius = length(p.xy) * (0.82 + uBass * 0.22) + curlB * uFlow * 0.8;
-          float angle = atan(p.y, p.x) + curlA * uFlow * 0.3 + uTime * (0.035 + aLane * 0.05);
+          float angle = atan(p.y, p.x) + curlA * uFlow * 0.3 + uTime * (0.035 + aLane * 0.05 + orbit * 0.08);
           p.x = cos(angle) * radius + curlB * 0.28 * uIntensity;
           p.y = sin(angle) * radius * (0.62 + uMid * 0.28) + curlA * 0.5 * uIntensity;
+          p.xy += shard * vec2(sign(sin(aSeed * 94.0)), sign(cos(aSeed * 67.0))) * (0.18 + uHigh * 0.72);
+          p.x += scan * sin((position.y + uTime) * 8.0 + aSeed * 11.0) * (0.1 + uMid * 0.42);
+          p.y = mix(p.y, floor((p.y + 4.0) * 5.0) / 5.0 - 4.0, scan * 0.72);
           p.xy *= 0.8 + uIntensity * 0.32;
           vec4 view = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * view;
-          gl_PointSize = (uPointSize + aSeed * 1.8 + vEnergy * 2.2) * (150.0 / max(1.0, -view.z));
+          gl_PointSize = (uPointSize + aSeed * 1.8 + vEnergy * 2.2) * (150.0 / max(1.0, -view.z)) * (1.0 + shard * 0.4 - minimal * 0.45);
         }
       `,
       fragmentShader: `
         uniform vec3 uColorA;
         uniform vec3 uColorB;
         uniform float uHigh;
+        uniform float uIntensity;
         varying float vSeed;
         varying float vEnergy;
         void main() {
@@ -896,7 +983,7 @@ export class VisualEngine {
           float core = smoothstep(0.48, 0.03, d);
           float filament = smoothstep(0.5, 0.16, abs(p.x * p.y) * 8.0 + d * 0.55);
           vec3 color = mix(uColorA, uColorB, fract(vSeed * 1.7 + vEnergy + uHigh * 0.35));
-          gl_FragColor = vec4(color, core * filament * (0.22 + vEnergy * 0.66));
+          gl_FragColor = vec4(color, core * filament * (0.055 + vEnergy * 0.22) * uIntensity);
         }
       `,
     });
