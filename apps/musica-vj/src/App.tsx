@@ -57,6 +57,8 @@ const LYRIA_KEYBOARD_NOTES = [
   60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
 ] as const;
 const LYRIA_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
+const LYRIA_STREAM_STARTUP_TIMEOUT_MS = 2_400;
+const LYRIA_STREAM_POLL_MS = 80;
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -307,6 +309,30 @@ export function App() {
     }
   }, [aiToneBusy, loadAiTonePreset]);
 
+  const ingestRealtimeAudioPoll = useCallback(async (): Promise<number> => {
+    const poll = await pollLyriaRealtimeAudio();
+    if (poll.warning) setLyriaRealtimeStatus((current) => ({ ...current, warning: poll.warning }));
+    setLyriaStreamBytes(poll.streamedAudioBytes);
+    let bytesScheduled = 0;
+    for (const chunk of poll.chunks) {
+      bytesScheduled += chunk.length;
+      await engineRef.current.playRealtimePcm16(new Uint8Array(chunk), poll.sampleRateHz, poll.channels);
+    }
+    return bytesScheduled;
+  }, []);
+
+  const waitForRealtimeAudioFrames = useCallback(async (): Promise<number> => {
+    const deadline = performance.now() + LYRIA_STREAM_STARTUP_TIMEOUT_MS;
+    let receivedBytes = 0;
+    while (receivedBytes === 0 && performance.now() < deadline) {
+      receivedBytes += await ingestRealtimeAudioPoll();
+      if (receivedBytes === 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, LYRIA_STREAM_POLL_MS));
+      }
+    }
+    return receivedBytes;
+  }, [ingestRealtimeAudioPoll]);
+
   const handleTransportToggle = useCallback(async () => {
     if (!snapshotRef.current.playing) {
       await loadDefaultAiToneBank(false);
@@ -315,18 +341,25 @@ export function App() {
         try {
           setLyriaSession(await startLyriaRealtime(realtimeRequest));
           engineRef.current.setRealtimeStreamPrimary(true);
+          void waitForRealtimeAudioFrames().then((receivedBytes) => {
+            if (receivedBytes === 0) setNotice("Lyria RealTime is armed, but no audio frames arrived yet.");
+          });
         } catch (error) {
           engineRef.current.setRealtimeStreamPrimary(false);
           setNotice(error instanceof Error ? error.message : "Lyria RealTime start failed");
+          return;
         } finally {
           setLyriaRealtimeBusy(false);
         }
       } else if (lyriaSession) {
         engineRef.current.setRealtimeStreamPrimary(true);
+        void waitForRealtimeAudioFrames().then((receivedBytes) => {
+          if (receivedBytes === 0) setNotice("Lyria RealTime is active, but no fresh audio frames arrived yet.");
+        });
       }
     }
     await engineRef.current.toggle();
-  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, realtimeRequest]);
+  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, realtimeRequest, waitForRealtimeAudioFrames]);
 
   const refreshLyriaRealtimeStatus = useCallback(async () => {
     try {
@@ -398,17 +431,11 @@ export function App() {
 
   const pollRealtimeAudio = useCallback(async () => {
     try {
-      const poll = await pollLyriaRealtimeAudio();
-      if (poll.warning) setLyriaRealtimeStatus((current) => ({ ...current, warning: poll.warning }));
-      setLyriaStreamBytes(poll.streamedAudioBytes);
-      if (poll.chunks.length === 0) return;
-      for (const chunk of poll.chunks) {
-        await engineRef.current.playRealtimePcm16(new Uint8Array(chunk), poll.sampleRateHz, poll.channels);
-      }
+      await ingestRealtimeAudioPoll();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Lyria RealTime audio polling failed");
     }
-  }, []);
+  }, [ingestRealtimeAudioPoll]);
 
   useEffect(() => {
     selectedTrackRef.current = selectedTrack;
@@ -852,7 +879,7 @@ export function App() {
     let cancelled = false;
     const timer = window.setInterval(() => {
       if (!cancelled) void pollRealtimeAudio();
-    }, 80);
+    }, LYRIA_STREAM_POLL_MS);
     void pollRealtimeAudio();
     return () => {
       cancelled = true;

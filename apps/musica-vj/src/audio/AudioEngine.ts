@@ -87,7 +87,7 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
-const REALTIME_PRIMARY_TRACK_DUCK = 0.16;
+const REALTIME_PRIMARY_TRACK_DUCK = 0.08;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
