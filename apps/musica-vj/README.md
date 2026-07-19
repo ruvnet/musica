@@ -14,7 +14,7 @@ Musica VJ Studio is the flagship Musica performance surface: a live AI-directed 
 
 | Area | Current implementation |
 |---|---|
-| Agentic direction | Meta-LLM or local agent planner can choose a template, BPM, scene, prompt, visual intensity, art-direction macros, temporal controls, and arrangement notes, then apply the whole performance state |
+| Agentic direction | Local Auto DJ holds detailed beat, style, personalization, arrangement, mix, and exclusion guidance for 32 bars on one main stream; optional Meta-LLM enrichment is disabled by default |
 | Music | Three concurrent Lyria RealTime decks plus six local drum, bass, chord, lead, breath, and texture tracks with independent stream/track mixing, step editing, a curated MIDI-style default song bank, imported audio, MIDI-file import, and Lyria/Gemini song or loop loading |
 | Synth and effects | Layered drum voices, sub-plus-mid bass, four-voice chord pads, dual-oscillator leads, formant breath, FM/noise texture beds, swing/humanization, tempo delay, feedback, convolution reverb, per-track send levels, and bus compression |
 | Timing | Web Audio sample clock with a 25 ms scheduler that maintains a 120 ms native event queue |
@@ -121,9 +121,15 @@ A runtime environment variable cannot widen the compiled provider allowlist. The
 
 ### Lyria RealTime decks, shared clock, and Demo
 
-The July 2026 live direction is Lyria RealTime. `main` produces the style-directed arrangement. `sequence` receives the editable drum and bass grid as compact 16-step hit/rest strings and is constrained to a repeating one-bar beat with no melody. `vocal` uses `VOCALIZATION`, but starts muted because the API does not guarantee an isolated vocal stem. Each deck has live mute, volume, semitone pitch, beat-nudge, activity, and PCM counters. Pitch changes compensate source BPM before resampling, and beat nudges remain persistent offsets from the shared playback clock. Four locally persisted multi-track deck scenes recall style, BPM, and every deck control with `Shift+1` through `Shift+4`; the `E` control beside each slot opens the live scene editor.
+The July 2026 live direction is Lyria RealTime. `main` produces the style-directed arrangement and is the only deck enabled at startup. `sequence` receives the editable drum and bass grid as compact 16-step hit/rest strings and is constrained to a repeating one-bar beat with no melody. `vocal` uses `VOCALIZATION`, but starts off and muted because the API does not guarantee an isolated vocal stem. Each deck has an explicit provider ON/OFF control plus live mute, volume, semitone pitch, beat-nudge, activity, and PCM counters. Enabling another deck opens only that provider stream, builds its jitter buffer, and releases it on the next shared bar. Pitch changes compensate source BPM before resampling, and beat nudges remain persistent offsets from the shared playback clock. Four locally persisted multi-track deck scenes recall enabled decks, style, BPM, and every deck control with `Shift+1` through `Shift+4`; the `E` control beside each slot opens the live scene editor.
 
-Pressing Play discards stale provider queues, starts fresh sessions together, builds a 1.25-second PCM jitter buffer, and releases every deck against one Web Audio anchor. Provider polls are serialized so chunks cannot be drained or scheduled out of order. Prompt, style, beat-grid, BPM, key, and stream-control changes are debounced into the active named decks. Right-click any style to edit its primary guidance and weight. Demo starts the synchronized transport, enables Auto DJ, and rotates visual presets automatically. Stop/Pause closes all native sessions. Provider traffic stays behind Tauri so the Gemini key never enters React.
+Pressing Play discards stale provider queues, starts only the enabled deck set, builds a 1.25-second PCM jitter buffer, and releases it against one Web Audio anchor. Provider polls are serialized so chunks cannot be drained or scheduled out of order. Prompt, style, beat-grid, BPM, key, and stream-control changes are debounced into active named decks only. Right-click any style to edit its primary guidance and weight. Demo starts the synchronized transport, enables Auto DJ, and rotates visual presets automatically. Stop/Pause closes all native sessions. Provider traffic stays behind Tauri so the Gemini key never enters React.
+
+### Detachable DJ windows and visual looks
+
+`POP OUT MIXER` opens the default detachable control surface. The AV Output panel can also open Mixer, Launcher, and Visual profiles. Every control window has an `EDIT` mode for showing, hiding, widening, and reordering its modules; layouts persist per profile. In Tauri, control windows magnetically snap to the main deck and each other using physical window geometry. Browser preview opens equivalent popup controls through `BroadcastChannel` when popups are allowed.
+
+Visual scene state now includes a persisted Color / Look layer in addition to animation, artist macros, and temporal controls. Six palettes can be reshaped with hue, saturation, contrast, and color-diversity controls. These values update Three.js material colors, atmosphere, fog, tone-mapping exposure, the third accent color, and the detached Visual control window.
 
 Run the desktop app with realtime controls enabled:
 
@@ -132,9 +138,9 @@ GEMINI_API_KEY=replace_with_your_google_api_key
 npm run dev:lyria:realtime
 ```
 
-The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates each named Lyria session against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, and 48 kHz stereo PCM16 output. Lyria RealTime remains non-lyrical: `VOCALIZATION` treats the human voice as an instrument, while timed lyrics and intelligible singing belong to Lyria 3 Clip/Pro batch generation. Auto DJ cycles prompt sets and gradually changes the active musical direction.
+The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates each named Lyria session against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, and 48 kHz stereo PCM16 output. Lyria RealTime remains non-lyrical: `VOCALIZATION` treats the human voice as an instrument, while timed lyrics and intelligible singing belong to Lyria 3 Clip/Pro batch generation. Auto DJ holds each direction for 32 bars at the shared master BPM and updates only the main stream with detailed beat, instrumentation, phrase, production, personalization, and exclusion guidance.
 
-When Start 3 Decks is pressed, Rust opens three official v1alpha Lyria RealTime WebSockets, sends each deck's setup, weighted prompts, generation config, and PLAY, then keeps independent bounded PCM queues. React prebuffers and schedules those queues from one Web Audio anchor before the shared compressor, analyser, capture output, and visuals. Browser preview and unconfigured desktop sessions expose the interface but do not substitute a misleading local sequencer for Lyria output.
+When a deck is enabled, Rust opens that named official v1alpha Lyria RealTime WebSocket, sends its setup, weighted prompts, generation config, and PLAY, then keeps an independent bounded PCM queue. React prebuffers and schedules enabled queues from shared bar anchors before the compressor, analyser, capture output, and visuals. Browser preview and unconfigured desktop sessions expose the interface but do not substitute a misleading local sequencer for Lyria output.
 
 ### Google Lyria 3 Pro preview
 
@@ -218,7 +224,7 @@ The pull-request test suite uses synthetic media and no Google credential. It ex
 
 ### Meta-LLM agent director
 
-The Agent Director can turn a natural-language goal into a complete performance state. In browser preview it uses a deterministic local planner over the shipped templates. In Tauri it can call Cognitum's Meta-LLM API from Rust only:
+The Agent Director can turn a natural-language goal into a complete performance state and enrich Auto DJ's next 32-bar prompt. It is optional and disabled by default: local detailed Auto DJ prompts remain the normal path and require no Meta-LLM token or network call. In Tauri, explicitly opt in to Cognitum's Meta-LLM API from Rust only:
 
 ```sh
 MUSICA_META_LLM_ENABLED=true \

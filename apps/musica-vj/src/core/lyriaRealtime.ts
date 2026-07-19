@@ -52,6 +52,14 @@ export interface LyriaRealtimeStylePreset {
   config: Partial<LyriaRealtimeConfig>;
 }
 
+export interface AutoDjDirection {
+  personalization: string;
+  generatedBrief?: string;
+  step: number;
+  bpm: number;
+  bars?: number;
+}
+
 export interface LyriaRealtimeStatus {
   deck: LyriaRealtimeDeckId;
   available: boolean;
@@ -115,6 +123,89 @@ export const DEFAULT_LYRIA_REALTIME_PROMPTS: LyriaWeightedPrompt[] = [
 ];
 
 export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
+
+export const AUTO_DJ_PHRASE_BARS = 32;
+
+const AUTO_DJ_BEAT_DIRECTIONS: Record<string, string> = {
+  house: "four-on-the-floor kick; clap on 2 and 4; shuffled closed hats; restrained open hat on offbeats; syncopated bass answering the kick",
+  techno: "solid quarter-note kick; rolling sixteenth-note percussion; tight offbeat hats; hypnotic one-bar bass pulse; sparse fills only at phrase boundaries",
+  cinematic: "measured low pulse; restrained hybrid percussion; half-time accents; tension risers over eight bars; decisive downbeats without trailer cliches",
+  "drum-bass": "clean two-step breakbeat; snare on 2 and 4; detailed ghost notes; deep sub following a two-bar motif; controlled fills every eight bars",
+  hiphop: "laid-back kick and snare pocket; swung hats; selective ghost hits; deep sub with intentional rests; no trap roll clutter",
+  funk: "dry syncopated drum pocket; ghost-note snare; sixteenth-note hats; bass and clav interlock; short guitar answers leaving clear rests",
+  samba: "surdo downbeats; caixa drive; tamborim syncopation; hand percussion in a stable two-bar pattern; bass locked beneath the ensemble",
+  rock: "punchy acoustic kick and snare backbeat; driving eighth-note hats; bass locked to kick; guitar accents around a memorable two-bar hook",
+  jazz: "human swing ride pattern; feathered kick; brushed snare comping; walking bass with breathing room; piano answers across four-bar phrases",
+  classical: "steady arpeggiated inner pulse; expressive rubato within the master tempo; clear harmonic rhythm; restrained dynamic swells every eight bars",
+  ambient: "subtle low pulse; sparse textural ticks; long breathing rests; evolving pad rhythm; no conventional drum groove unless nearly subliminal",
+};
+
+const AUTO_DJ_SOUND_DIRECTIONS: Record<string, string> = {
+  house: "warm Rhodes and piano hook, rounded analog bass, TR-909 character, soft chord pads, one concise synth motif",
+  techno: "weighty mono bass, precise drum machine transients, metallic percussion, filtered chord stab, distant industrial texture",
+  cinematic: "felt piano motif, low analog pulse, chamber strings, granular air, restrained brass weight, wide but focused orchestral electronics",
+  "drum-bass": "clean break layers, deep sine sub, glassy pads, short Rhodes fragments, precise stereo percussion, no abrasive reese wall",
+  hiphop: "dusty drum break, modern controlled sub, warm electric keys, pitched texture fragments, understated melodic sample-like motif",
+  funk: "live dry kit, articulate electric bass, clavinet, muted rhythm guitar, compact brass punctuation, organic room tone",
+  samba: "surdo, caixa, tamborim, pandeiro, cavaquinho, nylon guitar, warm bass, vivid ensemble dynamics without tourist pastiche",
+  rock: "tight live drum kit, defined electric bass, layered rhythm guitars, one singable instrumental lead, subtle analog keyboard support",
+  jazz: "acoustic piano, upright bass, brushed kit, occasional muted horn color, intimate room sound, conversational improvisation",
+  classical: "concert grand piano, chamber strings, soft woodwind color, natural hall depth, coherent motif development, nuanced dynamics",
+  ambient: "slow analog pads, tape echo, felt piano fragments, low sine foundation, granular field texture, spacious high-frequency detail",
+};
+
+export function autoDjPhraseDurationMs(bpm: number, bars = AUTO_DJ_PHRASE_BARS): number {
+  const boundedBpm = Math.max(60, Math.min(200, bpm));
+  const boundedBars = Math.max(8, Math.min(64, Math.round(bars)));
+  return Math.max(30_000, Math.round((60_000 / boundedBpm) * 4 * boundedBars));
+}
+
+export function createAutoDjRealtimeRequest(
+  style: LyriaRealtimeStylePreset,
+  direction: AutoDjDirection,
+): LyriaRealtimeRequest {
+  const base = createLyriaRealtimeRequestFromStyle(style, direction.bpm);
+  const bars = Math.max(8, Math.min(64, Math.round(direction.bars ?? AUTO_DJ_PHRASE_BARS)));
+  const phase = Math.abs(Math.round(direction.step)) % 4;
+  const energy = ["restrained opening", "confident groove", "controlled lift", "resolved peak"][phase];
+  const personalization = direction.personalization.trim() || "futuristic live set with a memorable musical identity and disciplined club-ready dynamics";
+  const generatedBrief = direction.generatedBrief?.trim();
+  const beat = AUTO_DJ_BEAT_DIRECTIONS[style.id] ?? "stable two-bar beat pattern; clear downbeat; intentional syncopation; fills only at phrase boundaries";
+  const sound = AUTO_DJ_SOUND_DIRECTIONS[style.id] ?? style.description;
+
+  return {
+    weightedPrompts: [
+      {
+        text: `${style.label} instrumental; ${style.description} Single continuous main stereo stream at ${direction.bpm} BPM; ${energy}; preserve pulse, key center, and sonic identity through the transition.`.slice(0, 240),
+        weight: 1.28,
+      },
+      {
+        text: `Beat design: ${beat}. Build in coherent 8-bar phrases inside one ${bars}-bar section; introduce one change at a time; make every transition land on bar 1.`.slice(0, 240),
+        weight: 1.12,
+      },
+      {
+        text: (generatedBrief
+          ? `Director brief: ${generatedBrief}`
+          : `Sound and personalization: ${sound}. Creative identity: ${personalization}. Polished low end, audible motif, deliberate contrast, headroom for live mixing.`).slice(0, 240),
+        weight: 1.04,
+      },
+      {
+        text: "multiple songs, multiple streams, vocals, genre roulette, tempo drift, key clash, random fills, constant solos, overbusy layers, muddy bass, harsh highs, long intro, fade out, abrupt ending",
+        weight: -1.05,
+      },
+    ],
+    config: {
+      ...base.config,
+      bpm: Math.max(60, Math.min(200, Math.round(direction.bpm))),
+      density: Math.max(0.12, Math.min(0.88, base.config.density + [-0.08, 0, 0.06, 0.1][phase])),
+      brightness: Math.max(0.16, Math.min(0.78, base.config.brightness + [-0.06, 0, 0.04, 0.07][phase])),
+      guidance: Math.max(4.4, Math.min(6, base.config.guidance + 0.45)),
+      temperature: Math.max(0.75, Math.min(1.25, base.config.temperature)),
+      topK: Math.min(48, base.config.topK),
+      musicGenerationMode: "QUALITY",
+    },
+  };
+}
 
 export function compensateLyriaBpmForPitch(masterBpm: number, semitones: number): number {
   return Math.max(60, Math.min(200, Math.round(masterBpm / (2 ** (semitones / 12)))));

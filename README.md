@@ -16,10 +16,10 @@ The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop st
 
 | Layer | What Musica does now |
 |---|---|
-| **Agentic direction** | Meta-LLM can plan and apply a complete set state: prompt, template, BPM, scene, intensity, visual macros, temporal controls, and arrangement notes. Browser preview falls back to a deterministic local director. |
-| **Music performance** | Lyria RealTime is the live output: a style-directed main arrangement and repeating beat deck are prebuffered and released on one Web Audio clock, with per-stream volume, mute, pitch, and beat alignment. The vocalization lane is muted by default because Lyria does not guarantee an isolated vocal stem. |
+| **Agentic direction** | Detailed local Auto DJ direction works by default. Optional, disabled-by-default Meta-LLM can enrich each 32-bar single-stream phrase and plan a complete set state when explicitly enabled. |
+| **Music performance** | Lyria RealTime is the live output: the main arrangement is the only deck enabled at startup, while beat and vocalization decks connect on demand at the next shared bar with per-stream volume, mute, pitch, and beat alignment. |
 | **Visual performance** | Eight visual-bank scenes, five VJ presets, audio-reactive Three.js systems, adaptive quality, scene color themes, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
-| **Live control** | Keyboard, `Shift+1` through `Shift+4` multi-track deck scenes, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, macros, and temporal controls. |
+| **Live control** | Keyboard, `Shift+1` through `Shift+4` multi-track deck scenes, magnetically snapping customizable DJ windows, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, color looks, macros, and temporal controls. |
 | **AI providers** | Rust-only governed boundaries for Gemini/Lyria music generation and Cognitum Meta-LLM planning; tokens stay out of React bundles and are checked by CI secret canaries. |
 | **Musica core** | STFT/ISTFT, graph mincut separation, sparse Lanczos, six-stem separation, streaming separation, HearMusica compressor/limiter/mixer/filter blocks, WAV I/O, visualization helpers, and transcription hooks. |
 | **Release path** | GitHub Actions build frontend plus unsigned macOS `.app`/`.dmg`, Linux `.deb`/AppImage, Windows NSIS artifacts, then gate release publishing behind the `ci-guard` job. |

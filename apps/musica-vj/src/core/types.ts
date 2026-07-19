@@ -31,6 +31,16 @@ export interface VisualTemporalControls {
   phase: number;
 }
 
+export type VisualPaletteId = "scene" | "neon" | "ember" | "ice" | "prism" | "mono";
+
+export interface VisualColorControls {
+  palette: VisualPaletteId;
+  hue: number;
+  saturation: number;
+  contrast: number;
+  diversity: number;
+}
+
 export interface VisualPreset {
   id: string;
   name: string;

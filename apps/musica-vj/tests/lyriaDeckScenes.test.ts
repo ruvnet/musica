@@ -22,6 +22,7 @@ describe("Lyria deck scenes", () => {
     expect(scene.name).toBe("A very long custom");
     expect(scene.bpm).toBe(200);
     expect(scene.controls.main).toMatchObject({ volume: 1, pitchSemitones: -7, beatNudgeMs: 250 });
+    expect(scene.enabled).toEqual(fallback.enabled);
   });
 
   it("merges persisted scenes by stable slot id and falls back on malformed storage", () => {

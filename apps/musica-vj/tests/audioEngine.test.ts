@@ -214,6 +214,17 @@ describe("audio engine state application", () => {
     expect(runtimes.get("sequence")?.streamTime).toBeCloseTo(anchor - 0.05, 8);
   });
 
+  it("queues a newly enabled realtime deck on the next shared bar", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    const anchor = await engine.synchronizeRealtimeDeckClocks(0.45);
+    const startsAt = await engine.synchronizeRealtimeDeckClockToNextBar("sequence", 0.75);
+
+    expect(startsAt).toBeCloseTo(anchor + (60 / engine.getSnapshot().bpm) * 4, 8);
+    const runtime = (engine as unknown as { realtimeDecks: Map<string, { streamTime: number }> }).realtimeDecks.get("sequence");
+    expect(runtime?.streamTime).toBeCloseTo(startsAt, 8);
+  });
+
   it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();

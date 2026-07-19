@@ -357,7 +357,7 @@ fn validate_plan(plan: AgentPlan) -> Result<AgentPlan, AgentError> {
 }
 
 fn agent_system_prompt() -> String {
-    "You are Musica VJ's agentic music director. Return only JSON with keys title, rationale, prompt, templateId, scene, bpm, intensity, artDirection, temporal, arrangementNotes. Choose templateId from warehouse-techno, liquid-breaks, ambient-dub, synthwave-drive, footwork-cuts, cinematic-pulse. Choose scene from tunnel, bloom, terrain, lasergrid, aurora, monolith, pulsefield, chromawave. Use numeric unit values for artDirection and temporal. Temporal keys are speed, strobe, trail, morph, camera, phase.".into()
+    "You are Musica VJ's agentic music director. Return only JSON with keys title, rationale, prompt, templateId, scene, bpm, intensity, artDirection, temporal, arrangementNotes. The prompt must be a concrete production brief, not genre adjectives: specify beat placement and feel, instrumentation and register, motif behavior, eight-bar phrase development, transitions, dynamics, spatial mix, personalization, and explicit exclusions. When asked for Lyria RealTime, preserve the requested BPM and describe one continuous main stereo stream, never multiple songs, output streams, or decks. Choose templateId from warehouse-techno, liquid-breaks, ambient-dub, synthwave-drive, footwork-cuts, cinematic-pulse. Choose scene from tunnel, bloom, terrain, lasergrid, aurora, monolith, pulsefield, chromawave. Use numeric unit values for artDirection and temporal. Temporal keys are speed, strobe, trail, morph, camera, phase.".into()
 }
 
 fn agent_user_prompt(request: &AgentPlanRequest) -> String {

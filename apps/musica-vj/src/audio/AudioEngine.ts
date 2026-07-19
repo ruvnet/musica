@@ -218,6 +218,7 @@ export class AudioEngine {
   private playing = false;
   private droppedLateSteps = 0;
   private realtimeStreamPrimary = false;
+  private realtimeAnchor = 0;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -833,11 +834,26 @@ export class AudioEngine {
     await this.initialize();
     const context = this.requireContext();
     const anchor = context.currentTime + clamp(leadSeconds, 0.1, 2);
+    this.realtimeAnchor = anchor;
     for (const [deck, runtime] of this.realtimeDecks) {
       const nudgeSeconds = this.realtimeDeckControls[deck].beatNudgeMs / 1_000;
       runtime.streamTime = Math.max(context.currentTime + 0.02, anchor + nudgeSeconds);
     }
     return anchor;
+  }
+
+  async synchronizeRealtimeDeckClockToNextBar(deck: RealtimeDeckId, leadSeconds = 0.75): Promise<number> {
+    await this.initialize();
+    const context = this.requireContext();
+    const runtime = this.realtimeDecks.get(deck);
+    if (!runtime) return context.currentTime;
+    const minimumStart = context.currentTime + clamp(leadSeconds, 0.1, 2);
+    const barSeconds = secondsPerStep(this.bpm) * STEPS_PER_BAR;
+    const anchor = this.realtimeAnchor > 0 ? this.realtimeAnchor : minimumStart;
+    const elapsedBars = Math.max(0, Math.ceil((minimumStart - anchor) / barSeconds));
+    const startsAt = anchor + elapsedBars * barSeconds;
+    runtime.streamTime = startsAt + this.realtimeDeckControls[deck].beatNudgeMs / 1_000;
+    return startsAt;
   }
 
   resetRealtimeDeckClock(deck: RealtimeDeckId): void {

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dj-controls-capability",
+  "description": "Window geometry and event permissions for detachable DJ control surfaces",
+  "windows": ["dj-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-position",
+    "core:window:allow-set-focus",
+    "core:window:allow-show"
+  ]
+}

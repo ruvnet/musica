@@ -4,7 +4,10 @@ import {
   DEFAULT_LYRIA_REALTIME_PROMPTS,
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
   LYRIA_REALTIME_STYLE_PRESETS,
+  AUTO_DJ_PHRASE_BARS,
+  autoDjPhraseDurationMs,
   compensateLyriaBpmForPitch,
+  createAutoDjRealtimeRequest,
   createLyriaSequenceConfig,
   createLyriaSequencePrompts,
   createLyriaVocalPrompts,
@@ -108,6 +111,34 @@ describe("Lyria RealTime defaults", () => {
       expect(request.weightedPrompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
       expect(validConfig(request.config)).toBe(true);
     }
+  });
+
+  it("builds detailed single-stream Auto DJ phrases at musical intervals", () => {
+    const style = LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === "techno")!;
+    const request = createAutoDjRealtimeRequest(style, {
+      personalization: "futuristic restrained warehouse set with a memorable metallic motif",
+      step: 2,
+      bpm: 128,
+    });
+
+    expect(AUTO_DJ_PHRASE_BARS).toBe(32);
+    expect(autoDjPhraseDurationMs(128)).toBeGreaterThanOrEqual(60_000);
+    expect(request.config.bpm).toBe(128);
+    expect(request.weightedPrompts).toHaveLength(4);
+    expect(request.weightedPrompts.map((prompt) => prompt.text).join(" ")).toContain("Single continuous main stereo stream");
+    expect(request.weightedPrompts.map((prompt) => prompt.text).join(" ")).toContain("Beat design:");
+    expect(request.weightedPrompts.map((prompt) => prompt.text).join(" ")).toContain("futuristic restrained warehouse set");
+    expect(request.weightedPrompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("multiple streams"))).toBe(true);
+    expect(request.weightedPrompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
+    expect(validConfig(request.config)).toBe(true);
+
+    const directed = createAutoDjRealtimeRequest(style, {
+      personalization: "restrained warehouse identity",
+      generatedBrief: "Precise kick and rolling percussion, metallic motif introduced over eight bars, mono-compatible sub and short room depth",
+      step: 3,
+      bpm: 128,
+    });
+    expect(directed.weightedPrompts.some((prompt) => prompt.text.startsWith("Director brief:"))).toBe(true);
   });
 
   it("maps every performance template to a valid Lyria RealTime guide", () => {
