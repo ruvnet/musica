@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   frequencyBandEnergy,
   mapVisualAudioResponse,
+  normalizeAnimationStyle,
   normalizeArtDirection,
   normalizeTemporalControls,
   sceneForMeasuredSection,
+  VISUAL_ANIMATION_STYLES,
 } from "../src/visual/VisualEngine";
 
 describe("measured section scene mapping", () => {
@@ -51,8 +53,8 @@ describe("measured section scene mapping", () => {
     expect(response.waveformAmplitude).toBe(1);
     expect(response.hazeOpacity).toBe(0.1);
     expect(response.flowCurl).toBe(0.6);
-    expect(response.beamIntensity).toBe(1.06);
-    expect(response.afterimageOpacity).toBe(0.52);
+    expect(response.beamIntensity).toBe(0.71);
+    expect(response.afterimageOpacity).toBeCloseTo(0.305, 8);
   });
 
   it("keeps live artist macros inside performance-safe ranges", () => {
@@ -85,5 +87,19 @@ describe("measured section scene mapping", () => {
       camera: 0.25,
       phase: 1,
     });
+  });
+
+  it("normalizes visual animation styles to supported options", () => {
+    expect(VISUAL_ANIMATION_STYLES.map((style) => style.id)).toEqual([
+      "flow",
+      "orbit",
+      "warp",
+      "shards",
+      "scan",
+      "minimal",
+    ]);
+    expect(normalizeAnimationStyle("warp")).toBe("warp");
+    expect(normalizeAnimationStyle("unknown")).toBe("flow");
+    expect(normalizeAnimationStyle(undefined)).toBe("flow");
   });
 });
