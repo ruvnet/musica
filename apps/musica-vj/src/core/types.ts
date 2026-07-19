@@ -129,6 +129,7 @@ export type ControlAction =
   | "visual.temporal.morph.delta"
   | "visual.temporal.camera.delta"
   | "visual.temporal.phase.delta"
+  | "lyria.deck-scene.select"
   | "performance.template.select";
 
 export interface ControlMessage {

@@ -47,6 +47,15 @@ import {
   type LyriaWeightedPrompt,
 } from "./core/lyriaRealtime";
 import { importMidiPerformance } from "./core/midiImport";
+import {
+  DEFAULT_LYRIA_DECK_CONTROLS,
+  LYRIA_DECK_SCENE_STORAGE_KEY,
+  cloneLyriaDeckScene,
+  loadLyriaDeckScenes,
+  normalizeLyriaDeckScene,
+  type LyriaDeckControl,
+  type LyriaDeckScene,
+} from "./core/lyriaDeckScenes";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
 import {
@@ -64,21 +73,12 @@ const DEFAULT_REALTIME_REQUEST = createLyriaRealtimeRequestForTemplate(DEFAULT_T
 const DEFAULT_REALTIME_STYLE = lyriaRealtimeStyleById(DEFAULT_LYRIA_REALTIME_STYLE_ID);
 const LYRIA_STREAM_STARTUP_TIMEOUT_MS = 15_000;
 const LYRIA_STREAM_POLL_MS = 80;
+const LYRIA_PREBUFFER_SECONDS = 1.25;
+const LYRIA_PREBUFFER_BYTES = 48_000 * 2 * 2 * LYRIA_PREBUFFER_SECONDS;
+const LYRIA_MIN_START_BYTES = 48_000 * 2 * 2 * 0.75;
+const LYRIA_PLAYBACK_LEAD_SECONDS = 1;
 const LYRIA_LIVE_UPDATE_DEBOUNCE_MS = 420;
 const LYRIA_DECKS: LyriaRealtimeDeckId[] = ["main", "sequence", "vocal"];
-
-interface LyriaDeckControl {
-  volume: number;
-  muted: boolean;
-  pitchSemitones: number;
-  beatNudgeMs: number;
-}
-
-const DEFAULT_LYRIA_DECK_CONTROLS: Record<LyriaRealtimeDeckId, LyriaDeckControl> = {
-  main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
-};
 
 interface LyriaBufferingState {
   active: boolean;
@@ -265,6 +265,7 @@ export function App() {
   const liveUpdateSignatureRef = useRef<Record<LyriaRealtimeDeckId, string>>({ main: "", sequence: "", vocal: "" });
   const realtimePrebufferRef = useRef<Record<LyriaRealtimeDeckId, BufferedRealtimeChunk[]>>(createRealtimePrebuffer());
   const realtimePrebufferStartedRef = useRef(false);
+  const realtimePollInFlightRef = useRef(false);
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -309,6 +310,15 @@ export function App() {
     sequence: { ...DEFAULT_LYRIA_DECK_CONTROLS.sequence },
     vocal: { ...DEFAULT_LYRIA_DECK_CONTROLS.vocal },
   }));
+  const [lyriaDeckScenes, setLyriaDeckScenes] = useState<LyriaDeckScene[]>(() => {
+    try {
+      return loadLyriaDeckScenes(window.localStorage.getItem(LYRIA_DECK_SCENE_STORAGE_KEY));
+    } catch {
+      return loadLyriaDeckScenes();
+    }
+  });
+  const [activeLyriaDeckSceneId, setActiveLyriaDeckSceneId] = useState<string>();
+  const [lyriaDeckSceneDialog, setLyriaDeckSceneDialog] = useState<LyriaDeckScene>();
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
   const [lyriaBuffering, setLyriaBuffering] = useState<LyriaBufferingState>({ active: false, message: "", bytes: 0 });
   const [autoDjMode, setAutoDjMode] = useState(false);
@@ -398,7 +408,7 @@ export function App() {
     realtimePrebufferRef.current = createRealtimePrebuffer();
     engineRef.current.stop();
     engineRef.current.setRealtimeStreamPrimary(false);
-    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
     if (!lyriaSession && !sequenceLyriaSession && !vocalLyriaSession) {
       if (announce) setNotice("Transport stopped.");
       return;
@@ -416,7 +426,7 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaSession, lyriaStreamBytes, sequenceLyriaSession, vocalLyriaSession]);
+  }, [lyriaSession, sequenceLyriaSession, vocalLyriaSession]);
 
   const ingestRealtimeAudioPoll = useCallback(async (deck: LyriaRealtimeDeckId, schedule = true): Promise<number> => {
     const poll = await pollLyriaRealtimeAudio(deck);
@@ -441,18 +451,16 @@ export function App() {
   const waitForRealtimeAudioFrames = useCallback(async (deck: LyriaRealtimeDeckId, schedule = true): Promise<number> => {
     const deadline = performance.now() + LYRIA_STREAM_STARTUP_TIMEOUT_MS;
     let receivedBytes = 0;
-    while (receivedBytes === 0 && performance.now() < deadline) {
+    while (receivedBytes < LYRIA_PREBUFFER_BYTES && performance.now() < deadline) {
       if (lyriaBufferCancelRef.current) return 0;
       receivedBytes += await ingestRealtimeAudioPoll(deck, schedule);
-      if (receivedBytes === 0) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, LYRIA_STREAM_POLL_MS));
-      }
+      if (receivedBytes < LYRIA_PREBUFFER_BYTES) await WAIT(LYRIA_STREAM_POLL_MS);
     }
     return receivedBytes;
   }, [ingestRealtimeAudioPoll]);
 
   const flushSynchronizedRealtimePrebuffer = useCallback(async () => {
-    await engineRef.current.synchronizeRealtimeDeckClocks();
+    await engineRef.current.synchronizeRealtimeDeckClocks(LYRIA_PLAYBACK_LEAD_SECONDS);
     const prebuffer = realtimePrebufferRef.current;
     const chunkCount = Math.max(...LYRIA_DECKS.map((deck) => prebuffer[deck].length));
     for (let index = 0; index < chunkCount; index += 1) {
@@ -501,13 +509,13 @@ export function App() {
           engineRef.current.setRealtimeStreamPrimary(true);
           realtimePrebufferRef.current = createRealtimePrebuffer();
           const [mainBytes, sequenceBytes, vocalBytes] = await Promise.all(LYRIA_DECKS.map((deck) => waitForRealtimeAudioFrames(deck, false)));
-          if (mainBytes === 0) {
+          if (mainBytes < LYRIA_MIN_START_BYTES) {
             setLyriaBuffering({ active: false, message: "", bytes: 0 });
-            setNotice("The main Lyria deck did not return audio before the startup deadline.");
+            setNotice("The main Lyria deck did not build a stable audio buffer before the startup deadline.");
             return;
           }
           await flushSynchronizedRealtimePrebuffer();
-          const readyDecks = [mainBytes, sequenceBytes, vocalBytes].filter((bytes) => bytes > 0).length;
+          const readyDecks = [mainBytes, sequenceBytes, vocalBytes].filter((bytes) => bytes >= LYRIA_MIN_START_BYTES).length;
           setLyriaBuffering({ active: false, message: "", bytes: mainBytes + sequenceBytes + vocalBytes });
           setNotice(`${readyDecks}/3 Lyria decks beat-locked to one audio clock · main, beat, vocal muted.`);
         } catch (error) {
@@ -602,9 +610,56 @@ export function App() {
   }, [lyriaSession]);
 
   const applyRealtimeStyle = useCallback(async (styleId: string) => {
+    setActiveLyriaDeckSceneId(undefined);
     const style = applyPrimaryGuidance(lyriaRealtimeStyleById(styleId), lyriaStyleGuidance[styleId]);
     await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`, style.id);
   }, [applyRealtimeRequest, lyriaStyleGuidance]);
+
+  const updateLyriaDeckControl = useCallback((deck: LyriaRealtimeDeckId, update: Partial<LyriaDeckControl>) => {
+    setActiveLyriaDeckSceneId(undefined);
+    setLyriaDeckControls((current) => ({
+      ...current,
+      [deck]: { ...current[deck], ...update },
+    }));
+  }, []);
+
+  const applyLyriaDeckScene = useCallback(async (scene: LyriaDeckScene) => {
+    const normalized = normalizeLyriaDeckScene(scene, scene);
+    const style = applyPrimaryGuidance(
+      lyriaRealtimeStyleById(normalized.styleId),
+      lyriaStyleGuidance[normalized.styleId],
+    );
+    const request = createLyriaRealtimeRequestFromStyle(style);
+    engineRef.current.setBpm(normalized.bpm);
+    setLyriaDeckControls({
+      main: { ...normalized.controls.main },
+      sequence: { ...normalized.controls.sequence },
+      vocal: { ...normalized.controls.vocal },
+    });
+    setActiveLyriaDeckSceneId(normalized.id);
+    await applyRealtimeRequest({
+      ...request,
+      config: {
+        ...request.config,
+        bpm: compensateLyriaBpmForPitch(normalized.bpm, normalized.controls.main.pitchSemitones),
+      },
+    }, `${normalized.name} deck scene`, style.id);
+  }, [applyRealtimeRequest, lyriaStyleGuidance]);
+
+  const applyLyriaDeckSceneByIndex = useCallback(async (index: number) => {
+    const scene = lyriaDeckScenes[index];
+    if (scene) await applyLyriaDeckScene(scene);
+  }, [applyLyriaDeckScene, lyriaDeckScenes]);
+
+  const saveLyriaDeckSceneDialog = useCallback(async (loadAfterSave: boolean) => {
+    if (!lyriaDeckSceneDialog) return;
+    const fallback = lyriaDeckScenes.find((scene) => scene.id === lyriaDeckSceneDialog.id) ?? lyriaDeckSceneDialog;
+    const scene = normalizeLyriaDeckScene(lyriaDeckSceneDialog, fallback);
+    setLyriaDeckScenes((current) => current.map((candidate) => candidate.id === scene.id ? scene : candidate));
+    setLyriaDeckSceneDialog(undefined);
+    if (loadAfterSave) await applyLyriaDeckScene(scene);
+    else setNotice(`${scene.name} deck scene saved. Recall it with Shift+${lyriaDeckScenes.findIndex((candidate) => candidate.id === scene.id) + 1}.`);
+  }, [applyLyriaDeckScene, lyriaDeckSceneDialog, lyriaDeckScenes]);
 
   const openLyriaGuidanceDialog = useCallback((styleId: string) => {
     const style = lyriaRealtimeStyleById(styleId);
@@ -639,7 +694,7 @@ export function App() {
       setSequenceLyriaSession(undefined);
       setVocalLyriaSession(undefined);
       engineRef.current.setRealtimeStreamPrimary(false);
-      setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+      setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
       await refreshLyriaRealtimeStatus();
       setNotice("All Lyria RealTime decks stopped.");
     } catch (error) {
@@ -647,11 +702,11 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaStreamBytes, refreshLyriaRealtimeStatus]);
+  }, [refreshLyriaRealtimeStatus]);
 
   const cancelLyriaBuffering = useCallback(async () => {
     lyriaBufferCancelRef.current = true;
-    setLyriaBuffering({ active: false, message: "", bytes: lyriaStreamBytes });
+    setLyriaBuffering((current) => ({ active: false, message: "", bytes: current.bytes }));
     setLyriaRealtimeBusy(true);
     try {
       await Promise.all(LYRIA_DECKS.map((deck) => stopLyriaRealtime(deck)));
@@ -665,9 +720,11 @@ export function App() {
     } finally {
       setLyriaRealtimeBusy(false);
     }
-  }, [lyriaStreamBytes]);
+  }, []);
 
   const pollRealtimeAudio = useCallback(async () => {
+    if (realtimePollInFlightRef.current) return;
+    realtimePollInFlightRef.current = true;
     try {
       const activeDecks = LYRIA_DECKS.filter((deck) => (
         deck === "main" ? lyriaSession : deck === "sequence" ? sequenceLyriaSession : vocalLyriaSession
@@ -675,6 +732,8 @@ export function App() {
       await Promise.all(activeDecks.map((deck) => ingestRealtimeAudioPoll(deck)));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Lyria RealTime audio polling failed");
+    } finally {
+      realtimePollInFlightRef.current = false;
     }
   }, [ingestRealtimeAudioPoll, lyriaSession, sequenceLyriaSession, vocalLyriaSession]);
 
@@ -711,6 +770,14 @@ export function App() {
       engineRef.current.setRealtimeDeckControl(deck, lyriaDeckControls[deck]);
     }
   }, [lyriaDeckControls]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LYRIA_DECK_SCENE_STORAGE_KEY, JSON.stringify(lyriaDeckScenes));
+    } catch {
+      // Presets remain available for this session when webview storage is disabled.
+    }
+  }, [lyriaDeckScenes]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -1036,6 +1103,9 @@ export function App() {
         case "visual.temporal.phase.delta":
           changeTemporalControl("phase", temporalControls.phase + (message.value ?? 0) * 0.04);
           break;
+        case "lyria.deck-scene.select":
+          await applyLyriaDeckSceneByIndex(Math.round(message.value ?? -1));
+          break;
         case "performance.template.select": {
           const index = Math.round(message.value ?? -1);
           const template = PERFORMANCE_TEMPLATES[index % PERFORMANCE_TEMPLATES.length];
@@ -1044,7 +1114,7 @@ export function App() {
         }
       }
     },
-    [applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, handleTransportToggle, startRecording, temporalControls],
+    [applyLyriaDeckSceneByIndex, applyTemplate, changeIntensity, changeScene, changeTemporalControl, changeTrack, handleTransportToggle, startRecording, temporalControls],
   );
 
   useEffect(() => {
@@ -1199,7 +1269,7 @@ export function App() {
 
   useEffect(() => {
     if (!lyriaSession && !sequenceLyriaSession && !vocalLyriaSession) return;
-    if (!snapshot.playing && !lyriaBuffering.active) return;
+    if (!snapshot.playing) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
       if (!cancelled) void pollRealtimeAudio();
@@ -1209,7 +1279,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [lyriaBuffering.active, lyriaSession, pollRealtimeAudio, sequenceLyriaSession, snapshot.playing, vocalLyriaSession]);
+  }, [lyriaSession, pollRealtimeAudio, sequenceLyriaSession, snapshot.playing, vocalLyriaSession]);
 
   const handleAgentPlan = async () => {
     const goal = agentGoal.trim();
@@ -1553,13 +1623,71 @@ export function App() {
           </section>
         </div>
       )}
+      {lyriaDeckSceneDialog && (
+        <div
+          className="lyria-guidance-overlay"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setLyriaDeckSceneDialog(undefined);
+          }}
+        >
+          <section className="lyria-guidance-dialog deck-scene-dialog" role="dialog" aria-modal="true" aria-labelledby="deck-scene-title">
+            <header>
+              <span>MULTI-TRACK PRESET</span>
+              <button type="button" onClick={() => setLyriaDeckSceneDialog(undefined)} aria-label="Close deck scene editor">X</button>
+            </header>
+            <h2 id="deck-scene-title">Edit deck scene</h2>
+            <div className="deck-scene-identity">
+              <label>
+                <span>NAME</span>
+                <input autoFocus maxLength={18} value={lyriaDeckSceneDialog.name} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, name: event.target.value } : current)} />
+              </label>
+              <label>
+                <span>STYLE</span>
+                <select value={lyriaDeckSceneDialog.styleId} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, styleId: event.target.value } : current)}>
+                  {LYRIA_REALTIME_STYLE_PRESETS.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>BPM</span>
+                <input type="number" min="60" max="200" value={lyriaDeckSceneDialog.bpm} onChange={(event) => setLyriaDeckSceneDialog((current) => current ? { ...current, bpm: Number(event.target.value) } : current)} />
+              </label>
+            </div>
+            <div className="deck-scene-tracks">
+              {LYRIA_DECKS.map((deck) => {
+                const control = lyriaDeckSceneDialog.controls[deck];
+                const updateControl = (update: Partial<LyriaDeckControl>) => setLyriaDeckSceneDialog((current) => current ? {
+                  ...current,
+                  controls: { ...current.controls, [deck]: { ...current.controls[deck], ...update } },
+                } : current);
+                return (
+                  <article key={deck}>
+                    <header>
+                      <strong>{deck === "vocal" ? "VOCALIZE" : deck.toUpperCase()}</strong>
+                      <label><input type="checkbox" checked={control.muted} onChange={(event) => updateControl({ muted: event.target.checked })} /> MUTE</label>
+                    </header>
+                    <label><span>VOL</span><input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => updateControl({ volume: Number(event.target.value) })} /><b>{Math.round(control.volume * 100)}</b></label>
+                    <label><span>PITCH</span><input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => updateControl({ pitchSemitones: Number(event.target.value) })} /><b>{control.pitchSemitones > 0 ? `+${control.pitchSemitones}` : control.pitchSemitones}</b></label>
+                    <label><span>BEAT</span><input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => updateControl({ beatNudgeMs: Number(event.target.value) })} /><b>{control.beatNudgeMs > 0 ? `+${control.beatNudgeMs}` : control.beatNudgeMs}</b></label>
+                  </article>
+                );
+              })}
+            </div>
+            <footer className="deck-scene-footer">
+              <button type="button" onClick={() => setLyriaDeckSceneDialog(undefined)}>CANCEL</button>
+              <button type="button" onClick={() => void saveLyriaDeckSceneDialog(false)} disabled={!lyriaDeckSceneDialog.name.trim()}>SAVE</button>
+              <button type="button" className="primary" onClick={() => void saveLyriaDeckSceneDialog(true)} disabled={!lyriaDeckSceneDialog.name.trim()}>SAVE + LOAD</button>
+            </footer>
+          </section>
+        </div>
+      )}
       {lyriaBuffering.active && (
         <div className="lyria-buffer-overlay" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Buffering Lyria RealTime stream">
           <div className="lyria-buffer-dialog">
             <div className="buffer-orbit" aria-hidden="true"><i /><i /><i /></div>
             <span>LYRIA REALTIME</span>
             <h2>{lyriaBuffering.message}</h2>
-            <p>Holding transport until live PCM frames arrive. The final output will route the Lyria stream first, then keep Musica as a low guide layer for performance controls.</p>
+            <p>Holding transport until each live PCM queue has stable headroom. Playback starts from a shared clock with Lyria as the exclusive audio output.</p>
             {(lyriaRealtimeStatus.warning || lyriaRealtimeStatus.reason) && (
               <p className="buffer-warning">{lyriaRealtimeStatus.warning ?? lyriaRealtimeStatus.reason}</p>
             )}
@@ -1745,34 +1873,22 @@ export function App() {
               <strong className={sequenceLyriaSession ? "online" : ""}><i /> LYRIA</strong>
               <label>
                 <em>VOL</em>
-                <input type="range" min="0" max="1" step="0.01" value={lyriaDeckControls.sequence.volume} onChange={(event) => setLyriaDeckControls((current) => ({
-                  ...current,
-                  sequence: { ...current.sequence, volume: Number(event.target.value) },
-                }))} />
+                <input type="range" min="0" max="1" step="0.01" value={lyriaDeckControls.sequence.volume} onChange={(event) => updateLyriaDeckControl("sequence", { volume: Number(event.target.value) })} />
                 <b>{Math.round(lyriaDeckControls.sequence.volume * 100)}</b>
               </label>
               <label>
                 <em>PITCH</em>
-                <input type="range" min="-7" max="7" step="1" value={lyriaDeckControls.sequence.pitchSemitones} onChange={(event) => setLyriaDeckControls((current) => ({
-                  ...current,
-                  sequence: { ...current.sequence, pitchSemitones: Number(event.target.value) },
-                }))} />
+                <input type="range" min="-7" max="7" step="1" value={lyriaDeckControls.sequence.pitchSemitones} onChange={(event) => updateLyriaDeckControl("sequence", { pitchSemitones: Number(event.target.value) })} />
                 <b>{lyriaDeckControls.sequence.pitchSemitones > 0 ? `+${lyriaDeckControls.sequence.pitchSemitones}` : lyriaDeckControls.sequence.pitchSemitones}</b>
               </label>
               <label>
                 <em>BEAT</em>
-                <input type="range" min="-250" max="250" step="5" value={lyriaDeckControls.sequence.beatNudgeMs} onChange={(event) => setLyriaDeckControls((current) => ({
-                  ...current,
-                  sequence: { ...current.sequence, beatNudgeMs: Number(event.target.value) },
-                }))} />
+                <input type="range" min="-250" max="250" step="5" value={lyriaDeckControls.sequence.beatNudgeMs} onChange={(event) => updateLyriaDeckControl("sequence", { beatNudgeMs: Number(event.target.value) })} />
                 <b>{lyriaDeckControls.sequence.beatNudgeMs}</b>
               </label>
               <button
                 className={lyriaDeckControls.sequence.muted ? "active" : ""}
-                onClick={() => setLyriaDeckControls((current) => ({
-                  ...current,
-                  sequence: { ...current.sequence, muted: !current.sequence.muted },
-                }))}
+                onClick={() => updateLyriaDeckControl("sequence", { muted: !lyriaDeckControls.sequence.muted })}
                 title="Mute Lyria sequence stream"
               >M</button>
             </div>
@@ -1816,6 +1932,27 @@ export function App() {
                 <span>{lyriaSession ? "3-DECK STREAM" : lyriaRealtimeStatus.model}</span>
                 <b>{Math.round((lyriaStreamBytes + sequenceLyriaStreamBytes + vocalLyriaStreamBytes) / 1024)} KB</b>
               </div>
+              <div className="deck-scene-bank" aria-label="Multi-track deck scenes">
+                <header><span>DECK SCENES</span><b>SHIFT + 1-4</b></header>
+                <div>
+                  {lyriaDeckScenes.map((scene, index) => (
+                    <span className="deck-scene-slot" key={scene.id}>
+                      <button
+                        type="button"
+                        className={scene.id === activeLyriaDeckSceneId ? "active" : ""}
+                        onClick={() => void applyLyriaDeckScene(scene)}
+                        disabled={lyriaRealtimeBusy}
+                        title={`Load ${scene.name}: ${scene.bpm} BPM, ${lyriaRealtimeStyleById(scene.styleId).label}. Shift+${index + 1}`}
+                      >
+                        <em>{index + 1}</em>
+                        <strong>{scene.name}</strong>
+                        <small>{scene.bpm}</small>
+                      </button>
+                      <button type="button" className="deck-scene-edit" onClick={() => setLyriaDeckSceneDialog(cloneLyriaDeckScene(scene))} aria-label={`Edit ${scene.name} deck scene`}>E</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
               <div className="lyria-stream-mixer" aria-label="Lyria stream mixer">
                 {LYRIA_DECKS.map((deck) => {
                   const control = lyriaDeckControls[deck];
@@ -1829,35 +1966,23 @@ export function App() {
                         <span>{session ? `${Math.round(bytes / 1024)}K` : "IDLE"}</span>
                         <button
                           className={control.muted ? "active" : ""}
-                          onClick={() => setLyriaDeckControls((current) => ({
-                            ...current,
-                            [deck]: { ...current[deck], muted: !current[deck].muted },
-                          }))}
+                          onClick={() => updateLyriaDeckControl(deck, { muted: !control.muted })}
                           title={`Mute ${deck} Lyria stream`}
                         >M</button>
                       </header>
                       <label>
                         <span>VOL</span>
-                        <input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], volume: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="0" max="1" step="0.01" value={control.volume} onChange={(event) => updateLyriaDeckControl(deck, { volume: Number(event.target.value) })} />
                         <b>{Math.round(control.volume * 100)}</b>
                       </label>
                       <label>
                         <span>PITCH</span>
-                        <input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], pitchSemitones: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="-7" max="7" step="1" value={control.pitchSemitones} onChange={(event) => updateLyriaDeckControl(deck, { pitchSemitones: Number(event.target.value) })} />
                         <b>{control.pitchSemitones > 0 ? `+${control.pitchSemitones}` : control.pitchSemitones}</b>
                       </label>
                       <label>
                         <span>BEAT</span>
-                        <input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => setLyriaDeckControls((current) => ({
-                          ...current,
-                          [deck]: { ...current[deck], beatNudgeMs: Number(event.target.value) },
-                        }))} />
+                        <input type="range" min="-250" max="250" step="5" value={control.beatNudgeMs} onChange={(event) => updateLyriaDeckControl(deck, { beatNudgeMs: Number(event.target.value) })} />
                         <b>{control.beatNudgeMs > 0 ? `+${control.beatNudgeMs}` : control.beatNudgeMs}</b>
                       </label>
                     </article>
@@ -1901,6 +2026,7 @@ export function App() {
                     value={snapshot.bpm}
                     onChange={(event) => {
                       const bpm = Number(event.target.value);
+                      setActiveLyriaDeckSceneId(undefined);
                       engineRef.current.setBpm(bpm);
                       setLyriaRealtimeConfig((current) => ({ ...current, bpm }));
                     }}

@@ -40,6 +40,13 @@ const KEYBOARD_ACTIONS: Record<string, { action: ControlAction; value?: number }
   Digit8: { action: "visual.scene.select", value: 7 },
 };
 
+export function keyboardControlFor(code: string, shiftKey = false): { action: ControlAction; value?: number } | undefined {
+  if (shiftKey && /^Digit[1-4]$/.test(code)) {
+    return { action: "lyria.deck-scene.select", value: Number(code.slice(-1)) - 1 };
+  }
+  return KEYBOARD_ACTIONS[code];
+}
+
 const GLOBAL_SHORTCUTS: Array<[string, ControlAction, number?]> = [
   ["F13", "transport.toggle"],
   ["F14", "transport.record"],
@@ -138,7 +145,7 @@ export class ControlRouter {
     if (event.repeat && !["BracketLeft", "BracketRight", "Minus", "Equal"].includes(event.code)) return;
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
-    const mapping = KEYBOARD_ACTIONS[event.code];
+    const mapping = keyboardControlFor(event.code, event.shiftKey);
     if (!mapping) return;
     event.preventDefault();
     this.dispatch(mapping.action, mapping.value, "keyboard");
