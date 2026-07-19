@@ -103,6 +103,9 @@ describe("Lyria RealTime defaults", () => {
     );
     for (const style of LYRIA_REALTIME_STYLE_PRESETS) {
       expect(style.description.trim().length).toBeGreaterThan(12);
+      expect(style.prompts).toHaveLength(4);
+      expect(style.prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
+      expect(style.prompts[3].weight).toBeLessThan(0);
       const request = createLyriaRealtimeRequestFromStyle(style);
       expect(request.weightedPrompts.length).toBeGreaterThanOrEqual(1);
       expect(request.weightedPrompts.length).toBeLessThanOrEqual(4);
