@@ -70,6 +70,43 @@ body {
 .lyria-buffer-dialog .buffer-warning { color: #ff9fbd; overflow-wrap: anywhere; }
 .lyria-buffer-dialog button { justify-self: start; height: 28px; padding: 0 12px; border: 1px solid rgba(255,79,134,.28); border-radius: 6px; color: #ff8caf; background: rgba(255,79,134,.055); font: 700 7px "DM Mono"; cursor: pointer; }
 .lyria-buffer-dialog button:disabled { opacity: .55; cursor: wait; }
+.lyria-guidance-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 1, 7, .68);
+  backdrop-filter: blur(12px);
+}
+.lyria-guidance-dialog {
+  width: min(560px, calc(100vw - 36px));
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(53,220,255,.24);
+  border-radius: 8px;
+  background: rgba(9, 7, 15, .98);
+  box-shadow: 0 24px 80px rgba(0,0,0,.5), 0 0 38px rgba(53,220,255,.07);
+}
+.lyria-guidance-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lyria-guidance-dialog header span { color: var(--mint); font: 700 8px "DM Mono"; letter-spacing: .14em; }
+.lyria-guidance-dialog header button { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: #9296a1; background: transparent; font: 700 8px "DM Mono"; cursor: pointer; }
+.lyria-guidance-dialog h2 { margin: 0; color: #f5f7ff; font: 700 20px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+.guidance-copy { position: relative; display: grid; gap: 6px; }
+.guidance-copy span, .guidance-weight span { color: #777b86; font: 700 7px "DM Mono"; letter-spacing: .08em; }
+.guidance-copy textarea { width: 100%; min-height: 92px; resize: vertical; padding: 10px 10px 24px; border: 1px solid rgba(112,169,255,.2); border-radius: 6px; color: #e4e7ef; background: rgba(2,3,6,.52); font: 500 10px/1.55 "DM Mono"; outline: none; }
+.guidance-copy textarea:focus { border-color: rgba(53,220,255,.48); }
+.guidance-copy b { position: absolute; right: 9px; bottom: 8px; color: #5f636e; font: 600 7px "DM Mono"; }
+.guidance-weight { display: grid; grid-template-columns: 54px minmax(0,1fr) 38px; align-items: center; gap: 8px; }
+.guidance-weight b { color: #b8becb; font: 700 8px "DM Mono"; text-align: right; }
+.guidance-scope { display: grid; grid-template-columns: 1fr; gap: 5px; }
+.guidance-scope span { padding: 6px; border: 1px solid rgba(117,244,197,.14); border-radius: 5px; color: #8baaa5; background: rgba(117,244,197,.035); font: 700 7px "DM Mono"; text-align: center; }
+.lyria-guidance-dialog footer { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; }
+.lyria-guidance-dialog footer button { height: 28px; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; color: #9da1ad; background: rgba(255,255,255,.025); font: 700 7px "DM Mono"; cursor: pointer; }
+.lyria-guidance-dialog footer button:nth-child(2) { justify-self: end; }
+.lyria-guidance-dialog footer button.primary { border-color: rgba(53,220,255,.4); color: #041116; background: var(--mint); }
+.lyria-guidance-dialog footer button:disabled { opacity: .45; cursor: not-allowed; }
 .buffer-orbit { width: 44px; height: 44px; position: relative; border: 1px solid rgba(53,220,255,.22); border-radius: 50%; animation: buffer-spin 1.7s linear infinite; }
 .buffer-orbit i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 14px var(--mint); }
 .buffer-orbit i:nth-child(1) { top: -4px; left: 18px; }

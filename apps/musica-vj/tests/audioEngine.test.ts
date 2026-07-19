@@ -195,6 +195,25 @@ describe("audio engine state application", () => {
     expect(controls.main).toMatchObject({ volume: 0.72, pitchSemitones: 0, beatNudgeMs: 0, muted: false });
   });
 
+  it("releases realtime decks on one shared clock and preserves beat nudge offsets", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    engine.setRealtimeDeckControl("sequence", { beatNudgeMs: 100 });
+
+    const anchor = await engine.synchronizeRealtimeDeckClocks(0.45);
+    const runtimes = (engine as unknown as {
+      realtimeDecks: Map<string, { streamTime: number }>;
+    }).realtimeDecks;
+
+    expect(anchor).toBeCloseTo(0.45, 8);
+    expect(runtimes.get("main")?.streamTime).toBeCloseTo(anchor, 8);
+    expect(runtimes.get("sequence")?.streamTime).toBeCloseTo(anchor + 0.1, 8);
+    expect(runtimes.get("vocal")?.streamTime).toBeCloseTo(anchor, 8);
+
+    engine.setRealtimeDeckControl("sequence", { beatNudgeMs: -50 });
+    expect(runtimes.get("sequence")?.streamTime).toBeCloseTo(anchor - 0.05, 8);
+  });
+
   it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();

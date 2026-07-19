@@ -163,32 +163,30 @@ export function createLyriaSequencePrompts(
   state: LyriaSequenceState,
   style?: LyriaRealtimeStylePreset,
 ): LyriaWeightedPrompt[] {
-  const active = effectiveSequenceTracks(state);
+  const active = effectiveSequenceTracks(state).filter((track) => track.id === "drums" || track.id === "bass");
   const prompts = [
-    lanePrompt(active.filter((track) => track.id === "drums" || track.id === "bass"), `obey this exact 16-step rhythm at ${state.bpm} BPM`),
-    lanePrompt(active.filter((track) => !["drums", "bass"].includes(track.id)), "follow this exact 16-step harmonic and texture pulse"),
+    lanePrompt(active, `repeat this exact 16-step drum and bass rhythm at ${state.bpm} BPM`),
   ].filter((prompt): prompt is string => Boolean(prompt));
-  const styleDirection = style?.prompts.find((prompt) => prompt.weight > 0)?.text;
   if (prompts.length === 0) {
     return [
       { text: `minimal breakdown at ${state.bpm} BPM, no drums, no bass, near silence, instrumental only`, weight: 1.5 },
-      ...(styleDirection ? [{ text: `${style?.label} tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.72 }] : []),
+      ...(style ? [{ text: `${style.label} rhythmic character, silent beat stem`.slice(0, 240), weight: 0.72 }] : []),
     ];
   }
   return [
     ...prompts.map((text, index) => ({ text: text.slice(0, 240), weight: index === 0 ? 1.7 : 1.45 })),
-    ...(styleDirection ? [{ text: `${style?.label} supporting rhythm layer; match the main deck's tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.86 }] : []),
-    { text: "supporting pulse stem, locked tempo, concise one-bar motifs, immediate downbeat, restrained fills, stable dynamics, no intro, no lead solo", weight: 1.2 },
+    ...(style ? [{ text: `${style.label} supporting beat layer, match the main deck's groove and production character, percussion and bass only`.slice(0, 240), weight: 0.86 }] : []),
+    { text: "repeating one-bar beat stem, drums and bass only, locked tempo, identical pulse each bar, immediate downbeat, no intro, no fills, no melody, no vocals", weight: 1.35 },
+    { text: "chords, lead melody, pads, strings, piano, guitar, vocals, breakdown, free tempo, evolving arrangement", weight: -0.92 },
   ].slice(0, 4);
 }
 
 export function createLyriaVocalPrompts(style: LyriaRealtimeStylePreset): LyriaWeightedPrompt[] {
-  const styleDirection = style.prompts.find((prompt) => prompt.weight > 0)?.text ?? style.description;
   return [
-    { text: `${style.label} wordless vocalization, human voice as a musical instrument, expressive vowels and precise rhythmic syllables`.slice(0, 240), weight: 1.2 },
-    { text: `match the main deck's harmony, groove, and tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.82 },
-    { text: "sparse call-and-response phrases, singable contour, short two-bar answers, intentional rests, supporting background role", weight: 0.88 },
-    { text: "intelligible lyrics, lead singer, continuous vocal wall, free tempo, clashing key, extreme pitch jumps, theatrical choir", weight: -0.58 },
+    { text: `${style.label} a cappella wordless vocalization, isolated dry human voice stem, expressive vowels, precise rhythmic syllables, voice only`.slice(0, 240), weight: 1.35 },
+    { text: "match the main deck's key, tempo, groove, and emotional tone; unaccompanied vocal performance with complete silence between phrases", weight: 0.92 },
+    { text: "sparse call-and-response vocal phrases, singable contour, short two-bar answers, intentional rests, supporting background role", weight: 0.9 },
+    { text: "drums, percussion, bass, synths, pads, piano, guitar, strings, brass, sound effects, instrumental accompaniment, continuous vocal wall", weight: -1.15 },
   ];
 }
 
@@ -197,10 +195,9 @@ export function createLyriaSequenceConfig(
   base: LyriaRealtimeConfig,
   pitchSemitones: number,
 ): LyriaRealtimeConfig {
-  const active = effectiveSequenceTracks(state);
+  const active = effectiveSequenceTracks(state).filter((track) => track.id === "drums" || track.id === "bass");
   const drumsActive = active.some((track) => track.id === "drums");
   const bassActive = active.some((track) => track.id === "bass");
-  const melodicActive = active.some((track) => !["drums", "bass"].includes(track.id));
   const activeStepCount = active.reduce((sum, track) => sum + track.pattern.filter(Boolean).length, 0);
   const availableSteps = Math.max(16, active.length * 16);
   const patternDensity = activeStepCount / availableSteps;
@@ -209,12 +206,12 @@ export function createLyriaSequenceConfig(
     bpm: compensateLyriaBpmForPitch(state.bpm, pitchSemitones),
     guidance: Math.min(6, base.guidance + 1.15),
     density: Math.max(0.08, Math.min(0.9, patternDensity * 1.35)),
-    brightness: Math.max(0.18, Math.min(0.82, base.brightness + (melodicActive ? 0.08 : -0.08))),
+    brightness: Math.max(0.18, Math.min(0.68, base.brightness - 0.08)),
     temperature: Math.min(base.temperature, 0.95),
     topK: Math.min(base.topK, 32),
     muteBass: !bassActive,
     muteDrums: !drumsActive,
-    onlyBassAndDrums: drumsActive && bassActive && !melodicActive,
+    onlyBassAndDrums: drumsActive && bassActive,
     musicGenerationMode: "QUALITY",
   };
 }
@@ -399,8 +396,10 @@ export function createLyriaRealtimeRequestFromStyle(style: LyriaRealtimeStylePre
   };
 }
 
-export function createLyriaRealtimeRequestForTemplate(template: PerformanceTemplate): LyriaRealtimeRequest {
-  const style = lyriaRealtimeStyleForTemplate(template);
+export function createLyriaRealtimeRequestForTemplate(
+  template: PerformanceTemplate,
+  style: LyriaRealtimeStylePreset = lyriaRealtimeStyleForTemplate(template),
+): LyriaRealtimeRequest {
   const request = createLyriaRealtimeRequestFromStyle(style, template.bpm);
   return {
     weightedPrompts: [

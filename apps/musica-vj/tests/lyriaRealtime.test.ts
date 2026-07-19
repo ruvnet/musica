@@ -49,7 +49,8 @@ describe("Lyria RealTime defaults", () => {
     const prompts = createLyriaSequencePrompts(state, style);
 
     expect(prompts.map((prompt) => prompt.text).join(" ")).toContain(`DR:${expectedPulse}`);
-    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("Techno supporting rhythm layer");
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("Techno supporting beat layer");
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("drums and bass only");
     expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
     expect(prompts.length).toBeLessThanOrEqual(4);
   });
@@ -59,8 +60,9 @@ describe("Lyria RealTime defaults", () => {
     const prompts = createLyriaVocalPrompts(style);
 
     expect(prompts).toHaveLength(4);
-    expect(prompts.some((prompt) => prompt.text.includes("House wordless vocalization"))).toBe(true);
-    expect(prompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("intelligible lyrics"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("House a cappella wordless vocalization"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.text.includes("isolated dry human voice stem"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("instrumental accompaniment"))).toBe(true);
     expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
   });
 

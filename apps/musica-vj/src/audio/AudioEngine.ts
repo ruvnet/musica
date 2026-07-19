@@ -58,7 +58,7 @@ interface RealtimeDeckRuntime {
 const REALTIME_DECK_DEFAULTS: Record<RealtimeDeckId, RealtimeDeckControl> = {
   main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
   sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0.3, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
+  vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
 };
 
 export interface AiToneOptions {
@@ -864,8 +864,22 @@ export class AudioEngine {
     this.realtimeDeckControls[deck] = next;
     const runtime = this.realtimeDecks.get(deck);
     if (runtime && this.context) {
+      if (runtime.streamTime > 0 && next.beatNudgeMs !== current.beatNudgeMs) {
+        runtime.streamTime += (next.beatNudgeMs - current.beatNudgeMs) / 1_000;
+      }
       runtime.gain.gain.setTargetAtTime(next.muted ? 0 : next.volume, this.context.currentTime, 0.012);
     }
+  }
+
+  async synchronizeRealtimeDeckClocks(leadSeconds = 0.45): Promise<number> {
+    await this.initialize();
+    const context = this.requireContext();
+    const anchor = context.currentTime + clamp(leadSeconds, 0.1, 2);
+    for (const [deck, runtime] of this.realtimeDecks) {
+      const nudgeSeconds = this.realtimeDeckControls[deck].beatNudgeMs / 1_000;
+      runtime.streamTime = Math.max(context.currentTime + 0.02, anchor + nudgeSeconds);
+    }
+    return anchor;
   }
 
   resetRealtimeDeckClock(deck: RealtimeDeckId): void {
@@ -1053,7 +1067,7 @@ export class AudioEngine {
     source.playbackRate.value = playbackRate;
     source.connect(runtime.gain);
     const earliest = Math.max(context.currentTime + 0.02, context.currentTime + 0.08 + control.beatNudgeMs / 1_000);
-    if (runtime.streamTime < earliest || runtime.streamTime > context.currentTime + 1.8) {
+    if (runtime.streamTime < context.currentTime + 0.02 || runtime.streamTime > context.currentTime + 10) {
       runtime.streamTime = earliest;
     }
     const startsAt = runtime.streamTime;
