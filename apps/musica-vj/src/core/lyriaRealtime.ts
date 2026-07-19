@@ -46,6 +46,7 @@ export interface LyriaRealtimeRequest {
 export interface LyriaRealtimeStylePreset {
   id: string;
   label: string;
+  description: string;
   prompts: LyriaWeightedPrompt[];
   config: Partial<LyriaRealtimeConfig>;
 }
@@ -107,10 +108,73 @@ export const DEFAULT_LYRIA_REALTIME_PROMPTS: LyriaWeightedPrompt[] = [
   { text: "support the local sequencer and piano, leave space for live lead notes", weight: 0.7 },
 ];
 
+export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
+
 export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
+  {
+    id: "house",
+    label: "House",
+    description: "Polished club groove with piano chords, warm bass, and clean four-on-the-floor drums.",
+    prompts: [
+      { text: "modern deep house instrumental, warm bass, clean four on the floor drums, piano chord hooks, polished club mix", weight: 1 },
+      { text: "uplifting but restrained dance groove, no vocals, no latin percussion, crisp master", weight: 0.78 },
+    ],
+    config: { bpm: 122, density: 0.58, brightness: 0.48, guidance: 4.3, scale: "C_MAJOR_A_MINOR" },
+  },
+  {
+    id: "techno",
+    label: "Techno",
+    description: "Dark warehouse pulse with solid kick, rolling bass, crisp hats, and hypnotic stabs.",
+    prompts: [
+      { text: "deep warehouse techno, solid kick, rolling bass, hypnotic stabs, club ready instrumental", weight: 1 },
+      { text: "minimal arrangement, powerful low end, crisp hats, dark atmosphere, no vocals", weight: 0.76 },
+    ],
+    config: { bpm: 132, density: 0.62, brightness: 0.46, guidance: 4.1, scale: "F_MAJOR_D_MINOR" },
+  },
+  {
+    id: "cinematic",
+    label: "Cinema",
+    description: "Wide electronic score with piano shimmer, low pulses, and orchestral pad movement.",
+    prompts: [
+      { text: "cinematic electronic score, low pulses, shimmering piano, orchestral pads, widescreen drama", weight: 1 },
+      { text: "clear emotional arc, polished trailer-quality instrumental bed, no vocals", weight: 0.72 },
+    ],
+    config: { bpm: 104, density: 0.52, brightness: 0.44, guidance: 4.5, scale: "C_MAJOR_A_MINOR" },
+  },
+  {
+    id: "drum-bass",
+    label: "D+B",
+    description: "Liquid drum and bass with fast breaks, deep sub, glass pads, and melodic fragments.",
+    prompts: [
+      { text: "liquid drum and bass instrumental, fast breakbeats, deep sub bass, glass pads, clean melodic fragments", weight: 1 },
+      { text: "rolling energy, polished mix, atmospheric but rhythmic, no vocals", weight: 0.72 },
+    ],
+    config: { bpm: 174, density: 0.7, brightness: 0.5, guidance: 4.2, scale: "D_MAJOR_B_MINOR" },
+  },
+  {
+    id: "hiphop",
+    label: "Hip Hop",
+    description: "Instrumental beat tape feel with dusty drums, sub bass, keys, and chopped texture.",
+    prompts: [
+      { text: "instrumental hip hop beat, dusty drums, deep sub bass, warm electric piano, chopped texture", weight: 1 },
+      { text: "head nod groove, clean modern low end, spacious instrumental mix, no vocals", weight: 0.74 },
+    ],
+    config: { bpm: 92, density: 0.48, brightness: 0.34, guidance: 4.1, scale: "E_FLAT_MAJOR_C_MINOR" },
+  },
+  {
+    id: "funk",
+    label: "Funk",
+    description: "Tight pocket with slap bass, clav, dry drums, and short guitar accents.",
+    prompts: [
+      { text: "tight instrumental funk band, slap bass, clavinet, dry drums, short guitar accents, strong pocket", weight: 1 },
+      { text: "clean stage mix, syncopated groove, energetic but controlled, no vocals", weight: 0.72 },
+    ],
+    config: { bpm: 108, density: 0.66, brightness: 0.56, guidance: 4.2, scale: "G_MAJOR_E_MINOR" },
+  },
   {
     id: "samba",
     label: "Samba",
+    description: "Brazilian samba-house percussion and nylon-string colors for intentional Latin sets.",
     prompts: [
       { text: "Brazilian samba groove, nylon guitar, cavaquinho, surdo, tamborim, warm percussion", weight: 1 },
       { text: "sunny dance energy, syncopated acoustic rhythm section, polished instrumental mix", weight: 0.75 },
@@ -120,6 +184,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
   {
     id: "rock",
     label: "Rock",
+    description: "Live rock band energy with electric guitars, bass, drums, and a strong instrumental hook.",
     prompts: [
       { text: "tight live rock band, electric guitars, punchy bass, real drum kit, anthemic instrumental hook", weight: 1 },
       { text: "clean production, strong backbeat, energetic but not noisy", weight: 0.72 },
@@ -129,6 +194,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
   {
     id: "jazz",
     label: "Jazz",
+    description: "Modern trio feel with piano harmony, upright bass, brushed drums, and human swing.",
     prompts: [
       { text: "modern jazz trio, piano, upright bass, brushed drums, tasteful harmonic movement", weight: 1 },
       { text: "blue note color, human swing feel, intimate club recording", weight: 0.68 },
@@ -136,17 +202,9 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
     config: { bpm: 112, density: 0.5, brightness: 0.38, guidance: 4.6, scale: "B_FLAT_MAJOR_G_MINOR", muteDrums: false },
   },
   {
-    id: "techno",
-    label: "Techno",
-    prompts: [
-      { text: "deep warehouse techno, solid kick, rolling bass, hypnotic stabs, club ready instrumental", weight: 1 },
-      { text: "minimal arrangement, powerful low end, crisp hats, dark atmosphere", weight: 0.76 },
-    ],
-    config: { bpm: 132, density: 0.62, brightness: 0.46, guidance: 4.1, scale: "F_MAJOR_D_MINOR" },
-  },
-  {
     id: "classical",
     label: "Classical",
+    description: "Concert-hall piano and chamber strings with restrained romantic movement.",
     prompts: [
       { text: "classical piano and chamber strings, public domain romantic harmony, expressive arpeggios", weight: 1 },
       { text: "cinematic concert hall sound, elegant phrasing, restrained dynamics", weight: 0.7 },
@@ -154,26 +212,27 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
     config: { bpm: 76, density: 0.36, brightness: 0.32, guidance: 5.0, scale: "E_FLAT_MAJOR_C_MINOR", muteDrums: true },
   },
   {
-    id: "cinematic",
-    label: "Cinema",
+    id: "ambient",
+    label: "Ambient",
+    description: "Slow evolving pads, tape echoes, soft piano fragments, and spacious texture.",
     prompts: [
-      { text: "cinematic electronic score, low pulses, shimmering piano, orchestral pads, widescreen drama", weight: 1 },
-      { text: "clear emotional arc, polished trailer-quality instrumental bed", weight: 0.72 },
+      { text: "ambient electronic instrumental, slow evolving pads, tape echo, soft piano fragments, spacious texture", weight: 1 },
+      { text: "calm immersive atmosphere, gentle low pulse, no drums unless subtle, no vocals", weight: 0.72 },
     ],
-    config: { bpm: 104, density: 0.52, brightness: 0.44, guidance: 4.5, scale: "C_MAJOR_A_MINOR" },
+    config: { bpm: 78, density: 0.26, brightness: 0.3, guidance: 4.4, scale: "C_MAJOR_A_MINOR", muteDrums: true },
   },
 ];
 
 const TEMPLATE_STYLE_MAP: Record<string, string> = {
   "moonlight-sequencer": "classical",
   "warehouse-techno": "techno",
-  "liquid-breaks": "techno",
-  "ambient-dub": "cinematic",
+  "liquid-breaks": "drum-bass",
+  "ambient-dub": "ambient",
   "synthwave-drive": "cinematic",
   "footwork-cuts": "techno",
   "cinematic-pulse": "cinematic",
   "uk-garage-neon": "techno",
-  "afro-cosmic-house": "samba",
+  "afro-cosmic-house": "house",
   "idm-crystalline": "techno",
   "hyperpop-rush": "rock",
 };
@@ -197,7 +256,13 @@ export async function getLyriaRealtimeStatus(): Promise<LyriaRealtimeStatus> {
 }
 
 export function lyriaRealtimeStyleById(id: string): LyriaRealtimeStylePreset {
-  return LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === id) ?? LYRIA_REALTIME_STYLE_PRESETS[0];
+  return LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === id)
+    ?? LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === DEFAULT_LYRIA_REALTIME_STYLE_ID)
+    ?? LYRIA_REALTIME_STYLE_PRESETS[0];
+}
+
+export function lyriaRealtimeStyleForTemplate(template: PerformanceTemplate): LyriaRealtimeStylePreset {
+  return lyriaRealtimeStyleById(TEMPLATE_STYLE_MAP[template.id] ?? DEFAULT_LYRIA_REALTIME_STYLE_ID);
 }
 
 export function createLyriaRealtimeRequestFromStyle(style: LyriaRealtimeStylePreset, bpm?: number): LyriaRealtimeRequest {
@@ -215,7 +280,7 @@ export function createLyriaRealtimeRequestFromStyle(style: LyriaRealtimeStylePre
 }
 
 export function createLyriaRealtimeRequestForTemplate(template: PerformanceTemplate): LyriaRealtimeRequest {
-  const style = lyriaRealtimeStyleById(TEMPLATE_STYLE_MAP[template.id] ?? "cinematic");
+  const style = lyriaRealtimeStyleForTemplate(template);
   const request = createLyriaRealtimeRequestFromStyle(style, template.bpm);
   return {
     weightedPrompts: [

@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LYRIA_REALTIME_CONFIG,
   DEFAULT_LYRIA_REALTIME_PROMPTS,
+  DEFAULT_LYRIA_REALTIME_STYLE_ID,
   LYRIA_REALTIME_STYLE_PRESETS,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
+  lyriaRealtimeStyleForTemplate,
   type LyriaRealtimeConfig,
 } from "../src/core/lyriaRealtime";
-import { PERFORMANCE_TEMPLATES } from "../src/core/presets";
+import { PERFORMANCE_TEMPLATES, performanceTemplateById } from "../src/core/presets";
 
 function validConfig(config: LyriaRealtimeConfig): boolean {
   return (
@@ -41,10 +43,12 @@ describe("Lyria RealTime defaults", () => {
   });
 
   it("ships valid style buttons for common musical directions", () => {
+    expect(DEFAULT_LYRIA_REALTIME_STYLE_ID).toBe("house");
     expect(LYRIA_REALTIME_STYLE_PRESETS.map((preset) => preset.id)).toEqual(
-      expect.arrayContaining(["samba", "rock", "jazz", "techno", "classical", "cinematic"]),
+      expect.arrayContaining(["house", "techno", "cinematic", "drum-bass", "hiphop", "funk", "samba", "rock", "jazz", "classical", "ambient"]),
     );
     for (const style of LYRIA_REALTIME_STYLE_PRESETS) {
+      expect(style.description.trim().length).toBeGreaterThan(12);
       const request = createLyriaRealtimeRequestFromStyle(style);
       expect(request.weightedPrompts.length).toBeGreaterThanOrEqual(1);
       expect(request.weightedPrompts.length).toBeLessThanOrEqual(4);
@@ -61,5 +65,6 @@ describe("Lyria RealTime defaults", () => {
       expect(request.config.bpm).toBe(template.bpm);
       expect(validConfig(request.config)).toBe(true);
     }
+    expect(lyriaRealtimeStyleForTemplate(performanceTemplateById("afro-cosmic-house")).id).toBe("house");
   });
 });

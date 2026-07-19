@@ -25,9 +25,12 @@ import {
 } from "./core/creativeProvider";
 import {
   LYRIA_REALTIME_STYLE_PRESETS,
+  DEFAULT_LYRIA_REALTIME_STYLE_ID,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   getLyriaRealtimeStatus,
+  lyriaRealtimeStyleById,
+  lyriaRealtimeStyleForTemplate,
   pollLyriaRealtimeAudio,
   startLyriaRealtime,
   stopLyriaRealtime,
@@ -52,6 +55,7 @@ import {
 const DEFAULT_TEMPLATE = defaultPerformanceTemplate();
 const INITIAL_SNAPSHOT: EngineSnapshot = createEngineSnapshotFromTemplate(DEFAULT_TEMPLATE);
 const DEFAULT_REALTIME_REQUEST = createLyriaRealtimeRequestForTemplate(DEFAULT_TEMPLATE);
+const DEFAULT_REALTIME_STYLE = lyriaRealtimeStyleById(DEFAULT_LYRIA_REALTIME_STYLE_ID);
 const LYRIA_KEYBOARD_NOTES = [
   48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
   60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
@@ -219,6 +223,7 @@ export function App() {
   });
   const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_REALTIME_REQUEST.config });
   const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_REALTIME_REQUEST.weightedPrompts);
+  const [lyriaStyleId, setLyriaStyleId] = useState(DEFAULT_REALTIME_STYLE.id);
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
   const [lyriaStreamBytes, setLyriaStreamBytes] = useState(0);
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
@@ -276,6 +281,7 @@ export function App() {
     }),
     [lyriaPrompts, lyriaRealtimeConfig],
   );
+  const activeLyriaStyle = useMemo(() => lyriaRealtimeStyleById(lyriaStyleId), [lyriaStyleId]);
 
   const loadAiTonePreset = useCallback(async (trackId: TrackId, preset: AiTonePreset, announce = true) => {
     let bytes = aiToneAssetCacheRef.current.get(preset.url);
@@ -443,7 +449,8 @@ export function App() {
     }
   }, [lyriaSession, realtimeRequest, refreshLyriaRealtimeStatus]);
 
-  const applyRealtimeRequest = useCallback(async (request: typeof realtimeRequest, label: string) => {
+  const applyRealtimeRequest = useCallback(async (request: typeof realtimeRequest, label: string, styleId?: string) => {
+    if (styleId) setLyriaStyleId(styleId);
     setLyriaPrompts(request.weightedPrompts);
     setLyriaRealtimeConfig(request.config);
     if (!lyriaSession) {
@@ -462,6 +469,11 @@ export function App() {
       setLyriaRealtimeBusy(false);
     }
   }, [lyriaSession]);
+
+  const applyRealtimeStyle = useCallback(async (styleId: string) => {
+    const style = lyriaRealtimeStyleById(styleId);
+    await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`, style.id);
+  }, [applyRealtimeRequest]);
 
   const stopRealtimeSession = useCallback(async () => {
     setLyriaRealtimeBusy(true);
@@ -688,9 +700,10 @@ export function App() {
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
+    const style = lyriaRealtimeStyleForTemplate(template);
     engineRef.current.applyPerformanceTemplate(template);
     if (template.id === "moonlight-sequencer") void loadDefaultAiToneBank(false);
-    void applyRealtimeRequest(createLyriaRealtimeRequestForTemplate(template), `${template.name} realtime guide`);
+    void applyRealtimeRequest(createLyriaRealtimeRequestForTemplate(template), `${template.name} realtime guide`, style.id);
     setPrompt(template.prompt);
     setGenerationBpm(template.bpm);
     const settings = {
@@ -974,6 +987,7 @@ export function App() {
             brightness: Math.max(0, Math.min(1, styleRequest.config.brightness + ((nextStep % 5) - 2) * 0.035)),
           },
         };
+        setLyriaStyleId(style.id);
         setLyriaPrompts(styleRequest.weightedPrompts);
         setLyriaRealtimeConfig(guidedRequest.config);
         const note = LYRIA_KEYBOARD_NOTES[(nextStep * 5) % LYRIA_KEYBOARD_NOTES.length];
@@ -1494,6 +1508,15 @@ export function App() {
               <span>{lyriaSession ? lyriaSession.state.toUpperCase() : lyriaRealtimeStatus.model}</span>
               <b>{lyriaStreamBytes > 0 ? `${Math.round(lyriaStreamBytes / 1024)} KB` : `${lyriaRealtimeStatus.sampleRateHz / 1000}K PCM`}</b>
             </div>
+            <label className="realtime-style-select">
+              <span>STYLE</span>
+              <select value={lyriaStyleId} onChange={(event) => void applyRealtimeStyle(event.target.value)}>
+                {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                  <option key={style.id} value={style.id}>{style.label}</option>
+                ))}
+              </select>
+            </label>
+            <small className="realtime-style-description">{activeLyriaStyle.description}</small>
             <div className="realtime-prompts">
               {lyriaPrompts.map((weightedPrompt, index) => (
                 <label key={index}>
@@ -1523,8 +1546,10 @@ export function App() {
               {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
                 <button
                   key={style.id}
-                  onClick={() => void applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`)}
+                  className={style.id === lyriaStyleId ? "active" : ""}
+                  onClick={() => void applyRealtimeStyle(style.id)}
                   disabled={lyriaRealtimeBusy}
+                  title={style.description}
                 >
                   {style.label}
                 </button>
