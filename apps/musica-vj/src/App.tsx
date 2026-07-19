@@ -29,6 +29,7 @@ import {
   compensateLyriaBpmForPitch,
   createLyriaSequenceConfig,
   createLyriaSequencePrompts,
+  createLyriaVocalPrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   getLyriaRealtimeStatus,
@@ -352,14 +353,11 @@ export function App() {
     [lyriaDeckControls.main.pitchSemitones, lyriaPrompts, lyriaRealtimeConfig, snapshot.bpm],
   );
   const sequenceRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: createLyriaSequencePrompts(snapshot),
+    weightedPrompts: createLyriaSequencePrompts(snapshot, activeLyriaStyle),
     config: createLyriaSequenceConfig(snapshot, lyriaRealtimeConfig, lyriaDeckControls.sequence.pitchSemitones),
-  }), [lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, sequencerGuideSignature]);
+  }), [activeLyriaStyle, lyriaDeckControls.sequence.pitchSemitones, lyriaRealtimeConfig, sequencerGuideSignature]);
   const vocalRealtimeRequest = useMemo<LyriaRealtimeRequest>(() => ({
-    weightedPrompts: [
-      { text: `wordless vocalization layer for ${activeLyriaStyle.label}, expressive choir vowels and rhythmic syllables`, weight: 1.15 },
-      { text: "human voice used as a musical instrument, no intelligible lyrics, leave space for the main groove", weight: 0.76 },
-    ],
+    weightedPrompts: createLyriaVocalPrompts(activeLyriaStyle),
     config: {
       ...lyriaRealtimeConfig,
       bpm: compensateLyriaBpmForPitch(snapshot.bpm, lyriaDeckControls.vocal.pitchSemitones),
@@ -371,7 +369,7 @@ export function App() {
       onlyBassAndDrums: false,
       musicGenerationMode: "VOCALIZATION",
     },
-  }), [activeLyriaStyle.label, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
+  }), [activeLyriaStyle, lyriaDeckControls.vocal.pitchSemitones, lyriaRealtimeConfig, snapshot.bpm]);
 
   const loadAiTonePreset = useCallback(async (trackId: TrackId, preset: AiTonePreset, announce = true) => {
     let bytes = aiToneAssetCacheRef.current.get(preset.url);

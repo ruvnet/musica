@@ -108,8 +108,10 @@ export const DEFAULT_LYRIA_REALTIME_CONFIG: LyriaRealtimeConfig = {
 };
 
 export const DEFAULT_LYRIA_REALTIME_PROMPTS: LyriaWeightedPrompt[] = [
-  { text: "high quality instrumental performance bed, clear groove, polished mix, musical transitions", weight: 1 },
-  { text: "support the local sequencer and piano, leave space for live lead notes", weight: 0.7 },
+  { text: "Deep House, Rhodes Piano, Precision Bass, TR-909 Drum Machine, warm analog synth pads", weight: 1.15 },
+  { text: "Tight Groove, Live Performance, memorable motif, clear eight-bar phrases, controlled transitions, polished stereo mix", weight: 0.82 },
+  { text: "primary arrangement bed with restrained lead lines and space for a supporting pulse and short vocalization responses", weight: 0.68 },
+  { text: "free tempo, random genre changes, clashing harmony, overbusy arrangement, long intro, abrupt fills, muddy mix, harsh master", weight: -0.62 },
 ];
 
 export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
@@ -157,20 +159,37 @@ function lanePrompt(tracks: TrackSnapshot[], label: string): string | undefined 
   return `${label}; ${lanes.join("; ")}; x is hit, - is rest`;
 }
 
-export function createLyriaSequencePrompts(state: LyriaSequenceState): LyriaWeightedPrompt[] {
+export function createLyriaSequencePrompts(
+  state: LyriaSequenceState,
+  style?: LyriaRealtimeStylePreset,
+): LyriaWeightedPrompt[] {
   const active = effectiveSequenceTracks(state);
   const prompts = [
     lanePrompt(active.filter((track) => track.id === "drums" || track.id === "bass"), `obey this exact 16-step rhythm at ${state.bpm} BPM`),
-    lanePrompt(active.filter((track) => track.id === "chords" || track.id === "lead"), "follow this 16-step musical pulse"),
-    lanePrompt(active.filter((track) => track.id === "voice" || track.id === "texture"), "follow this 16-step texture pulse"),
+    lanePrompt(active.filter((track) => !["drums", "bass"].includes(track.id)), "follow this exact 16-step harmonic and texture pulse"),
   ].filter((prompt): prompt is string => Boolean(prompt));
+  const styleDirection = style?.prompts.find((prompt) => prompt.weight > 0)?.text;
   if (prompts.length === 0) {
-    return [{ text: `minimal breakdown at ${state.bpm} BPM, no drums, no bass, near silence, instrumental only`, weight: 1.5 }];
+    return [
+      { text: `minimal breakdown at ${state.bpm} BPM, no drums, no bass, near silence, instrumental only`, weight: 1.5 },
+      ...(styleDirection ? [{ text: `${style?.label} tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.72 }] : []),
+    ];
   }
   return [
     ...prompts.map((text, index) => ({ text: text.slice(0, 240), weight: index === 0 ? 1.7 : 1.45 })),
-    { text: "dedicated sequencer output, tight one-bar loop, immediate accents, no intro, no fills, instrumental only", weight: 1.2 },
+    ...(styleDirection ? [{ text: `${style?.label} supporting rhythm layer; match the main deck's tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.86 }] : []),
+    { text: "supporting pulse stem, locked tempo, concise one-bar motifs, immediate downbeat, restrained fills, stable dynamics, no intro, no lead solo", weight: 1.2 },
   ].slice(0, 4);
+}
+
+export function createLyriaVocalPrompts(style: LyriaRealtimeStylePreset): LyriaWeightedPrompt[] {
+  const styleDirection = style.prompts.find((prompt) => prompt.weight > 0)?.text ?? style.description;
+  return [
+    { text: `${style.label} wordless vocalization, human voice as a musical instrument, expressive vowels and precise rhythmic syllables`.slice(0, 240), weight: 1.2 },
+    { text: `match the main deck's harmony, groove, and tonal palette; ${styleDirection}`.slice(0, 240), weight: 0.82 },
+    { text: "sparse call-and-response phrases, singable contour, short two-bar answers, intentional rests, supporting background role", weight: 0.88 },
+    { text: "intelligible lyrics, lead singer, continuous vocal wall, free tempo, clashing key, extreme pitch jumps, theatrical choir", weight: -0.58 },
+  ];
 }
 
 export function createLyriaSequenceConfig(
@@ -358,7 +377,17 @@ export function lyriaRealtimeStyleForTemplate(template: PerformanceTemplate): Ly
 
 export function createLyriaRealtimeRequestFromStyle(style: LyriaRealtimeStylePreset, bpm?: number): LyriaRealtimeRequest {
   return {
-    weightedPrompts: style.prompts.map((prompt) => ({ ...prompt })),
+    weightedPrompts: [
+      ...style.prompts.slice(0, 2).map((prompt) => ({ ...prompt })),
+      {
+        text: "Tight Groove, Live Performance, memorable motif, clear eight-bar phrases, controlled transitions, balanced dynamics, polished stereo mix",
+        weight: 0.78,
+      },
+      {
+        text: "free tempo, random genre changes, clashing harmony, overbusy arrangement, long intro, abrupt fills, muddy mix, harsh master",
+        weight: -0.62,
+      },
+    ].slice(0, 4),
     config: {
       ...DEFAULT_LYRIA_REALTIME_CONFIG,
       ...style.config,
@@ -375,12 +404,13 @@ export function createLyriaRealtimeRequestForTemplate(template: PerformanceTempl
   const request = createLyriaRealtimeRequestFromStyle(style, template.bpm);
   return {
     weightedPrompts: [
-      ...request.weightedPrompts,
+      ...request.weightedPrompts.slice(0, 2),
       {
-        text: `follow the Musica preset: ${template.name}; ${template.description}; leave room for local MIDI and sequencer accents`,
-        weight: 0.58,
+        text: `${template.name} arrangement: ${template.description}; coherent eight-bar phrasing; reserve space for a supporting pulse and wordless responses`.slice(0, 240),
+        weight: 0.78,
       },
-    ].slice(0, 4),
+      request.weightedPrompts[request.weightedPrompts.length - 1],
+    ],
     config: request.config,
   };
 }

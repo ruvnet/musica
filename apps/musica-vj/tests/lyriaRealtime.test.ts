@@ -7,6 +7,7 @@ import {
   compensateLyriaBpmForPitch,
   createLyriaSequenceConfig,
   createLyriaSequencePrompts,
+  createLyriaVocalPrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
   lyriaRealtimeStyleForTemplate,
@@ -44,11 +45,23 @@ describe("Lyria RealTime defaults", () => {
     const state = createEngineSnapshotFromTemplate(performanceTemplateById("warehouse-techno"));
     const drums = state.tracks.find((track) => track.id === "drums")!;
     const expectedPulse = drums.pattern.map((active) => (active ? "x" : "-")).join("");
-    const prompts = createLyriaSequencePrompts(state);
+    const style = LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === "techno")!;
+    const prompts = createLyriaSequencePrompts(state, style);
 
     expect(prompts.map((prompt) => prompt.text).join(" ")).toContain(`DR:${expectedPulse}`);
+    expect(prompts.map((prompt) => prompt.text).join(" ")).toContain("Techno supporting rhythm layer");
     expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
     expect(prompts.length).toBeLessThanOrEqual(4);
+  });
+
+  it("gives the vocal deck a sparse style-matched role with negative guidance", () => {
+    const style = LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === "house")!;
+    const prompts = createLyriaVocalPrompts(style);
+
+    expect(prompts).toHaveLength(4);
+    expect(prompts.some((prompt) => prompt.text.includes("House wordless vocalization"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.weight < 0 && prompt.text.includes("intelligible lyrics"))).toBe(true);
+    expect(prompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
   });
 
   it("maps sequence lane activity into Lyria drum, bass, and density controls", () => {
@@ -89,6 +102,8 @@ describe("Lyria RealTime defaults", () => {
       expect(request.weightedPrompts.length).toBeGreaterThanOrEqual(1);
       expect(request.weightedPrompts.length).toBeLessThanOrEqual(4);
       expect(request.weightedPrompts.every((prompt) => prompt.text.trim().length > 0 && prompt.weight !== 0)).toBe(true);
+      expect(request.weightedPrompts.some((prompt) => prompt.weight < 0)).toBe(true);
+      expect(request.weightedPrompts.every((prompt) => prompt.text.length <= 240)).toBe(true);
       expect(validConfig(request.config)).toBe(true);
     }
   });
