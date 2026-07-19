@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AudioEngine, createEngineSnapshotFromTemplate, type EngineSnapshot } from "./audio/AudioEngine";
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
@@ -70,6 +70,21 @@ interface LyriaBufferingState {
   message: string;
   bytes: number;
 }
+
+type StudioPanelId =
+  | "visual-scenes"
+  | "visual-presets"
+  | "visual-animation"
+  | "visual-reactivity"
+  | "visual-macros"
+  | "visual-temporal"
+  | "audio-lyria"
+  | "audio-templates"
+  | "audio-mixer"
+  | "audio-tones"
+  | "audio-agent"
+  | "audio-generation"
+  | "av-output";
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -256,6 +271,13 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
+  const [collapsedPanels, setCollapsedPanels] = useState<Set<StudioPanelId>>(() => new Set([
+    "audio-templates",
+    "audio-tones",
+    "audio-agent",
+    "audio-generation",
+    "av-output",
+  ]));
   const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
 
   const selectedTrackSnapshot = useMemo(
@@ -1311,6 +1333,44 @@ export function App() {
     }
   };
 
+  const copyProgramSourceUrl = async () => {
+    const url = `${window.location.origin}${window.location.pathname}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice(`Copied program source URL: ${url}`);
+    } catch {
+      setNotice(`Program source URL: ${url}`);
+    }
+  };
+
+  const toggleStudioPanel = (panelId: StudioPanelId) => {
+    setCollapsedPanels((current) => {
+      const next = new Set(current);
+      if (next.has(panelId)) next.delete(panelId);
+      else next.add(panelId);
+      return next;
+    });
+  };
+
+  const renderStudioPanel = (panelId: StudioPanelId, title: string, meta: string, children: ReactNode, className = "") => {
+    const collapsed = collapsedPanels.has(panelId);
+    return (
+      <section className={`studio-panel ${className} ${collapsed ? "collapsed" : ""}`}>
+        <button
+          className="studio-panel-toggle"
+          type="button"
+          aria-expanded={!collapsed}
+          onClick={() => toggleStudioPanel(panelId)}
+        >
+          <span>{title}</span>
+          <b>{meta}</b>
+          <i aria-hidden="true">{collapsed ? "+" : "-"}</i>
+        </button>
+        {!collapsed && <div className="studio-panel-body">{children}</div>}
+      </section>
+    );
+  };
+
   return (
     <main className="app-shell">
       {lyriaBuffering.active && (
@@ -1369,432 +1429,103 @@ export function App() {
 
       <section className="workspace">
         <aside className="left-panel panel">
-          <div className="panel-heading"><span>VISUAL BANK</span><b>{VISUAL_SCENES.length} SCENES</b></div>
-          <div className="scene-list">
-            {VISUAL_SCENES.map((scene) => (
-              <button key={scene.id} className={`scene-card ${scene.id === selectedScene ? "selected" : ""}`} onClick={() => changeScene(scene.id)}>
-                <span>{scene.label}</span><strong>{scene.name}</strong><i style={{ "--scene-color": scene.color } as React.CSSProperties} />
-              </button>
-            ))}
-          </div>
-
-          <section className="template-bank animation-style-bank" aria-label="Scene animation style">
-            <div className="artist-macros-heading">
-              <span>ANIMATION</span><b>{selectedSceneMeta.label}</b>
-            </div>
-            <div className="animation-style-grid">
-              {VISUAL_ANIMATION_STYLES.map((style) => (
-                <button
-                  key={style.id}
-                  className={style.id === animationStyle ? "selected" : ""}
-                  title={style.description}
-                  onClick={() => changeAnimationStyle(style.id)}
-                >
-                  <strong>{style.label}</strong>
-                  <span>{style.description}</span>
+          {renderStudioPanel("visual-scenes", "VISUAL BANK", `${VISUAL_SCENES.length} SCENES`, (
+            <div className="scene-list">
+              {VISUAL_SCENES.map((scene) => (
+                <button key={scene.id} className={`scene-card ${scene.id === selectedScene ? "selected" : ""}`} onClick={() => changeScene(scene.id)}>
+                  <span>{scene.label}</span><strong>{scene.name}</strong><i style={{ "--scene-color": scene.color } as React.CSSProperties} />
                 </button>
               ))}
             </div>
-          </section>
+          ))}
 
-          <section className="template-bank" aria-label="Performance templates">
-            <div className="artist-macros-heading">
-              <span>TEMPLATES</span><b>{PERFORMANCE_TEMPLATES.length}</b>
-            </div>
-            <div className="template-grid">
-              {PERFORMANCE_TEMPLATES.map((template) => (
-                <button key={template.id} onClick={() => applyTemplate(template.id)}>
-                  <strong>{template.name}</strong>
-                  <span>{template.bpm} BPM</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="template-bank visual-preset-bank" aria-label="VJ visual presets">
-            <div className="artist-macros-heading">
-              <span>VJ PRESETS</span><b>{VISUAL_PRESETS.length}</b>
-            </div>
-            <div className="template-grid">
-              {VISUAL_PRESETS.map((preset) => (
-                <button key={preset.id} onClick={() => applyVisualPreset(preset.id)}>
-                  <strong>{preset.name}</strong>
-                  <span>{VISUAL_SCENES.find((scene) => scene.id === preset.scene)?.name ?? preset.scene}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="template-bank ai-tone-bank" aria-label="AI tone library">
-            <div className="artist-macros-heading">
-              <span>AI TONES</span><b>LYRIA</b>
-            </div>
-            <button className="bank-load-button" onClick={() => void loadDefaultAiToneBank()} disabled={aiToneBusy}>
-              {aiToneBusy ? "LOADING…" : "LOAD MOONLIGHT BANK"}
-            </button>
-            <div className="template-grid">
-              {AI_TONE_LIBRARY.map((preset) => (
-                <button key={preset.id} onClick={() => void handleAiTonePreset(selectedTrack, preset)} disabled={aiToneBusy}>
-                  <strong>{preset.name}</strong>
-                  <span>{preset.targetTracks.join(" / ")}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <label className="control-block">
-            <span><b>REACTIVITY · SCENE</b><em>{Math.round(intensity * 100)}%</em></span>
-            <input type="range" min="0.05" max="1" step="0.01" value={intensity} onChange={(event) => changeIntensity(Number(event.target.value))} />
-          </label>
-
-          <section className="artist-macros" aria-label="Live visual instrument controls">
-            <div className="artist-macros-heading">
-              <span>ARTIST MACROS</span><b>{selectedSceneMeta.label}</b>
-            </div>
-            {([
-              ["sculpture", "SCULPTURE"],
-              ["motion", "MOTION"],
-              ["atmosphere", "ATMOSPHERE"],
-              ["ribbon", "RIBBON"],
-            ] as const).map(([key, label]) => (
-              <label className={`artist-macro macro-${key}`} key={key}>
-                <span><b>{label}</b><em>{Math.round(artDirection[key] * 100)}</em></span>
-                <input
-                  aria-label={`${label.toLowerCase()} macro`}
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={artDirection[key]}
-                  onChange={(event) => changeArtDirection(key, Number(event.target.value))}
-                />
-              </label>
-            ))}
-          </section>
-
-          <section className="artist-macros temporal-controls" aria-label="Temporal visual controls">
-            <div className="artist-macros-heading">
-              <span>TEMPORAL</span><b>{selectedSceneMeta.label}</b>
-            </div>
-            {([
-              ["speed", "SPEED"],
-              ["strobe", "STROBE"],
-              ["trail", "TRAIL"],
-              ["morph", "MORPH"],
-              ["camera", "CAMERA"],
-              ["phase", "PHASE"],
-            ] as const).map(([key, label]) => (
-              <label className={`artist-macro temporal-${key}`} key={key}>
-                <span><b>{label}</b><em>{Math.round(temporalControls[key] * 100)}</em></span>
-                <input
-                  aria-label={`${label.toLowerCase()} temporal control`}
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={temporalControls[key]}
-                  onChange={(event) => changeTemporalControl(key, Number(event.target.value))}
-                />
-              </label>
-            ))}
-          </section>
-
-          <section className="lyria-realtime-deck" aria-label="Lyria RealTime piano keyboard">
-            <div className="artist-macros-heading">
-              <span>LYRIA REALTIME</span><b>{lyriaRealtimeStatus.available ? "READY" : "LOCAL"}</b>
-            </div>
-            <div className="realtime-status">
-              <i className={lyriaRealtimeStatus.available ? "online" : ""} />
-              <span>{lyriaSession ? lyriaSession.state.toUpperCase() : lyriaRealtimeStatus.model}</span>
-              <b>{lyriaStreamBytes > 0 ? `${Math.round(lyriaStreamBytes / 1024)} KB` : `${lyriaRealtimeStatus.sampleRateHz / 1000}K PCM`}</b>
-            </div>
-            <label className="realtime-style-select">
-              <span>STYLE</span>
-              <select value={lyriaStyleId} onChange={(event) => void applyRealtimeStyle(event.target.value)}>
-                {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
-                  <option key={style.id} value={style.id}>{style.label}</option>
-                ))}
-              </select>
-            </label>
-            <small className="realtime-style-description">{activeLyriaStyle.description}</small>
-            <div className="realtime-prompts">
-              {lyriaPrompts.map((weightedPrompt, index) => (
-                <label key={index}>
-                  <span>P{index + 1}</span>
-                  <input
-                    value={weightedPrompt.text}
-                    maxLength={240}
-                    onChange={(event) => setLyriaPrompts((current) => current.map((prompt, promptIndex) => (
-                      promptIndex === index ? { ...prompt, text: event.target.value } : prompt
-                    )))}
-                  />
-                  <input
-                    aria-label={`Lyria prompt ${index + 1} weight`}
-                    type="range"
-                    min="-3"
-                    max="3"
-                    step="0.05"
-                    value={weightedPrompt.weight}
-                    onChange={(event) => setLyriaPrompts((current) => current.map((prompt, promptIndex) => (
-                      promptIndex === index ? { ...prompt, weight: Number(event.target.value) || 1 } : prompt
-                    )))}
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="realtime-style-buttons">
-              {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
-                <button
-                  key={style.id}
-                  className={style.id === lyriaStyleId ? "active" : ""}
-                  onClick={() => void applyRealtimeStyle(style.id)}
-                  disabled={lyriaRealtimeBusy}
-                  title={style.description}
-                >
-                  {style.label}
-                </button>
-              ))}
-            </div>
-            <div className="realtime-grid">
-              <label>
-                <span>BPM</span>
-                <input type="number" min={60} max={200} value={lyriaRealtimeConfig.bpm} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, bpm: Number(event.target.value) }))} />
-              </label>
-              <label>
-                <span>DENS</span>
-                <input type="range" min="0" max="1" step="0.01" value={lyriaRealtimeConfig.density} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, density: Number(event.target.value) }))} />
-              </label>
-              <label>
-                <span>BRITE</span>
-                <input type="range" min="0" max="1" step="0.01" value={lyriaRealtimeConfig.brightness} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, brightness: Number(event.target.value) }))} />
-              </label>
-              <label>
-                <span>GUIDE</span>
-                <input type="range" min="0" max="6" step="0.05" value={lyriaRealtimeConfig.guidance} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, guidance: Number(event.target.value) }))} />
-              </label>
-            </div>
-            <div className="realtime-toggles">
-              <label><input type="checkbox" checked={lyriaRealtimeConfig.muteBass} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteBass: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> BASS MUTE</label>
-              <label><input type="checkbox" checked={lyriaRealtimeConfig.muteDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteDrums: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> DRUM MUTE</label>
-              <label><input type="checkbox" checked={lyriaRealtimeConfig.onlyBassAndDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, onlyBassAndDrums: event.target.checked, muteBass: event.target.checked ? false : current.muteBass, muteDrums: event.target.checked ? false : current.muteDrums }))} /> BASS+DRUMS</label>
-            </div>
-            <div className="piano-keyboard">
-              {LYRIA_KEYBOARD_NOTES.map((note) => {
-                const name = LYRIA_NOTE_NAMES[note % 12];
-                const isSharp = name.includes("#");
-                return (
-                  <button
-                    key={note}
-                    className={isSharp ? "sharp" : ""}
-                    onPointerDown={() => void triggerKeyboardNote(note)}
-                    title={`${name}${Math.floor(note / 12) - 1}`}
-                  >
-                    <span>{name.replace("#", "")}</span>
+          {renderStudioPanel("visual-presets", "VJ PRESETS", `${VISUAL_PRESETS.length} LOOKS`, (
+            <section className="template-bank visual-preset-bank" aria-label="VJ visual presets">
+              <div className="template-grid">
+                {VISUAL_PRESETS.map((preset) => (
+                  <button key={preset.id} onClick={() => applyVisualPreset(preset.id)}>
+                    <strong>{preset.name}</strong>
+                    <span>{VISUAL_SCENES.find((scene) => scene.id === preset.scene)?.name ?? preset.scene}</span>
                   </button>
-                );
-              })}
-            </div>
-            <div className="realtime-actions">
-              <button onClick={() => void startOrUpdateLyriaRealtime()} disabled={lyriaRealtimeBusy}>
-                {lyriaSession ? "UPDATE RT" : "START RT"}
-              </button>
-              <button className={autoDjMode ? "active" : ""} onClick={() => setAutoDjMode((active) => !active)}>
-                AUTO DJ
-              </button>
-              {lyriaSession && <button onClick={() => void stopRealtimeSession()} disabled={lyriaRealtimeBusy}>STOP</button>}
-            </div>
-            {lyriaRealtimeStatus.warning && <small>{lyriaRealtimeStatus.warning}</small>}
-            {!lyriaRealtimeStatus.available && <small>{lyriaRealtimeStatus.reason ?? "Desktop Lyria RealTime bridge is not configured"}</small>}
-          </section>
-
-          <div className="creative-panel">
-            <div className="eyebrow">CREATIVE DNA</div>
-            <h2>Direct the performance</h2>
-            <textarea className="direction-input" value={prompt} maxLength={1000} onChange={(event) => setPrompt(event.target.value)} aria-label="Creative direction" />
-            <button className="local-mutate-button" onClick={handleLocalMutate} disabled={!prompt.trim()}>
-              MUTATE LOCALLY · FREE
-            </button>
-
-            <section className="agent-director">
-              <div className="artist-macros-heading">
-                <span>AGENT DIRECTOR</span><b>{agentStatus.available ? agentStatus.provider.toUpperCase() : "OFFLINE"}</b>
+                ))}
               </div>
-              <textarea value={agentGoal} maxLength={1500} onChange={(event) => setAgentGoal(event.target.value)} aria-label="Agent director goal" />
-              <button className="agent-button" onClick={() => void handleAgentPlan()} disabled={!agentGoal.trim() || agentBusy}>
-                {agentBusy ? "PLANNING…" : "PLAN + APPLY SET"}
-              </button>
-              {agentPlan && (
-                <div className="agent-plan">
-                  <strong>{agentPlan.title}</strong>
-                  <span>{agentPlan.rationale}</span>
-                </div>
-              )}
             </section>
+          ))}
 
-            <details className="lyria-settings" open>
-              <summary><span>LYRIA 3 PRO SONG</span><b>$0.08</b></summary>
-              <div className="generation-grid">
-                <label>
-                  <span>DURATION</span>
-                  <input
-                    aria-label="Song duration in seconds"
-                    type="number"
-                    min={31}
-                    max={180}
-                    step={1}
-                    value={generationDuration}
-                    onChange={(event) => setGenerationDuration(Number(event.target.value))}
-                  />
-                  <em>SEC</em>
-                </label>
-                <label>
-                  <span>TEMPO</span>
-                  <input
-                    aria-label="Requested song BPM"
-                    type="number"
-                    min={60}
-                    max={200}
-                    step={1}
-                    value={generationBpm}
-                    onChange={(event) => setGenerationBpm(Number(event.target.value))}
-                  />
-                  <em>BPM</em>
-                </label>
-                <label>
-                  <span>KEY</span>
-                  <input
-                    aria-label="Generated music key"
-                    maxLength={40}
-                    value={generationKey}
-                    onChange={(event) => setGenerationKey(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>INTENSITY</span>
-                  <input
-                    aria-label="Production intensity"
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={productionIntensity}
-                    onChange={(event) => setProductionIntensity(Number(event.target.value))}
-                  />
-                  <em>{Math.round(productionIntensity * 100)}</em>
-                </label>
-                <label>
-                  <span>FORMAT</span>
-                  <select
-                    aria-label="Generated audio format"
-                    value={outputFormat}
-                    onChange={(event) => setOutputFormat(event.target.value as AudioOutputFormat)}
+          {renderStudioPanel("visual-animation", "ANIMATION", selectedSceneMeta.label, (
+            <section className="template-bank animation-style-bank" aria-label="Scene animation style">
+              <div className="animation-style-grid">
+                {VISUAL_ANIMATION_STYLES.map((style) => (
+                  <button
+                    key={style.id}
+                    className={style.id === animationStyle ? "selected" : ""}
+                    title={style.description}
+                    onClick={() => changeAnimationStyle(style.id)}
                   >
-                    <option value="mp3">MP3</option>
-                    <option value="wav">WAV</option>
-                  </select>
-                </label>
-                <label>
-                  <span>LANGUAGE</span>
-                  <select
-                    aria-label="Vocal language"
-                    value={generationLanguage}
-                    disabled={instrumental}
-                    onChange={(event) => setGenerationLanguage(event.target.value as (typeof LYRIA_VOCAL_LANGUAGES)[number])}
-                  >
-                    {LYRIA_VOCAL_LANGUAGES.map((language) => <option value={language} key={language}>{language}</option>)}
-                  </select>
-                </label>
+                    <strong>{style.label}</strong>
+                    <span>{style.description}</span>
+                  </button>
+                ))}
               </div>
+            </section>
+          ))}
 
-              <label className="generation-check">
-                <input type="checkbox" checked={instrumental} onChange={(event) => setInstrumental(event.target.checked)} />
-                <span>Instrumental only</span>
-              </label>
+          {renderStudioPanel("visual-reactivity", "REACTIVITY", `${Math.round(intensity * 100)}%`, (
+            <label className="control-block">
+              <span><b>SCENE</b><em>{Math.round(intensity * 100)}%</em></span>
+              <input type="range" min="0.05" max="1" step="0.01" value={intensity} onChange={(event) => changeIntensity(Number(event.target.value))} />
+            </label>
+          ))}
 
-              <label className="generation-textarea">
-                <span>LYRICS</span>
-                <textarea
-                  aria-label="User supplied lyrics"
-                  value={lyrics}
-                  maxLength={12_000}
-                  disabled={instrumental}
-                  placeholder={instrumental ? "Enable vocals to supply lyrics" : "Optional user supplied lyrics"}
-                  onChange={(event) => {
-                    setLyrics(event.target.value);
-                    setRightsDeclared(false);
-                  }}
-                />
-              </label>
+          {renderStudioPanel("visual-macros", "ARTIST MACROS", selectedSceneMeta.label, (
+            <section className="artist-macros" aria-label="Live visual instrument controls">
+              {([
+                ["sculpture", "SCULPTURE"],
+                ["motion", "MOTION"],
+                ["atmosphere", "ATMOSPHERE"],
+                ["ribbon", "RIBBON"],
+              ] as const).map(([key, label]) => (
+                <label className={`artist-macro macro-${key}`} key={key}>
+                  <span><b>{label}</b><em>{Math.round(artDirection[key] * 100)}</em></span>
+                  <input
+                    aria-label={`${label.toLowerCase()} macro`}
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={artDirection[key]}
+                    onChange={(event) => changeArtDirection(key, Number(event.target.value))}
+                  />
+                </label>
+              ))}
+            </section>
+          ))}
 
-              <label className="generation-textarea">
-                <span>TONAL CENTER / SOUND DESIGN</span>
-                <textarea
-                  aria-label="Tonal center and sound design"
-                  value={tonalCenter}
-                  maxLength={800}
-                  onChange={(event) => setTonalCenter(event.target.value)}
-                />
-              </label>
-
-              <label className="generation-textarea">
-                <span>AVOID</span>
-                <textarea
-                  aria-label="Negative music prompt"
-                  value={negativePrompt}
-                  maxLength={800}
-                  onChange={(event) => setNegativePrompt(event.target.value)}
-                />
-              </label>
-
-              <label className="generation-textarea structure-field">
-                <span>STRUCTURE · MM:SS SECTION</span>
-                <textarea
-                  aria-label="Timed song structure"
-                  value={structureText}
-                  maxLength={1600}
-                  onChange={(event) => setStructureText(event.target.value)}
-                />
-              </label>
-
-              <label className="generation-check consent-check">
-                <input type="checkbox" checked={budgetConfirmed} onChange={(event) => setBudgetConfirmed(event.target.checked)} />
-                <span>I approve one paid candidate, maximum $0.08</span>
-              </label>
-              <label className={`generation-check consent-check ${hasUserSuppliedLyrics ? "" : "is-optional"}`}>
-                <input
-                  type="checkbox"
-                  checked={rightsDeclared}
-                  disabled={!hasUserSuppliedLyrics}
-                  onChange={(event) => setRightsDeclared(event.target.checked)}
-                />
-                <span>I own or may use supplied lyrics or reference assets</span>
-              </label>
-
-              <button className="generate-button" onClick={() => void handleGenerate()} disabled={!paidGenerationReady}>
-                {generating ? "GENERATING WITH LYRIA…" : lyriaAvailable ? "GENERATE WITH LYRIA · $0.08" : "LYRIA 3 PRO OFFLINE"}
-              </button>
-              <button className="generate-button loop-generate-button" onClick={() => void handleGenerate(true)} disabled={!paidGenerationReady}>
-                {generating ? "GENERATING LOOP…" : lyriaAvailable ? "GENERATE BETTER LOOP · GCP/GEMINI" : "GCP/GEMINI LOOP OFFLINE"}
-              </button>
-              {generationIsActive && (
-                <button
-                  className="cancel-generation-button"
-                  onClick={() => void handleCancelGeneration()}
-                  disabled={cancelling || generation.cancellationRequested}
-                >
-                  {generation.cancellationRequested ? "CANCELLATION REQUESTED" : cancelling ? "CANCELLING…" : "CANCEL GENERATION"}
-                </button>
-              )}
-            </details>
-            <p className="provider-note">
-              <i className={lyriaAvailable ? "online" : ""} /> {lyriaAvailable ? `${providerStatus.model ?? "lyria-3-pro-preview"} · key isolated in Rust` : "Offline synthesis and local imports remain active"}
-            </p>
-            {generation && (
-              <small className="generation-status" aria-live="polite">
-                {generation.id.slice(0, 12)} · {generation.status} · ${(generation.generationCostUsd ?? generation.reservedCostUsd ?? 0).toFixed(2)}
-              </small>
-            )}
-          </div>
+          {renderStudioPanel("visual-temporal", "TEMPORAL", selectedSceneMeta.label, (
+            <section className="artist-macros temporal-controls" aria-label="Temporal visual controls">
+              {([
+                ["speed", "SPEED"],
+                ["strobe", "STROBE"],
+                ["trail", "TRAIL"],
+                ["morph", "MORPH"],
+                ["camera", "CAMERA"],
+                ["phase", "PHASE"],
+              ] as const).map(([key, label]) => (
+                <label className={`artist-macro temporal-${key}`} key={key}>
+                  <span><b>{label}</b><em>{Math.round(temporalControls[key] * 100)}</em></span>
+                  <input
+                    aria-label={`${label.toLowerCase()} temporal control`}
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={temporalControls[key]}
+                    onChange={(event) => changeTemporalControl(key, Number(event.target.value))}
+                  />
+                </label>
+              ))}
+            </section>
+          ))}
         </aside>
 
         <section className="performance-column">
@@ -1859,46 +1590,316 @@ export function App() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><span>MIXER</span><b>{snapshot.tracks.length} TRACKS</b></div>
-          <div className="track-list">
-            {snapshot.tracks.map((track, index) => (
-              <article key={track.id} className={`track-strip ${track.id === selectedTrack ? "selected" : ""}`} onClick={() => changeTrack(track.id)}>
-                <div className="track-number" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
-                <div className="track-main">
-                  <div className="track-title"><strong>{track.name}</strong><span>{track.loadedFile ? "CLIP" : track.aiToneFile ? "AI MIDI" : track.instrument.toUpperCase()}</span></div>
-                  <input aria-label={`${track.name} volume`} type="range" min="0" max="1" step="0.01" value={track.volume} onChange={(event) => engineRef.current.setTrackVolume(track.id, Number(event.target.value))} />
-                  <label className="pan-control" onClick={(event) => event.stopPropagation()}>
-                    <span>PAN</span>
-                    <input aria-label={`${track.name} pan`} type="range" min="-1" max="1" step="0.01" value={track.pan} onChange={(event) => engineRef.current.setTrackPan(track.id, Number(event.target.value))} />
-                    <b>{Math.abs(track.pan) < 0.01 ? "C" : track.pan < 0 ? `L${Math.round(Math.abs(track.pan) * 100)}` : `R${Math.round(track.pan * 100)}`}</b>
-                  </label>
-                  <div className="track-actions">
-                    <button className={track.muted ? "active" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleMute(track.id); }}>M</button>
-                    <button className={track.solo ? "active solo" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleSolo(track.id); }}>S</button>
-                    <label className="load-button" onClick={(event) => event.stopPropagation()}>
-                      {track.loadedFile ? "REPLACE" : "LOAD"}
-                      <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.mid,.midi" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
-                    </label>
+          {renderStudioPanel("audio-lyria", "LYRIA REALTIME", lyriaRealtimeStatus.available ? "READY" : "LOCAL", (
+            <section className="lyria-realtime-deck live-deck" aria-label="Lyria RealTime piano keyboard">
+              <div className="realtime-status">
+                <i className={lyriaRealtimeStatus.available ? "online" : ""} />
+                <span>{lyriaSession ? lyriaSession.state.toUpperCase() : lyriaRealtimeStatus.model}</span>
+                <b>{lyriaStreamBytes > 0 ? `${Math.round(lyriaStreamBytes / 1024)} KB` : `${lyriaRealtimeStatus.sampleRateHz / 1000}K PCM`}</b>
+              </div>
+              <label className="realtime-style-select">
+                <span>STYLE</span>
+                <select value={lyriaStyleId} onChange={(event) => void applyRealtimeStyle(event.target.value)}>
+                  {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                    <option key={style.id} value={style.id}>{style.label}</option>
+                  ))}
+                </select>
+              </label>
+              <small className="realtime-style-description">{activeLyriaStyle.description}</small>
+              <div className="realtime-style-buttons">
+                {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                  <button
+                    key={style.id}
+                    className={style.id === lyriaStyleId ? "active" : ""}
+                    onClick={() => void applyRealtimeStyle(style.id)}
+                    disabled={lyriaRealtimeBusy}
+                    title={style.description}
+                  >
+                    {style.label}
+                  </button>
+                ))}
+              </div>
+              <div className="realtime-grid">
+                <label>
+                  <span>BPM</span>
+                  <input type="number" min={60} max={200} value={lyriaRealtimeConfig.bpm} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, bpm: Number(event.target.value) }))} />
+                </label>
+                <label>
+                  <span>DENS</span>
+                  <input type="range" min="0" max="1" step="0.01" value={lyriaRealtimeConfig.density} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, density: Number(event.target.value) }))} />
+                </label>
+                <label>
+                  <span>BRITE</span>
+                  <input type="range" min="0" max="1" step="0.01" value={lyriaRealtimeConfig.brightness} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, brightness: Number(event.target.value) }))} />
+                </label>
+                <label>
+                  <span>GUIDE</span>
+                  <input type="range" min="0" max="6" step="0.05" value={lyriaRealtimeConfig.guidance} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, guidance: Number(event.target.value) }))} />
+                </label>
+              </div>
+              <div className="realtime-toggles">
+                <label><input type="checkbox" checked={lyriaRealtimeConfig.muteBass} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteBass: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> BASS MUTE</label>
+                <label><input type="checkbox" checked={lyriaRealtimeConfig.muteDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteDrums: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> DRUM MUTE</label>
+                <label><input type="checkbox" checked={lyriaRealtimeConfig.onlyBassAndDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, onlyBassAndDrums: event.target.checked, muteBass: event.target.checked ? false : current.muteBass, muteDrums: event.target.checked ? false : current.muteDrums }))} /> BASS+DRUMS</label>
+              </div>
+              <div className="piano-keyboard">
+                {LYRIA_KEYBOARD_NOTES.map((note) => {
+                  const name = LYRIA_NOTE_NAMES[note % 12];
+                  const isSharp = name.includes("#");
+                  return (
                     <button
-                      className={track.aiToneFile ? "active ai-tone-button" : "ai-tone-button"}
-                      onClick={(event) => { event.stopPropagation(); void handleAiTonePreset(track.id, aiTonePresetById(DEFAULT_AI_TONE_BANK[track.id] ?? AI_TONE_LIBRARY[0].id)); }}
-                      disabled={aiToneBusy}
+                      key={note}
+                      className={isSharp ? "sharp" : ""}
+                      onPointerDown={() => void triggerKeyboardNote(note)}
+                      title={`${name}${Math.floor(note / 12) - 1}`}
                     >
-                      AI
+                      <span>{name.replace("#", "")}</span>
                     </button>
-                    {track.aiToneFile && <button onClick={(event) => { event.stopPropagation(); clearAiTone(track.id); }}>AI ×</button>}
-                    {track.loadedFile && <button onClick={(event) => { event.stopPropagation(); visualRef.current?.clearAudioAnalysis(track.id); engineRef.current.clearAudioFile(track.id); }}>×</button>}
-                  </div>
+                  );
+                })}
+              </div>
+              <details className="advanced-prompts">
+                <summary>LIVE PROMPTS</summary>
+                <div className="realtime-prompts">
+                  {lyriaPrompts.map((weightedPrompt, index) => (
+                    <label key={index}>
+                      <span>P{index + 1}</span>
+                      <input
+                        value={weightedPrompt.text}
+                        maxLength={240}
+                        onChange={(event) => setLyriaPrompts((current) => current.map((prompt, promptIndex) => (
+                          promptIndex === index ? { ...prompt, text: event.target.value } : prompt
+                        )))}
+                      />
+                      <input
+                        aria-label={`Lyria prompt ${index + 1} weight`}
+                        type="range"
+                        min="-3"
+                        max="3"
+                        step="0.05"
+                        value={weightedPrompt.weight}
+                        onChange={(event) => setLyriaPrompts((current) => current.map((prompt, promptIndex) => (
+                          promptIndex === index ? { ...prompt, weight: Number(event.target.value) || 1 } : prompt
+                        )))}
+                      />
+                    </label>
+                  ))}
                 </div>
-              </article>
-            ))}
-          </div>
+              </details>
+              <div className="realtime-actions">
+                <button onClick={() => void startOrUpdateLyriaRealtime()} disabled={lyriaRealtimeBusy}>
+                  {lyriaSession ? "UPDATE RT" : "START RT"}
+                </button>
+                <button className={autoDjMode ? "active" : ""} onClick={() => setAutoDjMode((active) => !active)}>
+                  AUTO DJ
+                </button>
+                {lyriaSession && <button onClick={() => void stopRealtimeSession()} disabled={lyriaRealtimeBusy}>STOP</button>}
+              </div>
+              {lyriaRealtimeStatus.warning && <small>{lyriaRealtimeStatus.warning}</small>}
+              {!lyriaRealtimeStatus.available && <small>{lyriaRealtimeStatus.reason ?? "Desktop Lyria RealTime bridge is not configured"}</small>}
+            </section>
+          ), "primary-panel")}
 
-          <div className="master-strip">
-            <span>MASTER</span>
-            <input type="range" min="0" max="1" step="0.01" value={snapshot.masterVolume} onChange={(event) => engineRef.current.setMasterVolume(Number(event.target.value))} />
-            <b>{Math.round(snapshot.masterVolume * 100)}</b>
-          </div>
+          {renderStudioPanel("audio-templates", "MUSICAL STYLES", `${PERFORMANCE_TEMPLATES.length} SETS`, (
+            <section className="template-bank" aria-label="Performance templates">
+              <div className="template-grid">
+                {PERFORMANCE_TEMPLATES.map((template) => (
+                  <button key={template.id} onClick={() => applyTemplate(template.id)}>
+                    <strong>{template.name}</strong>
+                    <span>{template.bpm} BPM</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+
+          {renderStudioPanel("audio-mixer", "MIXER", `${snapshot.tracks.length} TRACKS`, (
+            <>
+              <div className="track-list">
+                {snapshot.tracks.map((track, index) => (
+                  <article key={track.id} className={`track-strip ${track.id === selectedTrack ? "selected" : ""}`} onClick={() => changeTrack(track.id)}>
+                    <div className="track-number" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
+                    <div className="track-main">
+                      <div className="track-title"><strong>{track.name}</strong><span>{track.loadedFile ? "CLIP" : track.aiToneFile ? "AI MIDI" : track.instrument.toUpperCase()}</span></div>
+                      <input aria-label={`${track.name} volume`} type="range" min="0" max="1" step="0.01" value={track.volume} onChange={(event) => engineRef.current.setTrackVolume(track.id, Number(event.target.value))} />
+                      <label className="pan-control" onClick={(event) => event.stopPropagation()}>
+                        <span>PAN</span>
+                        <input aria-label={`${track.name} pan`} type="range" min="-1" max="1" step="0.01" value={track.pan} onChange={(event) => engineRef.current.setTrackPan(track.id, Number(event.target.value))} />
+                        <b>{Math.abs(track.pan) < 0.01 ? "C" : track.pan < 0 ? `L${Math.round(Math.abs(track.pan) * 100)}` : `R${Math.round(track.pan * 100)}`}</b>
+                      </label>
+                      <div className="track-actions">
+                        <button className={track.muted ? "active" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleMute(track.id); }}>M</button>
+                        <button className={track.solo ? "active solo" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleSolo(track.id); }}>S</button>
+                        <label className="load-button" onClick={(event) => event.stopPropagation()}>
+                          {track.loadedFile ? "REPLACE" : "LOAD"}
+                          <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.mid,.midi" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
+                        </label>
+                        <button
+                          className={track.aiToneFile ? "active ai-tone-button" : "ai-tone-button"}
+                          onClick={(event) => { event.stopPropagation(); void handleAiTonePreset(track.id, aiTonePresetById(DEFAULT_AI_TONE_BANK[track.id] ?? AI_TONE_LIBRARY[0].id)); }}
+                          disabled={aiToneBusy}
+                        >
+                          AI
+                        </button>
+                        {track.aiToneFile && <button onClick={(event) => { event.stopPropagation(); clearAiTone(track.id); }}>AI ×</button>}
+                        {track.loadedFile && <button onClick={(event) => { event.stopPropagation(); visualRef.current?.clearAudioAnalysis(track.id); engineRef.current.clearAudioFile(track.id); }}>×</button>}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <div className="master-strip">
+                <span>MASTER</span>
+                <input type="range" min="0" max="1" step="0.01" value={snapshot.masterVolume} onChange={(event) => engineRef.current.setMasterVolume(Number(event.target.value))} />
+                <b>{Math.round(snapshot.masterVolume * 100)}</b>
+              </div>
+            </>
+          ))}
+
+          {renderStudioPanel("audio-tones", "AI TONES", aiToneBusy ? "LOADING" : "SAMPLER", (
+            <section className="template-bank ai-tone-bank" aria-label="AI tone library">
+              <button className="bank-load-button" onClick={() => void loadDefaultAiToneBank()} disabled={aiToneBusy}>
+                {aiToneBusy ? "LOADING..." : "LOAD MOONLIGHT BANK"}
+              </button>
+              <div className="template-grid">
+                {AI_TONE_LIBRARY.map((preset) => (
+                  <button key={preset.id} onClick={() => void handleAiTonePreset(selectedTrack, preset)} disabled={aiToneBusy}>
+                    <strong>{preset.name}</strong>
+                    <span>{preset.targetTracks.join(" / ")}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+
+          {renderStudioPanel("audio-agent", "AGENT DIRECTOR", agentStatus.available ? agentStatus.provider.toUpperCase() : "LOCAL", (
+            <section className="creative-panel compact-creative">
+              <textarea className="direction-input" value={prompt} maxLength={1000} onChange={(event) => setPrompt(event.target.value)} aria-label="Creative direction" />
+              <button className="local-mutate-button" onClick={handleLocalMutate} disabled={!prompt.trim()}>
+                MUTATE LOCALLY
+              </button>
+              <section className="agent-director">
+                <textarea value={agentGoal} maxLength={1500} onChange={(event) => setAgentGoal(event.target.value)} aria-label="Agent director goal" />
+                <button className="agent-button" onClick={() => void handleAgentPlan()} disabled={!agentGoal.trim() || agentBusy}>
+                  {agentBusy ? "PLANNING..." : "PLAN + APPLY SET"}
+                </button>
+                {agentPlan && (
+                  <div className="agent-plan">
+                    <strong>{agentPlan.title}</strong>
+                    <span>{agentPlan.rationale}</span>
+                  </div>
+                )}
+              </section>
+            </section>
+          ))}
+
+          {renderStudioPanel("audio-generation", "LYRIA 3 EXPORT", lyriaAvailable ? "ONLINE" : "BATCH OFF", (
+            <section className="creative-panel compact-creative">
+              <div className="generation-grid">
+                <label>
+                  <span>DURATION</span>
+                  <input aria-label="Song duration in seconds" type="number" min={31} max={180} step={1} value={generationDuration} onChange={(event) => setGenerationDuration(Number(event.target.value))} />
+                  <em>SEC</em>
+                </label>
+                <label>
+                  <span>TEMPO</span>
+                  <input aria-label="Requested song BPM" type="number" min={60} max={200} step={1} value={generationBpm} onChange={(event) => setGenerationBpm(Number(event.target.value))} />
+                  <em>BPM</em>
+                </label>
+                <label>
+                  <span>KEY</span>
+                  <input aria-label="Generated music key" maxLength={40} value={generationKey} onChange={(event) => setGenerationKey(event.target.value)} />
+                </label>
+                <label>
+                  <span>INTENSITY</span>
+                  <input aria-label="Production intensity" type="range" min={0} max={1} step={0.01} value={productionIntensity} onChange={(event) => setProductionIntensity(Number(event.target.value))} />
+                  <em>{Math.round(productionIntensity * 100)}</em>
+                </label>
+                <label>
+                  <span>FORMAT</span>
+                  <select aria-label="Generated audio format" value={outputFormat} onChange={(event) => setOutputFormat(event.target.value as AudioOutputFormat)}>
+                    <option value="mp3">MP3</option>
+                    <option value="wav">WAV</option>
+                  </select>
+                </label>
+                <label>
+                  <span>LANGUAGE</span>
+                  <select aria-label="Vocal language" value={generationLanguage} disabled={instrumental} onChange={(event) => setGenerationLanguage(event.target.value as (typeof LYRIA_VOCAL_LANGUAGES)[number])}>
+                    {LYRIA_VOCAL_LANGUAGES.map((language) => <option value={language} key={language}>{language}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label className="generation-check">
+                <input type="checkbox" checked={instrumental} onChange={(event) => setInstrumental(event.target.checked)} />
+                <span>Instrumental only</span>
+              </label>
+              <details className="advanced-prompts">
+                <summary>EXPORT PROMPTS</summary>
+                <label className="generation-textarea">
+                  <span>LYRICS</span>
+                  <textarea aria-label="User supplied lyrics" value={lyrics} maxLength={12_000} disabled={instrumental} placeholder={instrumental ? "Enable vocals to supply lyrics" : "Optional user supplied lyrics"} onChange={(event) => { setLyrics(event.target.value); setRightsDeclared(false); }} />
+                </label>
+                <label className="generation-textarea">
+                  <span>TONAL CENTER / SOUND DESIGN</span>
+                  <textarea aria-label="Tonal center and sound design" value={tonalCenter} maxLength={800} onChange={(event) => setTonalCenter(event.target.value)} />
+                </label>
+                <label className="generation-textarea">
+                  <span>AVOID</span>
+                  <textarea aria-label="Negative music prompt" value={negativePrompt} maxLength={800} onChange={(event) => setNegativePrompt(event.target.value)} />
+                </label>
+                <label className="generation-textarea structure-field">
+                  <span>STRUCTURE</span>
+                  <textarea aria-label="Timed song structure" value={structureText} maxLength={1600} onChange={(event) => setStructureText(event.target.value)} />
+                </label>
+              </details>
+              <label className="generation-check consent-check">
+                <input type="checkbox" checked={budgetConfirmed} onChange={(event) => setBudgetConfirmed(event.target.checked)} />
+                <span>I approve one paid candidate, maximum $0.08</span>
+              </label>
+              <label className={`generation-check consent-check ${hasUserSuppliedLyrics ? "" : "is-optional"}`}>
+                <input type="checkbox" checked={rightsDeclared} disabled={!hasUserSuppliedLyrics} onChange={(event) => setRightsDeclared(event.target.checked)} />
+                <span>I own or may use supplied lyrics or reference assets</span>
+              </label>
+              <button className="generate-button" onClick={() => void handleGenerate()} disabled={!paidGenerationReady}>
+                {generating ? "GENERATING..." : lyriaAvailable ? "GENERATE EXPORT" : "BATCH EXPORT OFFLINE"}
+              </button>
+              <button className="generate-button loop-generate-button" onClick={() => void handleGenerate(true)} disabled={!paidGenerationReady}>
+                {generating ? "GENERATING LOOP..." : lyriaAvailable ? "GENERATE LOOP" : "GCP LOOP OFFLINE"}
+              </button>
+              {generationIsActive && (
+                <button className="cancel-generation-button" onClick={() => void handleCancelGeneration()} disabled={cancelling || generation.cancellationRequested}>
+                  {generation.cancellationRequested ? "CANCELLATION REQUESTED" : cancelling ? "CANCELLING..." : "CANCEL GENERATION"}
+                </button>
+              )}
+              <p className="provider-note">
+                <i className={lyriaAvailable ? "online" : ""} /> {lyriaAvailable ? `${providerStatus.model ?? "lyria-3-pro-preview"} batch export` : "Live playback still uses RealTime/local audio"}
+              </p>
+              {generation && (
+                <small className="generation-status" aria-live="polite">
+                  {generation.id.slice(0, 12)} · {generation.status} · ${(generation.generationCostUsd ?? generation.reservedCostUsd ?? 0).toFixed(2)}
+                </small>
+              )}
+            </section>
+          ))}
+
+          {renderStudioPanel("av-output", "AV OUTPUT", recording ? "REC" : selectedPreset.label.toUpperCase(), (
+            <section className="av-output-panel">
+              <div className="av-output-grid">
+                <button className={recording ? "active" : ""} onClick={() => void startRecording()}>
+                  {recording ? "STOP CAPTURE" : "START CAPTURE"}
+                </button>
+                <button onClick={() => void copyProgramSourceUrl()}>COPY OBS URL</button>
+              </div>
+              <label>
+                <span>FORMAT</span>
+                <select value={selectedPreset.id} onChange={(event) => setSelectedPreset(SOCIAL_PRESETS.find((preset) => preset.id === event.target.value) ?? SOCIAL_PRESETS[2])}>
+                  {SOCIAL_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{preset.label} · {preset.width}x{preset.height}</option>)}
+                </select>
+              </label>
+              {lastRecording && <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE LAST CAPTURE</button>}
+            </section>
+          ))}
         </aside>
       </section>
 
