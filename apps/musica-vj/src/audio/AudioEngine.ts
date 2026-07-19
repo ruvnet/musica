@@ -191,6 +191,7 @@ export class AudioEngine {
   private transportStartedAt = 0;
   private playing = false;
   private droppedLateSteps = 0;
+  private realtimeStreamTime = 0;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -758,6 +759,14 @@ export class AudioEngine {
     this.emit();
   }
 
+  setStep(id: TrackId, step: number, active: boolean): void {
+    const track = this.tracks.get(id);
+    const definition = track?.definition ?? this.definitions.find((candidate) => candidate.id === id);
+    if (!definition || step < 0 || step >= STEPS_PER_BAR || definition.pattern[step] === active) return;
+    definition.pattern[step] = active;
+    this.emit();
+  }
+
   setTrackVolume(id: TrackId, volume: number): void {
     const track = this.tracks.get(id);
     const mix = track?.mix ?? this.pendingMix.get(id);
@@ -943,6 +952,38 @@ export class AudioEngine {
     const elapsed = context.currentTime - startsAt;
     if (elapsed < 0) return undefined;
     return track.loadedLoop ? elapsed % duration : Math.min(elapsed, duration);
+  }
+
+  async playRealtimePcm16(bytes: Uint8Array, sampleRateHz: number, channels: number): Promise<void> {
+    if (bytes.byteLength < 4 || channels < 1 || channels > 2 || sampleRateHz < 8_000 || sampleRateHz > 384_000) return;
+    await this.initialize();
+    const context = this.requireContext();
+    const frameCount = Math.floor(bytes.byteLength / 2 / channels);
+    if (frameCount <= 0) return;
+    const buffer = context.createBuffer(2, frameCount, sampleRateHz);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const leftSample = view.getInt16((frame * channels) * 2, true) / 32768;
+      const rightSample = channels === 1 ? leftSample : view.getInt16((frame * channels + 1) * 2, true) / 32768;
+      left[frame] = leftSample;
+      right[frame] = rightSample;
+    }
+    const track = this.tracks.get("texture");
+    if (!track) return;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(track.input);
+    const earliest = context.currentTime + 0.08;
+    if (this.realtimeStreamTime < earliest || this.realtimeStreamTime > context.currentTime + 1.8) {
+      this.realtimeStreamTime = earliest;
+    }
+    const startsAt = this.realtimeStreamTime;
+    this.realtimeStreamTime += buffer.duration;
+    this.scheduledSources.set(source, { startsAt, imported: true });
+    source.addEventListener("ended", () => this.scheduledSources.delete(source), { once: true });
+    source.start(startsAt);
   }
 
   getSnapshot(): EngineSnapshot {

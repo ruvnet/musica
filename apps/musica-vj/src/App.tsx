@@ -27,6 +27,7 @@ import {
   DEFAULT_LYRIA_REALTIME_CONFIG,
   DEFAULT_LYRIA_REALTIME_PROMPTS,
   getLyriaRealtimeStatus,
+  pollLyriaRealtimeAudio,
   startLyriaRealtime,
   stopLyriaRealtime,
   updateLyriaRealtime,
@@ -192,6 +193,7 @@ export function App() {
   const submissionRequestIdRef = useRef<string | undefined>(undefined);
   const aiToneBankLoadedRef = useRef(false);
   const aiToneAssetCacheRef = useRef(new Map<string, ArrayBuffer>());
+  const stepDragRef = useRef<{ active: boolean } | undefined>(undefined);
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -216,10 +218,13 @@ export function App() {
     channels: 2,
     audioFormat: "pcm16",
     instrumentalOnly: true,
+    bufferedAudioBytes: 0,
+    streamedAudioBytes: 0,
   });
   const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_LYRIA_REALTIME_CONFIG });
   const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_LYRIA_REALTIME_PROMPTS);
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
+  const [lyriaStreamBytes, setLyriaStreamBytes] = useState(0);
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
   const [autoDjMode, setAutoDjMode] = useState(false);
   const [autoDjStep, setAutoDjStep] = useState(0);
@@ -368,6 +373,20 @@ export function App() {
   const triggerKeyboardNote = useCallback(async (note: number) => {
     await engineRef.current.initialize();
     engineRef.current.triggerNote(selectedTrackRef.current === "drums" ? "lead" : selectedTrackRef.current, note);
+  }, []);
+
+  const pollRealtimeAudio = useCallback(async () => {
+    try {
+      const poll = await pollLyriaRealtimeAudio();
+      if (poll.warning) setLyriaRealtimeStatus((current) => ({ ...current, warning: poll.warning }));
+      setLyriaStreamBytes(poll.streamedAudioBytes);
+      if (poll.chunks.length === 0) return;
+      for (const chunk of poll.chunks) {
+        await engineRef.current.playRealtimePcm16(new Uint8Array(chunk), poll.sampleRateHz, poll.channels);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Lyria RealTime audio polling failed");
+    }
   }, []);
 
   useEffect(() => {
@@ -756,6 +775,18 @@ export function App() {
   }, [refreshLyriaRealtimeStatus]);
 
   useEffect(() => {
+    const stopStepDrag = () => {
+      stepDragRef.current = undefined;
+    };
+    window.addEventListener("pointerup", stopStepDrag);
+    window.addEventListener("pointercancel", stopStepDrag);
+    return () => {
+      window.removeEventListener("pointerup", stopStepDrag);
+      window.removeEventListener("pointercancel", stopStepDrag);
+    };
+  }, []);
+
+  useEffect(() => {
     void getAgentStatus().then(setAgentStatus).catch((error) => {
       setAgentStatus({ available: false, provider: "unavailable", reason: error instanceof Error ? error.message : String(error) });
     });
@@ -784,6 +815,19 @@ export function App() {
     }, 3_200);
     return () => window.clearInterval(timer);
   }, [autoDjMode, lyriaSession, startOrUpdateLyriaRealtime, triggerKeyboardNote]);
+
+  useEffect(() => {
+    if (!lyriaSession) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      if (!cancelled) void pollRealtimeAudio();
+    }, 80);
+    void pollRealtimeAudio();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [lyriaSession, pollRealtimeAudio]);
 
   const handleAgentPlan = async () => {
     const goal = agentGoal.trim();
@@ -1045,6 +1089,10 @@ export function App() {
     setNotice(`AI tone cleared from ${trackId}.`);
   };
 
+  const paintStep = (trackId: TrackId, step: number, active: boolean) => {
+    engineRef.current.setStep(trackId, step, active);
+  };
+
   const saveLastRecording = async () => {
     if (!lastRecording || !recorderRef.current) return;
     try {
@@ -1232,7 +1280,7 @@ export function App() {
             <div className="realtime-status">
               <i className={lyriaRealtimeStatus.available ? "online" : ""} />
               <span>{lyriaSession ? lyriaSession.state.toUpperCase() : lyriaRealtimeStatus.model}</span>
-              <b>{lyriaRealtimeStatus.sampleRateHz / 1000}K PCM</b>
+              <b>{lyriaStreamBytes > 0 ? `${Math.round(lyriaStreamBytes / 1024)} KB` : `${lyriaRealtimeStatus.sampleRateHz / 1000}K PCM`}</b>
             </div>
             <div className="realtime-prompts">
               {lyriaPrompts.map((weightedPrompt, index) => (
@@ -1307,6 +1355,7 @@ export function App() {
               </button>
               {lyriaSession && <button onClick={() => void stopRealtimeSession()} disabled={lyriaRealtimeBusy}>STOP</button>}
             </div>
+            {lyriaRealtimeStatus.warning && <small>{lyriaRealtimeStatus.warning}</small>}
             {!lyriaRealtimeStatus.available && <small>{lyriaRealtimeStatus.reason ?? "Desktop Lyria RealTime bridge is not configured"}</small>}
           </section>
 
@@ -1543,7 +1592,16 @@ export function App() {
                       aria-label={`${track.name} step ${step + 1}`}
                       className={`${active ? "active" : ""} ${snapshot.playing && snapshot.currentStep === step ? "playhead" : ""}`}
                       style={active ? { "--track-color": track.color } as React.CSSProperties : undefined}
-                      onClick={() => engineRef.current.toggleStep(track.id, step)}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        const nextActive = !active;
+                        stepDragRef.current = { active: nextActive };
+                        paintStep(track.id, step, nextActive);
+                      }}
+                      onPointerEnter={() => {
+                        const drag = stepDragRef.current;
+                        if (drag) paintStep(track.id, step, drag.active);
+                      }}
                     />
                   ))}
                 </div>

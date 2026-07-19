@@ -132,7 +132,7 @@ npm run dev:lyria:realtime
 
 The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates Lyria RealTime controls against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, 48 kHz stereo PCM16 output, and instrumental-only operation. Auto DJ cycles prompt sets and gradually changes density, brightness, BPM, and local keyboard gestures.
 
-The current implementation establishes the realtime provider/session control boundary and local playable deck. The native WebSocket audio stream, PCM jitter buffer, and audio-output bridge are the next layer; until that lands, browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
+When Start RT is pressed, Rust opens the official v1alpha Lyria RealTime WebSocket, sends setup, weighted prompts, generation config, and PLAY, then receives Base64 PCM chunks. React polls bounded PCM chunks through Tauri and schedules them into Web Audio through the texture track so Lyria becomes the higher-quality AI bed while Musica's sequencer, MIDI, piano keys, effects, mixer, analyser, and visuals continue running locally. The deck shows streamed kilobytes once audio is arriving. Browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
 
 ### Google Lyria 3 Pro preview
 

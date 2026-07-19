@@ -273,11 +273,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .record-overlay b { text-align: right; }
 
 .sequencer { padding: 11px 14px; overflow: hidden; }
-.step-grid { display: grid; gap: 4px; margin-top: 4px; }
+.step-grid { display: grid; gap: 4px; margin-top: 4px; user-select: none; touch-action: none; }
 .step-row { display: grid; grid-template-columns: 31px repeat(16, minmax(8px, 1fr)); gap: 3px; opacity: .62; }
 .step-row.selected { opacity: 1; }
 .step-label { border: 0; background: transparent; padding: 0; font: 600 7px "DM Mono"; cursor: pointer; text-align: left; }
-.step-row > button:not(.step-label) { height: 13px; padding: 0; border: 1px solid rgba(255,255,255,.055); border-radius: 2px; background: rgba(255,255,255,.025); cursor: pointer; }
+.step-row > button:not(.step-label) { height: 13px; padding: 0; border: 1px solid rgba(255,255,255,.055); border-radius: 2px; background: rgba(255,255,255,.025); cursor: crosshair; touch-action: none; }
 .step-row > button:nth-of-type(4n + 2):not(.step-label) { border-left-color: rgba(255,255,255,.18); }
 .step-row > button.active:not(.step-label) { border-color: color-mix(in srgb, var(--track-color), transparent 28%); background: var(--track-color); box-shadow: 0 0 7px color-mix(in srgb, var(--track-color), transparent 45%); }
 .step-row > button.playhead:not(.step-label) { outline: 1px solid #fff; outline-offset: 1px; }

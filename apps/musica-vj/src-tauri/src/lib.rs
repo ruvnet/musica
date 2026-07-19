@@ -9,8 +9,8 @@ use creative_provider::{
     creative_generation_status, creative_provider_status, CreativeProvider,
 };
 use lyria_realtime_provider::{
-    lyria_realtime_start, lyria_realtime_status, lyria_realtime_stop, lyria_realtime_update,
-    LyriaRealtimeProvider,
+    lyria_realtime_poll_audio, lyria_realtime_start, lyria_realtime_status, lyria_realtime_stop,
+    lyria_realtime_update, LyriaRealtimeProvider,
 };
 use meta_llm_provider::{meta_llm_plan, meta_llm_status, MetaLlmProvider};
 use tauri::Manager;
@@ -41,6 +41,7 @@ pub fn run() {
             lyria_realtime_start,
             lyria_realtime_update,
             lyria_realtime_stop,
+            lyria_realtime_poll_audio,
             meta_llm_status,
             meta_llm_plan
         ])

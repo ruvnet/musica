@@ -52,6 +52,9 @@ export interface LyriaRealtimeStatus {
   instrumentalOnly: boolean;
   reason?: string;
   activeSessionId?: string;
+  bufferedAudioBytes: number;
+  streamedAudioBytes: number;
+  warning?: string;
 }
 
 export interface LyriaRealtimeSession {
@@ -64,6 +67,17 @@ export interface LyriaRealtimeSession {
   sampleRateHz: number;
   channels: number;
   audioFormat: string;
+}
+
+export interface LyriaRealtimeAudioPoll {
+  sessionId?: string;
+  sampleRateHz: number;
+  channels: number;
+  audioFormat: string;
+  chunks: number[][];
+  bufferedAudioBytes: number;
+  streamedAudioBytes: number;
+  warning?: string;
 }
 
 export const DEFAULT_LYRIA_REALTIME_CONFIG: LyriaRealtimeConfig = {
@@ -96,6 +110,8 @@ export async function getLyriaRealtimeStatus(): Promise<LyriaRealtimeStatus> {
       audioFormat: "pcm16",
       instrumentalOnly: true,
       reason: "Lyria RealTime requires the desktop app so the Gemini key stays out of React",
+      bufferedAudioBytes: 0,
+      streamedAudioBytes: 0,
     };
   }
   return invoke<LyriaRealtimeStatus>("lyria_realtime_status");
@@ -114,4 +130,18 @@ export async function updateLyriaRealtime(request: LyriaRealtimeRequest): Promis
 export async function stopLyriaRealtime(): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("lyria_realtime_stop");
+}
+
+export async function pollLyriaRealtimeAudio(): Promise<LyriaRealtimeAudioPoll> {
+  if (!isTauri()) {
+    return {
+      sampleRateHz: 48_000,
+      channels: 2,
+      audioFormat: "pcm16",
+      chunks: [],
+      bufferedAudioBytes: 0,
+      streamedAudioBytes: 0,
+    };
+  }
+  return invoke<LyriaRealtimeAudioPoll>("lyria_realtime_poll_audio");
 }

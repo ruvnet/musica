@@ -170,6 +170,18 @@ describe("audio engine state application", () => {
     expect(importedAudioStartTime(true, 10, 12.5)).toBe(12.5);
   });
 
+  it("sets sequencer steps idempotently for drag painting", () => {
+    const engine = new AudioEngine();
+    engine.setStep("lead", 1, true);
+    engine.setStep("lead", 2, true);
+    engine.setStep("lead", 1, true);
+    engine.setStep("lead", 2, false);
+
+    const lead = engine.getSnapshot().tracks.find((track) => track.id === "lead");
+    expect(lead?.pattern[1]).toBe(true);
+    expect(lead?.pattern[2]).toBe(false);
+  });
+
   it("loads AI tone buffers without replacing MIDI sequencer patterns", async () => {
     vi.stubGlobal("AudioContext", FakeAudioContext);
     const engine = new AudioEngine();

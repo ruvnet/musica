@@ -34,9 +34,9 @@ MUSICA_LYRIA_REALTIME_ENABLED=true
 GEMINI_API_KEY=<credential available only to the Tauri process>
 ```
 
-The React app may edit weighted prompts, realtime music config, keyboard gestures, and Auto DJ state, but it must not receive the Gemini key. Native code owns provider readiness, session identity, and validation of all realtime controls before any streaming transport is connected.
+The React app may edit weighted prompts, realtime music config, keyboard gestures, and Auto DJ state, but it must not receive the Gemini key. Native code owns provider readiness, session identity, WebSocket setup, playback commands, and validation of all realtime controls.
 
-The first implementation exposes a native command surface for status, start, update, and stop. It validates the documented control envelope and returns a typed session snapshot. The stream transport remains Rust-owned and is the next implementation layer: WebSocket connection, playback command serialization, incoming PCM buffering, jitter handling, and Web Audio/native output routing must be added without moving credentials into React.
+The implementation exposes a native command surface for status, start, update, stop, and bounded PCM polling. It validates the documented control envelope, opens the official v1alpha WebSocket endpoint from Rust, sends setup, weighted prompt, generation config, and playback messages, receives Base64 PCM chunks, bounds the native queue, and lets React poll chunks into Web Audio. Lyria audio is routed through Musica's texture track so it improves the quality bed while local sequencer/MIDI/piano layers remain deterministic and visual analysis continues to see the combined mix.
 
 ## Consequences
 
@@ -45,19 +45,19 @@ The first implementation exposes a native command surface for status, start, upd
 - Musica's live architecture now targets the correct July 2026 Google music surface.
 - Prompt and config controls are typed, testable, and independent from batch generation.
 - The frontend can ship a realtime performance deck and local piano preview without exposing credentials.
-- Later native WebSocket streaming can attach to an existing command/session contract.
+- The key and WebSocket transport remain out of React while streamed PCM is mixed into Musica.
 
 ### Negative
 
-- The first implementation is a control/session boundary, not a completed audio streaming bridge.
-- Realtime billing, reconnect, jitter buffers, and PCM delivery are not yet evidenced.
+- Reconnect and long-session recovery are still minimal.
+- Realtime billing is not reconciled to provider account data.
 - Lyria RealTime is experimental and can change model, schema, or availability.
 
 ## Acceptance Tests
 
 1. Provider status is unavailable unless `MUSICA_LYRIA_REALTIME_ENABLED=true` and `GEMINI_API_KEY` are present.
 2. Realtime requests require one to four weighted prompts, non-empty text, finite non-zero weights, BPM 60 through 200, density and brightness 0 through 1, guidance 0 through 6, temperature 0 through 3, topK 1 through 1000, and a valid bass/drum mute combination.
-3. React can start, update, and stop a typed realtime session through Tauri commands without bundling provider credentials.
+3. React can start, update, stop, and poll a typed realtime session through Tauri commands without bundling provider credentials.
 4. The piano keyboard remains locally playable in browser preview and desktop fallback.
 5. Auto DJ mode changes prompt weights/config gradually rather than replacing the entire performance with batch audio.
 

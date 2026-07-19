@@ -1,12 +1,27 @@
-use std::{env, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    env,
+    sync::{Arc, Mutex},
+};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{client::IntoClientRequest, Message},
+};
 
 const ENABLE_ENV: &str = "MUSICA_LYRIA_REALTIME_ENABLED";
 const API_KEY_ENV: &str = "GEMINI_API_KEY";
 const MODEL: &str = "models/lyria-realtime-exp";
+const WS_ENDPOINT: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateMusic";
 const SAMPLE_RATE_HZ: u32 = 48_000;
 const CHANNELS: u8 = 2;
+const MAX_QUEUED_AUDIO_BYTES: usize = 48_000 * 2 * 2 * 8;
+const MAX_POLL_BYTES: usize = 48_000 * 2 * 2;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +35,9 @@ pub(crate) struct LyriaRealtimeStatus {
     instrumental_only: bool,
     reason: Option<String>,
     active_session_id: Option<String>,
+    buffered_audio_bytes: usize,
+    streamed_audio_bytes: usize,
+    warning: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -93,11 +111,44 @@ pub(crate) struct LyriaRealtimeSession {
     audio_format: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LyriaRealtimeAudioPoll {
+    session_id: Option<String>,
+    sample_rate_hz: u32,
+    channels: u8,
+    audio_format: String,
+    chunks: Vec<Vec<u8>>,
+    buffered_audio_bytes: usize,
+    streamed_audio_bytes: usize,
+    warning: Option<String>,
+}
+
+struct ActiveSession {
+    session: LyriaRealtimeSession,
+    commands: mpsc::UnboundedSender<RealtimeCommand>,
+    shared: Arc<RealtimeShared>,
+}
+
+#[derive(Default)]
+struct RealtimeShared {
+    audio: Mutex<VecDeque<Vec<u8>>>,
+    buffered_audio_bytes: Mutex<usize>,
+    streamed_audio_bytes: Mutex<usize>,
+    warning: Mutex<Option<String>>,
+}
+
+enum RealtimeCommand {
+    Update(LyriaRealtimeStartRequest),
+    Playback(&'static str),
+    Close,
+}
+
 #[derive(Default)]
 pub(crate) struct LyriaRealtimeProvider {
     enabled: bool,
-    has_api_key: bool,
-    session: Mutex<Option<LyriaRealtimeSession>>,
+    api_key: Option<String>,
+    active: Mutex<Option<ActiveSession>>,
 }
 
 impl LyriaRealtimeProvider {
@@ -106,28 +157,32 @@ impl LyriaRealtimeProvider {
             enabled: env::var(ENABLE_ENV)
                 .map(|value| matches!(value.as_str(), "true" | "1" | "yes"))
                 .unwrap_or(false),
-            has_api_key: env::var(API_KEY_ENV)
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false),
-            session: Mutex::new(None),
+            api_key: env::var(API_KEY_ENV)
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            active: Mutex::new(None),
         }
     }
 
     fn status(&self) -> LyriaRealtimeStatus {
-        let active_session_id = self
-            .session
-            .lock()
-            .ok()
-            .and_then(|session| session.as_ref().map(|active| active.id.clone()));
+        let active = self.active.lock().ok();
+        let active_session_id = active
+            .as_ref()
+            .and_then(|guard| guard.as_ref().map(|active| active.session.id.clone()));
+        let (buffered_audio_bytes, streamed_audio_bytes, warning) = active
+            .as_ref()
+            .and_then(|guard| guard.as_ref())
+            .map(|active| active.shared.snapshot())
+            .unwrap_or_default();
         let reason = if !self.enabled {
             Some(format!("{ENABLE_ENV}=true is required"))
-        } else if !self.has_api_key {
+        } else if self.api_key.is_none() {
             Some(format!("{API_KEY_ENV} is required"))
         } else {
             None
         };
         LyriaRealtimeStatus {
-            available: self.enabled && self.has_api_key,
+            available: self.enabled && self.api_key.is_some(),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
             sample_rate_hz: SAMPLE_RATE_HZ,
@@ -136,6 +191,9 @@ impl LyriaRealtimeProvider {
             instrumental_only: true,
             reason,
             active_session_id,
+            buffered_audio_bytes,
+            streamed_audio_bytes,
+            warning,
         }
     }
 
@@ -143,49 +201,302 @@ impl LyriaRealtimeProvider {
         if !self.enabled {
             return Err(format!("{ENABLE_ENV}=true is required"));
         }
-        if !self.has_api_key {
-            return Err(format!("{API_KEY_ENV} is required"));
-        }
+        let api_key = self
+            .api_key
+            .clone()
+            .ok_or_else(|| format!("{API_KEY_ENV} is required"))?;
         validate_request(&request)?;
+        self.stop()?;
         let session = LyriaRealtimeSession {
             id: format!("lrt-{}", monotonic_millis()),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
-            state: "control_ready".into(),
-            weighted_prompts: request.weighted_prompts,
-            config: request.config,
+            state: "streaming".into(),
+            weighted_prompts: request.weighted_prompts.clone(),
+            config: request.config.clone(),
             sample_rate_hz: SAMPLE_RATE_HZ,
             channels: CHANNELS,
             audio_format: "pcm16".into(),
         };
+        let shared = Arc::new(RealtimeShared::default());
+        let (commands, receiver) = mpsc::unbounded_channel();
+        tokio::spawn(run_stream(api_key, request, receiver, Arc::clone(&shared)));
         *self
-            .session
+            .active
             .lock()
-            .map_err(|_| "Lyria RealTime session lock failed")? = Some(session.clone());
+            .map_err(|_| "Lyria RealTime session lock failed")? = Some(ActiveSession {
+            session: session.clone(),
+            commands,
+            shared,
+        });
         Ok(session)
     }
 
     fn update(&self, request: LyriaRealtimeStartRequest) -> Result<LyriaRealtimeSession, String> {
         validate_request(&request)?;
-        let mut session = self
-            .session
+        let mut active = self
+            .active
             .lock()
             .map_err(|_| "Lyria RealTime session lock failed")?;
-        let active = session
+        let active = active
             .as_mut()
             .ok_or("Lyria RealTime session is not active")?;
-        active.weighted_prompts = request.weighted_prompts;
-        active.config = request.config;
-        Ok(active.clone())
+        active
+            .commands
+            .send(RealtimeCommand::Update(request.clone()))
+            .map_err(|_| "Lyria RealTime stream is not accepting updates")?;
+        active.session.weighted_prompts = request.weighted_prompts;
+        active.session.config = request.config;
+        Ok(active.session.clone())
     }
 
     fn stop(&self) -> Result<(), String> {
-        *self
-            .session
+        if let Some(active) = self
+            .active
             .lock()
-            .map_err(|_| "Lyria RealTime session lock failed")? = None;
+            .map_err(|_| "Lyria RealTime session lock failed")?
+            .take()
+        {
+            let _ = active.commands.send(RealtimeCommand::Playback("STOP"));
+            let _ = active.commands.send(RealtimeCommand::Close);
+        }
         Ok(())
     }
+
+    fn poll_audio(&self) -> LyriaRealtimeAudioPoll {
+        let active = self.active.lock().ok();
+        if let Some(active) = active.as_ref().and_then(|guard| guard.as_ref()) {
+            let chunks = active.shared.drain_audio(MAX_POLL_BYTES);
+            let (buffered_audio_bytes, streamed_audio_bytes, warning) = active.shared.snapshot();
+            return LyriaRealtimeAudioPoll {
+                session_id: Some(active.session.id.clone()),
+                sample_rate_hz: SAMPLE_RATE_HZ,
+                channels: CHANNELS,
+                audio_format: "pcm16".into(),
+                chunks,
+                buffered_audio_bytes,
+                streamed_audio_bytes,
+                warning,
+            };
+        }
+        LyriaRealtimeAudioPoll {
+            session_id: None,
+            sample_rate_hz: SAMPLE_RATE_HZ,
+            channels: CHANNELS,
+            audio_format: "pcm16".into(),
+            chunks: vec![],
+            buffered_audio_bytes: 0,
+            streamed_audio_bytes: 0,
+            warning: None,
+        }
+    }
+}
+
+impl RealtimeShared {
+    fn push_audio(&self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        if let Ok(mut streamed) = self.streamed_audio_bytes.lock() {
+            *streamed = streamed.saturating_add(bytes.len());
+        }
+        let Ok(mut queue) = self.audio.lock() else {
+            return;
+        };
+        let Ok(mut buffered) = self.buffered_audio_bytes.lock() else {
+            return;
+        };
+        *buffered = buffered.saturating_add(bytes.len());
+        queue.push_back(bytes);
+        while *buffered > MAX_QUEUED_AUDIO_BYTES {
+            if let Some(dropped) = queue.pop_front() {
+                *buffered = buffered.saturating_sub(dropped.len());
+            } else {
+                *buffered = 0;
+                break;
+            }
+        }
+    }
+
+    fn drain_audio(&self, max_bytes: usize) -> Vec<Vec<u8>> {
+        let Ok(mut queue) = self.audio.lock() else {
+            return vec![];
+        };
+        let Ok(mut buffered) = self.buffered_audio_bytes.lock() else {
+            return vec![];
+        };
+        let mut drained = vec![];
+        let mut total = 0;
+        while let Some(chunk) = queue.pop_front() {
+            if total > 0 && total + chunk.len() > max_bytes {
+                queue.push_front(chunk);
+                break;
+            }
+            total += chunk.len();
+            *buffered = buffered.saturating_sub(chunk.len());
+            drained.push(chunk);
+            if total >= max_bytes {
+                break;
+            }
+        }
+        drained
+    }
+
+    fn set_warning(&self, warning: impl Into<String>) {
+        if let Ok(mut current) = self.warning.lock() {
+            *current = Some(warning.into());
+        }
+    }
+
+    fn snapshot(&self) -> (usize, usize, Option<String>) {
+        (
+            self.buffered_audio_bytes
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(0),
+            self.streamed_audio_bytes
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(0),
+            self.warning.lock().ok().and_then(|value| value.clone()),
+        )
+    }
+}
+
+async fn run_stream(
+    api_key: String,
+    initial: LyriaRealtimeStartRequest,
+    mut commands: mpsc::UnboundedReceiver<RealtimeCommand>,
+    shared: Arc<RealtimeShared>,
+) {
+    if let Err(error) = run_stream_inner(api_key, initial, &mut commands, &shared).await {
+        shared.set_warning(error);
+    }
+}
+
+async fn run_stream_inner(
+    api_key: String,
+    initial: LyriaRealtimeStartRequest,
+    commands: &mut mpsc::UnboundedReceiver<RealtimeCommand>,
+    shared: &RealtimeShared,
+) -> Result<(), String> {
+    let mut request = format!("{WS_ENDPOINT}?key={api_key}")
+        .into_client_request()
+        .map_err(|_| "Lyria RealTime WebSocket request could not be built")?;
+    request.headers_mut().insert(
+        "x-goog-api-key",
+        api_key
+            .parse()
+            .map_err(|_| "Invalid Gemini API key header")?,
+    );
+    let (mut socket, _) = connect_async(request)
+        .await
+        .map_err(|_| "Lyria RealTime WebSocket connection failed")?;
+    send_json(&mut socket, json!({ "setup": { "model": MODEL } })).await?;
+
+    let mut setup_complete = false;
+    while let Some(message) = socket.next().await {
+        let message = message.map_err(|error| format!("Lyria RealTime setup failed: {error}"))?;
+        if let Message::Text(text) = message {
+            let value: Value = serde_json::from_str(&text)
+                .map_err(|_| "Lyria RealTime setup returned invalid JSON")?;
+            if value.get("setupComplete").is_some() || value.get("setup_complete").is_some() {
+                setup_complete = true;
+                break;
+            }
+            if let Some(warning) = value.get("warning").and_then(Value::as_str) {
+                shared.set_warning(warning);
+            }
+        }
+    }
+    if !setup_complete {
+        return Err("Lyria RealTime setup did not complete".into());
+    }
+
+    send_realtime_request(&mut socket, &initial).await?;
+    send_json(&mut socket, json!({ "playbackControl": "PLAY" })).await?;
+
+    loop {
+        tokio::select! {
+            command = commands.recv() => {
+                match command {
+                    Some(RealtimeCommand::Update(request)) => send_realtime_request(&mut socket, &request).await?,
+                    Some(RealtimeCommand::Playback(control)) => send_json(&mut socket, json!({ "playbackControl": control })).await?,
+                    Some(RealtimeCommand::Close) | None => {
+                        let _ = socket.close(None).await;
+                        return Ok(());
+                    }
+                }
+            }
+            message = socket.next() => {
+                let Some(message) = message else {
+                    return Err("Lyria RealTime WebSocket closed".into());
+                };
+                let message = message.map_err(|error| format!("Lyria RealTime stream failed: {error}"))?;
+                match message {
+                    Message::Text(text) => handle_server_text(&text, shared)?,
+                    Message::Binary(bytes) => shared.push_audio(bytes.to_vec()),
+                    Message::Close(_) => return Err("Lyria RealTime WebSocket closed".into()),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+async fn send_realtime_request(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    request: &LyriaRealtimeStartRequest,
+) -> Result<(), String> {
+    send_json(
+        socket,
+        json!({ "clientContent": { "weightedPrompts": request.weighted_prompts } }),
+    )
+    .await?;
+    send_json(socket, json!({ "musicGenerationConfig": request.config })).await
+}
+
+async fn send_json(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    value: Value,
+) -> Result<(), String> {
+    socket
+        .send(Message::Text(value.to_string().into()))
+        .await
+        .map_err(|error| format!("Lyria RealTime send failed: {error}"))
+}
+
+fn handle_server_text(text: &str, shared: &RealtimeShared) -> Result<(), String> {
+    let value: Value = serde_json::from_str(text)
+        .map_err(|_| "Lyria RealTime returned invalid JSON during streaming")?;
+    if let Some(warning) = value.get("warning").and_then(Value::as_str) {
+        shared.set_warning(warning);
+    }
+    if let Some(filtered) = value
+        .get("filteredPrompt")
+        .or_else(|| value.get("filtered_prompt"))
+    {
+        shared.set_warning(format!("Filtered prompt: {filtered}"));
+    }
+    let chunks = value
+        .pointer("/serverContent/audioChunks")
+        .or_else(|| value.pointer("/server_content/audio_chunks"))
+        .and_then(Value::as_array);
+    if let Some(chunks) = chunks {
+        for chunk in chunks {
+            if let Some(data) = chunk.get("data").and_then(Value::as_str) {
+                let bytes = BASE64
+                    .decode(data.as_bytes())
+                    .map_err(|_| "Lyria RealTime returned invalid Base64 audio")?;
+                shared.push_audio(bytes);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_request(request: &LyriaRealtimeStartRequest) -> Result<(), String> {
@@ -271,6 +582,13 @@ pub(crate) async fn lyria_realtime_stop(
     state.stop()
 }
 
+#[tauri::command]
+pub(crate) async fn lyria_realtime_poll_audio(
+    state: tauri::State<'_, LyriaRealtimeProvider>,
+) -> Result<LyriaRealtimeAudioPoll, String> {
+    Ok(state.poll_audio())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +656,30 @@ mod tests {
             request.config.scale,
             LyriaRealtimeScale::EFlatMajorCMinor
         ));
+    }
+
+    #[test]
+    fn drains_audio_with_a_bounded_queue() {
+        let shared = RealtimeShared::default();
+        shared.push_audio(vec![1; 100]);
+        shared.push_audio(vec![2; 100]);
+        assert_eq!(shared.snapshot().0, 200);
+        let chunks = shared.drain_audio(150);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(shared.snapshot().0, 100);
+    }
+
+    #[test]
+    fn parses_server_audio_chunks() {
+        let shared = RealtimeShared::default();
+        let body = json!({
+            "serverContent": {
+                "audioChunks": [
+                    { "data": BASE64.encode([1_u8, 2, 3, 4]), "mimeType": "audio/pcm" }
+                ]
+            }
+        });
+        handle_server_text(&body.to_string(), &shared).unwrap();
+        assert_eq!(shared.drain_audio(1024), vec![vec![1, 2, 3, 4]]);
     }
 }

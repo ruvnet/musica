@@ -45,7 +45,7 @@ The app includes a realtime piano/Auto DJ deck that edits weighted prompts and r
 ### Negative
 
 - High-quality AI instrument banks require better asset generation and curation than one prompt.
-- Full realtime streaming still needs native WebSocket/PCM buffering work.
+- Full realtime streaming now depends on network/model availability and still needs stronger reconnect and long-session recovery.
 - The current Moonlight source is retained only as an experimental asset until replaced by isolated tones or stems.
 
 ## Acceptance Tests
