@@ -15,11 +15,12 @@ Musica VJ Studio is the flagship Musica performance surface: a live AI-directed 
 | Area | Current implementation |
 |---|---|
 | Agentic direction | Meta-LLM or local agent planner can choose a template, BPM, scene, prompt, visual intensity, art-direction macros, temporal controls, and arrangement notes, then apply the whole performance state |
-| Music | Six independent drum, bass, chord, lead, breath, and texture tracks with volume, pan, mute, solo, step editing, prompt seeded mutation, performance templates, imported audio loops, and Lyria/Gemini generated song loading |
+| Music | Six independent drum, bass, chord, lead, breath, and texture tracks with volume, pan, mute, solo, step editing, prompt seeded mutation, performance templates, imported audio loops, MIDI-file import, and Lyria/Gemini generated song loading |
+| Synth and effects | Layered drum voices, sub-plus-mid bass, four-voice chord pads, dual-oscillator leads, formant breath, FM/noise texture beds, swing/humanization, tempo delay, feedback, convolution reverb, per-track send levels, and bus compression |
 | Timing | Web Audio sample clock with a 25 ms scheduler that maintains a 120 ms native event queue |
 | Visuals | Three.js WebGL 2 tunnel, bloom, and terrain engines with eight themed visual-bank scenes, audio analysis, reflective waveform ribbon, haze, editorial telemetry, bloom, adaptive pixel ratio, and four playable art-direction macros |
 | Temporal VJ | Five VJ presets plus live speed, strobe, trail, morph, camera, and phase controls for a more futuristic performance language |
-| Controllers | Keyboard, F13 through F24 global shortcuts, browser MIDI, and an official Logitech Actions SDK companion |
+| Controllers | Keyboard, F13 through F24 global shortcuts, WEBMIDI.js browser MIDI, and an official Logitech Actions SDK companion |
 | Capture | 1080 by 1920 presets at 6, 9, 15, and 30 seconds plus a 1080 square preset; packaged Tauri requires an MP4 whose ISO `stsd` sample entries prove H.264/AAC, while browser development permits WebM fallback |
 | Creative AI | Local prompt mutation always works; optional Rust adapters include Meta-LLM planning, Cognitum async partner calls, and disabled-by-default Lyria 3 Pro preview generation with structured prompts, explicit cost approval, private asset staging, and local audio analysis |
 | Musica core | The Tauri crate depends on the root Rust library so STFT, graph separation, streaming stems, HearMusica mastering blocks, WAV I/O, and future WASM analysis can be exposed without replacing the app |
@@ -78,6 +79,8 @@ The left-side Artist Macros turn Signal Bloom into a visual instrument: Sculptur
 The visual bank includes Neon Fold, Signal Bloom, Spectral Field, Laser Grid, Aurora Veil, Black Monolith, Pulse Field, and Chroma Wave. VJ presets such as Peak Rave, Cinema Fog, Hyperspace, and Glass Ambient apply scene, intensity, macro, and temporal settings without changing the music. Temporal controls shape realtime animation speed, strobe gating, trail persistence, geometry morph depth, camera movement, and phase offset.
 
 Performance templates apply both sound and visuals: Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, and Cinematic Pulse. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, and optional temporal controls.
+
+MIDI support uses open-source building blocks where they are strongest: WEBMIDI.js handles live browser controller input, while `@tonejs/midi` parses `.mid` and `.midi` files into editable Musica track templates. Loading a MIDI file through any track's Load button maps percussion, bass, chords, lead, breath, and texture material into the six-track sequencer and applies the first MIDI tempo when available. Audio files still load as clips on the selected track.
 
 F13 through F24 provide the app specific Options+ fallback. The exact mapping is in [`logitech/options-plus-fallback.json`](logitech/options-plus-fallback.json).
 

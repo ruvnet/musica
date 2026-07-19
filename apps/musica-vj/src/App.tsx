@@ -23,6 +23,7 @@ import {
   getProviderStatus,
   saveGenerationReceipt,
 } from "./core/creativeProvider";
+import { importMidiPerformance } from "./core/midiImport";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
 import {
@@ -643,6 +644,13 @@ export function App() {
   const handleFile = async (trackId: TrackId, file?: File) => {
     if (!file) return;
     try {
+      if (/\.(?:mid|midi)$/i.test(file.name)) {
+        const imported = importMidiPerformance(await file.arrayBuffer(), file.name);
+        engineRef.current.applyImportedMidi(imported.tracks, imported.bpm);
+        visualRef.current?.clearAudioAnalysis(trackId);
+        setNotice(`${imported.name} imported as editable MIDI patterns${imported.bpm ? ` · ${imported.bpm} BPM` : ""}.`);
+        return;
+      }
       if (file.size > MAX_IMPORT_BYTES) throw new Error("Audio files are limited to 250 MB");
       await engineRef.current.loadAudioFile(trackId, await file.arrayBuffer(), file.name);
       visualRef.current?.clearAudioAnalysis(trackId);
@@ -1012,7 +1020,7 @@ export function App() {
                     <button className={track.solo ? "active solo" : ""} onClick={(event) => { event.stopPropagation(); engineRef.current.toggleSolo(track.id); }}>S</button>
                     <label className="load-button" onClick={(event) => event.stopPropagation()}>
                       {track.loadedFile ? "REPLACE" : "LOAD"}
-                      <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
+                      <input type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.mid,.midi" onChange={(event) => void handleFile(track.id, event.target.files?.[0])} />
                     </label>
                     {track.loadedFile && <button onClick={(event) => { event.stopPropagation(); visualRef.current?.clearAudioAnalysis(track.id); engineRef.current.clearAudioFile(track.id); }}>×</button>}
                   </div>
