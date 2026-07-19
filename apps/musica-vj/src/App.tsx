@@ -104,6 +104,15 @@ const DEFAULT_STRUCTURE = `0:00 atmospheric intro
 1:35 larger second drop
 2:15 short outro`;
 
+const TRACK_GUIDE_LABELS: Record<TrackId, string> = {
+  drums: "drums",
+  bass: "bass",
+  chords: "chords",
+  lead: "lead",
+  voice: "vocal texture",
+  texture: "atmosphere",
+};
+
 interface SceneVisualSettings {
   intensity: number;
   artDirection: VisualArtDirection;
@@ -137,6 +146,36 @@ function defaultAnimationStyleForScene(scene: VisualSceneId): VisualAnimationSty
     default:
       return "flow";
   }
+}
+
+function sequencerSignature(snapshot: EngineSnapshot): string {
+  return [
+    `bpm:${snapshot.bpm}`,
+    ...snapshot.tracks.map((track) => [
+      track.id,
+      track.pattern.map((active) => (active ? "1" : "0")).join(""),
+      Math.round(track.volume * 100),
+      track.muted ? "m" : "-",
+      track.solo ? "s" : "-",
+    ].join(":")),
+  ].join("|");
+}
+
+function sequencerGuidePrompt(snapshot: EngineSnapshot): string {
+  const hasSolo = snapshot.tracks.some((track) => track.solo);
+  const activeTracks = snapshot.tracks
+    .filter((track) => !track.muted && (!hasSolo || track.solo) && track.volume > 0.03)
+    .map((track) => {
+      const activeSteps = track.pattern.filter(Boolean).length;
+      if (activeSteps === 0) return "";
+      const density = activeSteps >= 12 ? "dense" : activeSteps >= 7 ? "medium" : "sparse";
+      return `${TRACK_GUIDE_LABELS[track.id]} ${density}`;
+    })
+    .filter(Boolean);
+  if (activeTracks.length === 0) {
+    return "follow Musica sequencer: stripped breakdown, minimal pulse, leave space, no vocals";
+  }
+  return `follow Musica sequencer at ${snapshot.bpm} BPM: ${activeTracks.join(", ")}; make muted or empty lanes drop out; instrumental only`;
 }
 
 function cloneVisualSettings(settings: SceneVisualSettings): SceneVisualSettings {
@@ -271,6 +310,7 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
+  const [localGuideLevel, setLocalGuideLevel] = useState(0.34);
   const [collapsedPanels, setCollapsedPanels] = useState<Set<StudioPanelId>>(() => new Set([
     "audio-templates",
     "audio-tones",
@@ -288,6 +328,8 @@ export function App() {
   const lyriaAvailable = providerStatus.available && providerStatus.provider === "lyria_3_pro";
   const hasUserSuppliedLyrics = !instrumental && lyrics.trim().length > 0;
   const generationIsActive = generation !== undefined && ["queued", "processing"].includes(generation.status);
+  const sequencerGuideSignature = useMemo(() => sequencerSignature(snapshot), [snapshot]);
+  const liveSequencerGuide = useMemo(() => sequencerGuidePrompt(snapshot), [sequencerGuideSignature]);
   const paidGenerationReady =
     lyriaAvailable &&
     prompt.trim().length > 0 &&
@@ -298,10 +340,13 @@ export function App() {
 
   const realtimeRequest = useMemo(
     () => ({
-      weightedPrompts: lyriaPrompts.filter((prompt) => prompt.text.trim().length > 0),
-      config: lyriaRealtimeConfig,
+      weightedPrompts: [
+        ...lyriaPrompts.filter((prompt) => prompt.text.trim().length > 0),
+        { text: liveSequencerGuide, weight: 1.05 },
+      ],
+      config: { ...lyriaRealtimeConfig, bpm: snapshot.bpm },
     }),
-    [lyriaPrompts, lyriaRealtimeConfig],
+    [liveSequencerGuide, lyriaPrompts, lyriaRealtimeConfig, snapshot.bpm],
   );
   const activeLyriaStyle = useMemo(() => lyriaRealtimeStyleById(lyriaStyleId), [lyriaStyleId]);
 
@@ -570,6 +615,10 @@ export function App() {
   useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
+
+  useEffect(() => {
+    engineRef.current.setRealtimeGuideLevel(localGuideLevel);
+  }, [localGuideLevel]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -1622,7 +1671,17 @@ export function App() {
               <div className="realtime-grid">
                 <label>
                   <span>BPM</span>
-                  <input type="number" min={60} max={200} value={lyriaRealtimeConfig.bpm} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, bpm: Number(event.target.value) }))} />
+                  <input
+                    type="number"
+                    min={60}
+                    max={200}
+                    value={snapshot.bpm}
+                    onChange={(event) => {
+                      const bpm = Number(event.target.value);
+                      engineRef.current.setBpm(bpm);
+                      setLyriaRealtimeConfig((current) => ({ ...current, bpm }));
+                    }}
+                  />
                 </label>
                 <label>
                   <span>DENS</span>
@@ -1635,6 +1694,10 @@ export function App() {
                 <label>
                   <span>GUIDE</span>
                   <input type="range" min="0" max="6" step="0.05" value={lyriaRealtimeConfig.guidance} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, guidance: Number(event.target.value) }))} />
+                </label>
+                <label>
+                  <span>LOCAL</span>
+                  <input type="range" min="0" max="1" step="0.01" value={localGuideLevel} onChange={(event) => setLocalGuideLevel(Number(event.target.value))} />
                 </label>
               </div>
               <div className="realtime-toggles">

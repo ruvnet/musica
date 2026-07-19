@@ -87,7 +87,7 @@ const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_DURATION_SECONDS = 10 * 60;
 const MIN_SCHEDULE_LEAD_SECONDS = 0.01;
 const LATE_STEP_TOLERANCE_SECONDS = 0.02;
-const REALTIME_PRIMARY_TRACK_DUCK = 0.08;
+const DEFAULT_REALTIME_GUIDE_LEVEL = 0.34;
 
 export function countLateSteps(nextStepTime: number, currentTime: number, stepSeconds: number): number {
   if (nextStepTime >= currentTime - LATE_STEP_TOLERANCE_SECONDS) return 0;
@@ -195,6 +195,7 @@ export class AudioEngine {
   private droppedLateSteps = 0;
   private realtimeStreamTime = 0;
   private realtimeStreamPrimary = false;
+  private realtimeGuideLevel = DEFAULT_REALTIME_GUIDE_LEVEL;
 
   constructor(initialTemplate: PerformanceTemplate = defaultPerformanceTemplate()) {
     this.definitions = createTrackDefinitions(initialTemplate.id);
@@ -818,6 +819,13 @@ export class AudioEngine {
     this.applyMix();
   }
 
+  setRealtimeGuideLevel(value: number): void {
+    const nextLevel = clamp(value, 0, 1);
+    if (Math.abs(this.realtimeGuideLevel - nextLevel) < 0.001) return;
+    this.realtimeGuideLevel = nextLevel;
+    this.applyMix();
+  }
+
   private applyMix(shouldEmit = true, immediate = false): void {
     if (this.tracks.size === 0) {
       if (shouldEmit) this.emit();
@@ -825,7 +833,7 @@ export class AudioEngine {
     }
     const anySolo = [...this.tracks.values()].some((track) => track.mix.solo);
     const now = this.context?.currentTime ?? 0;
-    const realtimeDuck = this.realtimeStreamPrimary ? REALTIME_PRIMARY_TRACK_DUCK : 1;
+    const realtimeDuck = this.realtimeStreamPrimary ? this.realtimeGuideLevel : 1;
     for (const track of this.tracks.values()) {
       const gain = effectiveTrackGain(track.mix, anySolo) * realtimeDuck;
       if (immediate) track.gain.gain.value = gain;
