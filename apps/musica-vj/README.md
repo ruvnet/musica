@@ -132,7 +132,7 @@ npm run dev:lyria:realtime
 
 The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates Lyria RealTime controls against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, 48 kHz stereo PCM16 output, and instrumental-only operation. Auto DJ cycles prompt sets and gradually changes density, brightness, BPM, and local keyboard gestures.
 
-When Start RT is pressed, Rust opens the official v1alpha Lyria RealTime WebSocket, sends setup, weighted prompts, generation config, and PLAY, then receives Base64 PCM chunks. React polls bounded PCM chunks through Tauri and schedules them into Web Audio through the texture track so Lyria becomes the higher-quality AI bed while Musica's sequencer, MIDI, piano keys, effects, mixer, analyser, and visuals continue running locally. The deck shows streamed kilobytes once audio is arriving. Browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
+When Start RT is pressed, Rust opens the official v1alpha Lyria RealTime WebSocket, sends setup, weighted prompts, generation config, and PLAY, then receives Base64 PCM chunks. React polls bounded PCM chunks through Tauri and schedules them into Web Audio through the dedicated realtime output bus so Lyria becomes the higher-quality AI bed while Musica's sequencer, MIDI, piano keys, effects, mixer, analyser, and visuals continue running locally. The deck shows streamed kilobytes once audio is arriving. Browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
 
 ### Google Lyria 3 Pro preview
 
@@ -183,6 +183,14 @@ npm run render:ai-sequencer
 ```
 
 The output is written to `exports/moonlight-lyria-sequenced-composition.mp3`. The renderer decodes the Lyria tone source locally, slices and pitches grains from the deterministic sequencer notes, writes a temporary WAV, then encodes the final MP3 with FFmpeg.
+
+To render a direct programmatic Lyria RealTime stream capture with timed prompt and config changes:
+
+```sh
+npm run render:lyria-realtime-sample
+```
+
+The output is written to `samples/lyria/lyria-realtime-programmed-stream.mp3`. This script exercises the same WebSocket control path used by the app and fails if Lyria does not return enough PCM audio.
 
 Each completed task is staged beneath the Tauri application-data `generated/<task-id>` directory as create-new private files: the original MP3 or WAV, the exact provider response, and `receipt.json`. A dispatched failure attempts and finishes immutable `failure-receipt.json` storage before the task becomes visibly terminal; a successful receipt stores the typed failure, validated Google request ID when available, dispatch state, cancellation state, and whether the USD 0.08 reservation was released or conservatively recorded as potentially charged. The successful generation receipt includes content hashes, requested and measured media fields, the fixed-price basis, provider request ID, prompt or prompt hash, rights declaration, and provenance expectations. The mutable frontend convenience index stores summarized analysis rather than waveform, onset, or beat arrays and is capped at 500 entries and 2 MiB. Google documents SynthID watermarking and C2PA support; Musica currently records both as expected but does not detect SynthID or cryptographically validate C2PA. The receipts are workflow evidence, not a copyright or licensing guarantee.
 

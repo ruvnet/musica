@@ -136,6 +136,7 @@ struct RealtimeShared {
     buffered_audio_bytes: Mutex<usize>,
     streamed_audio_bytes: Mutex<usize>,
     warning: Mutex<Option<String>>,
+    logged_audio: Mutex<bool>,
 }
 
 enum RealtimeCommand {
@@ -300,6 +301,12 @@ impl RealtimeShared {
         if let Ok(mut streamed) = self.streamed_audio_bytes.lock() {
             *streamed = streamed.saturating_add(bytes.len());
         }
+        if let Ok(mut logged) = self.logged_audio.lock() {
+            if !*logged {
+                eprintln!("Lyria RealTime desktop stream received PCM audio");
+                *logged = true;
+            }
+        }
         let Ok(mut queue) = self.audio.lock() else {
             return;
         };
@@ -370,6 +377,7 @@ async fn run_stream(
     shared: Arc<RealtimeShared>,
 ) {
     if let Err(error) = run_stream_inner(api_key, initial, &mut commands, &shared).await {
+        eprintln!("Lyria RealTime stream stopped: {error}");
         shared.set_warning(error);
     }
 }
@@ -380,15 +388,9 @@ async fn run_stream_inner(
     commands: &mut mpsc::UnboundedReceiver<RealtimeCommand>,
     shared: &RealtimeShared,
 ) -> Result<(), String> {
-    let mut request = format!("{WS_ENDPOINT}?key={api_key}")
+    let request = format!("{WS_ENDPOINT}?key={api_key}")
         .into_client_request()
         .map_err(|_| "Lyria RealTime WebSocket request could not be built")?;
-    request.headers_mut().insert(
-        "x-goog-api-key",
-        api_key
-            .parse()
-            .map_err(|_| "Invalid Gemini API key header")?,
-    );
     let (mut socket, _) = connect_async(request)
         .await
         .map_err(|_| "Lyria RealTime WebSocket connection failed")?;
@@ -397,9 +399,7 @@ async fn run_stream_inner(
     let mut setup_complete = false;
     while let Some(message) = socket.next().await {
         let message = message.map_err(|error| format!("Lyria RealTime setup failed: {error}"))?;
-        if let Message::Text(text) = message {
-            let value: Value = serde_json::from_str(&text)
-                .map_err(|_| "Lyria RealTime setup returned invalid JSON")?;
+        if let Some(value) = message_json(&message)? {
             if value.get("setupComplete").is_some() || value.get("setup_complete").is_some() {
                 setup_complete = true;
                 break;
@@ -407,21 +407,25 @@ async fn run_stream_inner(
             if let Some(warning) = value.get("warning").and_then(Value::as_str) {
                 shared.set_warning(warning);
             }
+            if let Some(error) = value.get("error") {
+                return Err(format!("Lyria RealTime setup error: {error}"));
+            }
         }
     }
     if !setup_complete {
         return Err("Lyria RealTime setup did not complete".into());
     }
+    eprintln!("Lyria RealTime desktop stream setup complete");
 
     send_realtime_request(&mut socket, &initial).await?;
-    send_json(&mut socket, json!({ "playbackControl": "PLAY" })).await?;
+    send_json(&mut socket, json!({ "playback_control": "PLAY" })).await?;
 
     loop {
         tokio::select! {
             command = commands.recv() => {
                 match command {
                     Some(RealtimeCommand::Update(request)) => send_realtime_request(&mut socket, &request).await?,
-                    Some(RealtimeCommand::Playback(control)) => send_json(&mut socket, json!({ "playbackControl": control })).await?,
+                    Some(RealtimeCommand::Playback(control)) => send_json(&mut socket, json!({ "playback_control": control })).await?,
                     Some(RealtimeCommand::Close) | None => {
                         let _ = socket.close(None).await;
                         return Ok(());
@@ -435,13 +439,36 @@ async fn run_stream_inner(
                 let message = message.map_err(|error| format!("Lyria RealTime stream failed: {error}"))?;
                 match message {
                     Message::Text(text) => handle_server_text(&text, shared)?,
-                    Message::Binary(bytes) => shared.push_audio(bytes.to_vec()),
+                    Message::Binary(bytes) => {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            if serde_json::from_str::<Value>(text).is_ok() {
+                                handle_server_text(text, shared)?;
+                            } else {
+                                shared.push_audio(bytes.to_vec());
+                            }
+                        } else {
+                            shared.push_audio(bytes.to_vec());
+                        }
+                    }
                     Message::Close(_) => return Err("Lyria RealTime WebSocket closed".into()),
                     _ => {}
                 }
             }
         }
     }
+}
+
+fn message_json(message: &Message) -> Result<Option<Value>, String> {
+    let text = match message {
+        Message::Text(text) => Some(text.as_str()),
+        Message::Binary(bytes) => std::str::from_utf8(bytes).ok(),
+        _ => None,
+    };
+    text.map(|text| {
+        serde_json::from_str(text)
+            .map_err(|_| "Lyria RealTime returned invalid JSON during setup".to_string())
+    })
+    .transpose()
 }
 
 async fn send_realtime_request(
@@ -452,10 +479,10 @@ async fn send_realtime_request(
 ) -> Result<(), String> {
     send_json(
         socket,
-        json!({ "clientContent": { "weightedPrompts": request.weighted_prompts } }),
+        json!({ "client_content": { "weightedPrompts": request.weighted_prompts } }),
     )
     .await?;
-    send_json(socket, json!({ "musicGenerationConfig": request.config })).await
+    send_json(socket, json!({ "music_generation_config": request.config })).await
 }
 
 async fn send_json(
@@ -474,7 +501,12 @@ fn handle_server_text(text: &str, shared: &RealtimeShared) -> Result<(), String>
     let value: Value = serde_json::from_str(text)
         .map_err(|_| "Lyria RealTime returned invalid JSON during streaming")?;
     if let Some(warning) = value.get("warning").and_then(Value::as_str) {
+        eprintln!("Lyria RealTime warning: {warning}");
         shared.set_warning(warning);
+    }
+    if let Some(error) = value.get("error") {
+        eprintln!("Lyria RealTime error: {error}");
+        shared.set_warning(format!("Lyria RealTime error: {error}"));
     }
     if let Some(filtered) = value
         .get("filteredPrompt")

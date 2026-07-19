@@ -189,6 +189,7 @@ export function App() {
   const stepDragRef = useRef<{ active: boolean } | undefined>(undefined);
   const lyriaBufferCancelRef = useRef(false);
   const liveUpdateSignatureRef = useRef("");
+  const realtimePrebufferStartedRef = useRef(false);
   const sceneVisualSettingsRef = useRef<SceneVisualSettingsMap>({
     ...createInitialSceneVisualSettings(),
     [DEFAULT_TEMPLATE.scene]: cloneVisualSettings(DEFAULT_SCENE_VISUAL_SETTINGS),
@@ -895,6 +896,51 @@ export function App() {
   }, [refreshLyriaRealtimeStatus]);
 
   useEffect(() => {
+    if (
+      realtimePrebufferStartedRef.current ||
+      !lyriaRealtimeStatus.available ||
+      lyriaSession ||
+      lyriaRealtimeBusy
+    ) {
+      return;
+    }
+    realtimePrebufferStartedRef.current = true;
+    setLyriaRealtimeBusy(true);
+    void startLyriaRealtime(realtimeRequest)
+      .then((session) => {
+        setLyriaSession(session);
+        liveUpdateSignatureRef.current = JSON.stringify(realtimeRequest);
+        engineRef.current.setRealtimeStreamPrimary(true);
+        setNotice("Lyria RealTime prebuffering on the desktop bridge. Press play when the stream counter is moving.");
+      })
+      .catch((error) => {
+        engineRef.current.setRealtimeStreamPrimary(false);
+        setNotice(error instanceof Error ? error.message : "Lyria RealTime prebuffer failed");
+      })
+      .finally(() => setLyriaRealtimeBusy(false));
+  }, [lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, realtimeRequest]);
+
+  useEffect(() => {
+    if (!lyriaSession || snapshot.playing || lyriaBuffering.active) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getLyriaRealtimeStatus()
+        .then((status) => {
+          if (cancelled) return;
+          setLyriaRealtimeStatus(status);
+          setLyriaStreamBytes(status.streamedAudioBytes);
+        })
+        .catch((error) => {
+          if (!cancelled) setNotice(error instanceof Error ? error.message : "Lyria RealTime status update failed");
+        });
+    }, 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [lyriaBuffering.active, lyriaSession, snapshot.playing]);
+
+  useEffect(() => {
     const stopStepDrag = () => {
       stepDragRef.current = undefined;
     };
@@ -965,6 +1011,7 @@ export function App() {
 
   useEffect(() => {
     if (!lyriaSession) return;
+    if (!snapshot.playing && !lyriaBuffering.active) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
       if (!cancelled) void pollRealtimeAudio();
@@ -974,7 +1021,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [lyriaSession, pollRealtimeAudio]);
+  }, [lyriaBuffering.active, lyriaSession, pollRealtimeAudio, snapshot.playing]);
 
   const handleAgentPlan = async () => {
     const goal = agentGoal.trim();
@@ -1259,6 +1306,9 @@ export function App() {
             <span>LYRIA REALTIME</span>
             <h2>{lyriaBuffering.message}</h2>
             <p>Holding transport until live PCM frames arrive. The final output will route the Lyria stream first, then keep Musica as a low guide layer for performance controls.</p>
+            {(lyriaRealtimeStatus.warning || lyriaRealtimeStatus.reason) && (
+              <p className="buffer-warning">{lyriaRealtimeStatus.warning ?? lyriaRealtimeStatus.reason}</p>
+            )}
             <div className="buffer-meter">
               <b>{Math.round(Math.max(lyriaBuffering.bytes, lyriaStreamBytes) / 1024)} KB</b>
               <em>{lyriaSession?.model ?? lyriaRealtimeStatus.model}</em>
