@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "dev:lyria": "node scripts/dev-lyria-env.mjs",
+    "dev:lyria:realtime": "node scripts/dev-lyria-realtime-env.mjs",
     "dev:lyria:gcloud": "node scripts/dev-lyria-gcloud.mjs",
     "render:ai-sequencer": "node scripts/render-ai-sequencer.mjs",
     "render:samples": "node scripts/render-samples.mjs",

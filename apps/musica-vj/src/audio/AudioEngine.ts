@@ -398,6 +398,17 @@ export class AudioEngine {
     if (!track || !context) return;
     const time = context.currentTime + 0.01;
     const note = track.definition.notes[this.transportStepCounter % track.definition.notes.length];
+    this.triggerTrackNote(track, note, time);
+  }
+
+  triggerNote(id: TrackId, note: number): void {
+    const track = this.tracks.get(id);
+    const context = this.context;
+    if (!track || !context || !Number.isFinite(note)) return;
+    this.triggerTrackNote(track, Math.round(clamp(note, 0, 127)), context.currentTime + 0.01);
+  }
+
+  private triggerTrackNote(track: TrackRuntime, note: number, time: number): void {
     if (track.definition.instrument === "drums") this.triggerDrum(track, note, this.transportStepCounter, time);
     else if (track.definition.instrument === "bass") this.triggerBass(track, note, time);
     else if (track.definition.instrument === "poly") this.triggerChord(track, note, time);

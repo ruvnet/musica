@@ -154,6 +154,31 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .temporal-camera { --macro-color: #ff9c42; }
 .temporal-phase { --macro-color: #ffe066; }
 
+.lyria-realtime-deck { display: grid; gap: 9px; margin: 12px 0 14px; padding: 10px; border: 1px solid rgba(112,169,255,.18); border-radius: 8px; background: rgba(112,169,255,.026); }
+.realtime-status { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: #858996; font: 600 7px "DM Mono"; }
+.realtime-status i { width: 6px; height: 6px; border-radius: 50%; background: #5b5d66; }
+.realtime-status i.online { background: var(--mint); box-shadow: 0 0 10px rgba(117,244,197,.42); }
+.realtime-status span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.realtime-status b { color: #9fb7ff; font-weight: 600; }
+.realtime-prompts { display: grid; gap: 5px; }
+.realtime-prompts label { display: grid; grid-template-columns: 18px minmax(0, 1fr) 52px; align-items: center; gap: 5px; color: #6f727b; font: 600 7px "DM Mono"; }
+.realtime-prompts input[type="text"], .realtime-prompts input:not([type]) { min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; color: #d9dae0; background: rgba(2,3,6,.35); font: 500 7px "DM Mono"; }
+.realtime-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.realtime-grid label { min-width: 0; display: grid; grid-template-columns: 35px minmax(0, 1fr); align-items: center; gap: 5px; color: #777982; font: 600 7px "DM Mono"; }
+.realtime-grid input[type="number"] { width: 100%; min-width: 0; height: 22px; border: 1px solid var(--line); border-radius: 5px; color: #e5e5e8; background: rgba(2,3,6,.4); font: 600 8px "DM Mono"; }
+.realtime-toggles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.realtime-toggles label { display: flex; align-items: center; gap: 4px; min-width: 0; color: #737681; font: 600 6px "DM Mono"; white-space: nowrap; }
+.piano-keyboard { height: 54px; display: grid; grid-template-columns: repeat(25, minmax(0, 1fr)); gap: 2px; }
+.piano-keyboard button { position: relative; min-width: 0; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 0 0 4px 4px; color: #22242a; background: #dedfe5; cursor: pointer; }
+.piano-keyboard button.sharp { height: 35px; color: #d4d7e4; background: #161920; border-color: rgba(112,169,255,.2); z-index: 1; }
+.piano-keyboard button:active { background: var(--mint); }
+.piano-keyboard span { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); font: 700 6px "DM Mono"; }
+.realtime-actions { display: grid; grid-template-columns: 1fr 1fr 48px; gap: 5px; }
+.realtime-actions button { height: 26px; border: 1px solid rgba(112,169,255,.24); border-radius: 5px; color: #cbd7ff; background: rgba(112,169,255,.055); font: 700 7px "DM Mono"; cursor: pointer; }
+.realtime-actions button.active { color: var(--mint); border-color: rgba(117,244,197,.34); background: rgba(117,244,197,.09); }
+.realtime-actions button:disabled { opacity: .55; cursor: wait; }
+.lyria-realtime-deck small { color: #696c75; font: 500 6px/1.4 "DM Mono"; }
+
 .creative-panel { margin-top: 16px; padding: 14px 10px; border: 1px solid rgba(184,137,255,.14); border-radius: 9px; background: linear-gradient(145deg, rgba(184,137,255,.07), rgba(117,244,197,.025)); }
 .eyebrow { color: #b889ff; font: 500 7px "DM Mono"; letter-spacing: .18em; }
 .creative-panel h2 { font-size: 14px; line-height: 1.2; margin: 7px 0 10px; }

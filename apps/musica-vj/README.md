@@ -119,6 +119,21 @@ The fixed contract uses `POST /v1/music/generations` and `GET /v1/music/generati
 
 A runtime environment variable cannot widen the compiled provider allowlist. The webview content security policy has no external network origin because provider traffic and generated audio downloads stay in Rust.
 
+### Lyria RealTime piano and Auto DJ
+
+The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with weighted prompt rows, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
+
+Run the desktop app with realtime controls enabled:
+
+```sh
+GEMINI_API_KEY=replace_with_your_google_api_key
+npm run dev:lyria:realtime
+```
+
+The launcher loads `GEMINI_API_KEY` from the shell or nearest parent `.env`, probes the Gemini Models endpoint, and starts Tauri with `MUSICA_LYRIA_REALTIME_ENABLED=true`. The native command boundary validates Lyria RealTime controls against the documented envelope: one to four weighted prompts, 60 to 200 BPM, density and brightness from 0 to 1, guidance from 0 to 6, temperature from 0 to 3, topK from 1 to 1000, 48 kHz stereo PCM16 output, and instrumental-only operation. Auto DJ cycles prompt sets and gradually changes density, brightness, BPM, and local keyboard gestures.
+
+The current implementation establishes the realtime provider/session control boundary and local playable deck. The native WebSocket audio stream, PCM jitter buffer, and audio-output bridge are the next layer; until that lands, browser preview and unconfigured desktop sessions keep using local Musica synthesis for audible feedback.
+
 ### Google Lyria 3 Pro preview
 
 Lyria is a separate provider adapter for complete songs. It is optional, paid, and disabled unless all required settings are present in the Tauri process environment:
@@ -238,6 +253,6 @@ The pull request workflow is configured to repeat those checks, compile and test
 
 ## Architecture records
 
-ADRs 160 through 169 in [`../../docs/adr`](../../docs/adr) cover the Tauri boundary, audio clock, Logitech integration, Three.js renderer, creative provider governance, social capture, threat model, release gates, the Lyria capability contract, and paid-job provenance. The implementation status and evidence matrix are in [`../../docs/specs/musica-lyria-3-pro-integration.md`](../../docs/specs/musica-lyria-3-pro-integration.md).
+ADRs 160 through 171 in [`../../docs/adr`](../../docs/adr) cover the Tauri boundary, audio clock, Logitech integration, Three.js renderer, creative provider governance, social capture, threat model, release gates, the Lyria capability contract, paid-job provenance, Lyria RealTime, and AI instrument-bank sequencing. The implementation status and evidence matrix are in [`../../docs/specs/musica-lyria-3-pro-integration.md`](../../docs/specs/musica-lyria-3-pro-integration.md).
 
 The most important release failure mode is a WKWebView or hardware specific timing regression that unit tests cannot reproduce. The reference acceptance run is six active tracks plus recording and scene switching for ten minutes on an Apple M1 with no audible dropout, controller event latency below 35 ms at p95, visual frame time below 20 ms at p95, and a decodable 15 second 1080 by 1920 output whose audio and video drift is no greater than 20 ms.
