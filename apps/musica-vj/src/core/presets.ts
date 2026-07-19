@@ -290,12 +290,12 @@ export function performanceTemplateById(id: string): PerformanceTemplate {
   return PERFORMANCE_TEMPLATES.find((template) => template.id === id) ?? PERFORMANCE_TEMPLATES[0];
 }
 
-export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "moonlight-sequencer";
+export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "afro-cosmic-house";
 
 export const DEFAULT_MIDI_SONG_BANK_IDS = [
-  "moonlight-sequencer",
-  "uk-garage-neon",
   "afro-cosmic-house",
+  "uk-garage-neon",
+  "moonlight-sequencer",
   "idm-crystalline",
   "liquid-breaks",
   "synthwave-drive",

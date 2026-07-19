@@ -163,6 +163,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .realtime-prompts { display: grid; gap: 5px; }
 .realtime-prompts label { display: grid; grid-template-columns: 18px minmax(0, 1fr) 52px; align-items: center; gap: 5px; color: #6f727b; font: 600 7px "DM Mono"; }
 .realtime-prompts input[type="text"], .realtime-prompts input:not([type]) { min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; color: #d9dae0; background: rgba(2,3,6,.35); font: 500 7px "DM Mono"; }
+.realtime-style-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.realtime-style-buttons button { min-width: 0; height: 24px; border: 1px solid rgba(112,169,255,.2); border-radius: 5px; color: #aebfff; background: rgba(112,169,255,.045); font: 700 6px "DM Mono"; cursor: pointer; }
+.realtime-style-buttons button:hover { border-color: rgba(117,244,197,.28); color: var(--mint); }
+.realtime-style-buttons button:disabled { opacity: .55; cursor: wait; }
 .realtime-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .realtime-grid label { min-width: 0; display: grid; grid-template-columns: 35px minmax(0, 1fr); align-items: center; gap: 5px; color: #777982; font: 600 7px "DM Mono"; }
 .realtime-grid input[type="number"] { width: 100%; min-width: 0; height: 22px; border: 1px solid var(--line); border-radius: 5px; color: #e5e5e8; background: rgba(2,3,6,.4); font: 600 8px "DM Mono"; }

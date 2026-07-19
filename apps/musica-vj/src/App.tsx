@@ -24,8 +24,9 @@ import {
   saveGenerationReceipt,
 } from "./core/creativeProvider";
 import {
-  DEFAULT_LYRIA_REALTIME_CONFIG,
-  DEFAULT_LYRIA_REALTIME_PROMPTS,
+  LYRIA_REALTIME_STYLE_PRESETS,
+  createLyriaRealtimeRequestForTemplate,
+  createLyriaRealtimeRequestFromStyle,
   getLyriaRealtimeStatus,
   pollLyriaRealtimeAudio,
   startLyriaRealtime,
@@ -50,29 +51,12 @@ import {
 
 const DEFAULT_TEMPLATE = defaultPerformanceTemplate();
 const INITIAL_SNAPSHOT: EngineSnapshot = createEngineSnapshotFromTemplate(DEFAULT_TEMPLATE);
+const DEFAULT_REALTIME_REQUEST = createLyriaRealtimeRequestForTemplate(DEFAULT_TEMPLATE);
 const LYRIA_KEYBOARD_NOTES = [
   48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
   60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
 ] as const;
 const LYRIA_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
-const AUTO_DJ_PROMPT_BANK: LyriaWeightedPrompt[][] = [
-  [
-    { text: "prepared piano, dark ambient techno pulse, intimate felt attack", weight: 1 },
-    { text: "subtle modular synth pads, restrained hall reverb", weight: 0.55 },
-  ],
-  [
-    { text: "minimal techno, Rhodes piano, deep sub bass, tight groove", weight: 1 },
-    { text: "glass percussion, cinematic club pressure", weight: 0.45 },
-  ],
-  [
-    { text: "orchestral score, smooth pianos, sustained chords, emotional", weight: 0.9 },
-    { text: "spacey synths, slow evolving ambient texture", weight: 0.7 },
-  ],
-  [
-    { text: "drum and bass, bright piano stabs, liquid bass movement", weight: 0.85 },
-    { text: "atmospheric synths, live performance energy", weight: 0.6 },
-  ],
-];
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -221,8 +205,8 @@ export function App() {
     bufferedAudioBytes: 0,
     streamedAudioBytes: 0,
   });
-  const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_LYRIA_REALTIME_CONFIG });
-  const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_LYRIA_REALTIME_PROMPTS);
+  const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_REALTIME_REQUEST.config });
+  const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_REALTIME_REQUEST.weightedPrompts);
   const [lyriaSession, setLyriaSession] = useState<LyriaRealtimeSession>();
   const [lyriaStreamBytes, setLyriaStreamBytes] = useState(0);
   const [lyriaRealtimeBusy, setLyriaRealtimeBusy] = useState(false);
@@ -324,9 +308,21 @@ export function App() {
   }, [aiToneBusy, loadAiTonePreset]);
 
   const handleTransportToggle = useCallback(async () => {
-    if (!snapshotRef.current.playing) await loadDefaultAiToneBank(false);
+    if (!snapshotRef.current.playing) {
+      await loadDefaultAiToneBank(false);
+      if (lyriaRealtimeStatus.available && !lyriaSession && !lyriaRealtimeBusy) {
+        setLyriaRealtimeBusy(true);
+        try {
+          setLyriaSession(await startLyriaRealtime(realtimeRequest));
+        } catch (error) {
+          setNotice(error instanceof Error ? error.message : "Lyria RealTime start failed");
+        } finally {
+          setLyriaRealtimeBusy(false);
+        }
+      }
+    }
     await engineRef.current.toggle();
-  }, [loadDefaultAiToneBank]);
+  }, [loadDefaultAiToneBank, lyriaRealtimeBusy, lyriaRealtimeStatus.available, lyriaSession, realtimeRequest]);
 
   const refreshLyriaRealtimeStatus = useCallback(async () => {
     try {
@@ -355,6 +351,25 @@ export function App() {
       setLyriaRealtimeBusy(false);
     }
   }, [lyriaSession, realtimeRequest, refreshLyriaRealtimeStatus]);
+
+  const applyRealtimeRequest = useCallback(async (request: typeof realtimeRequest, label: string) => {
+    setLyriaPrompts(request.weightedPrompts);
+    setLyriaRealtimeConfig(request.config);
+    if (!lyriaSession) {
+      setNotice(`${label} loaded into Lyria RealTime controls.`);
+      return;
+    }
+    setLyriaRealtimeBusy(true);
+    try {
+      const session = await updateLyriaRealtime(request);
+      setLyriaSession(session);
+      setNotice(`${label} sent to Lyria RealTime: ${session.config.bpm} BPM · density ${Math.round(session.config.density * 100)}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Lyria RealTime update failed");
+    } finally {
+      setLyriaRealtimeBusy(false);
+    }
+  }, [lyriaSession]);
 
   const stopRealtimeSession = useCallback(async () => {
     setLyriaRealtimeBusy(true);
@@ -570,6 +585,7 @@ export function App() {
     const template = performanceTemplateById(templateId);
     engineRef.current.applyPerformanceTemplate(template);
     if (template.id === "moonlight-sequencer") void loadDefaultAiToneBank(false);
+    void applyRealtimeRequest(createLyriaRealtimeRequestForTemplate(template), `${template.name} realtime guide`);
     setPrompt(template.prompt);
     setGenerationBpm(template.bpm);
     const settings = {
@@ -582,7 +598,7 @@ export function App() {
     changeScene(template.scene);
     applySceneSettings(settings);
     setNotice(`${template.name} template applied across rhythm, mix, and visuals.`);
-  }, [applySceneSettings, changeScene, loadDefaultAiToneBank, saveSceneSettings, sceneVisualSettings]);
+  }, [applyRealtimeRequest, applySceneSettings, changeScene, loadDefaultAiToneBank, saveSceneSettings, sceneVisualSettings]);
 
   const applyAgentPlan = useCallback((plan: AgentPlan) => {
     const template = performanceTemplateById(plan.templateId);
@@ -797,24 +813,33 @@ export function App() {
     const timer = window.setInterval(() => {
       setAutoDjStep((step) => {
         const nextStep = step + 1;
-        const promptBank = AUTO_DJ_PROMPT_BANK[nextStep % AUTO_DJ_PROMPT_BANK.length];
-        setLyriaPrompts(promptBank);
-        setLyriaRealtimeConfig((current) => ({
-          ...current,
-          bpm: Math.max(60, Math.min(200, current.bpm + (nextStep % 3 === 0 ? 4 : nextStep % 3 === 1 ? -2 : 1))),
-          density: Math.max(0, Math.min(1, 0.38 + ((nextStep * 17) % 52) / 100)),
-          brightness: Math.max(0, Math.min(1, 0.3 + ((nextStep * 23) % 58) / 100)),
-        }));
+        const style = LYRIA_REALTIME_STYLE_PRESETS[nextStep % LYRIA_REALTIME_STYLE_PRESETS.length];
+        const styleRequest = createLyriaRealtimeRequestFromStyle(style);
+        const guidedRequest = {
+          ...styleRequest,
+          config: {
+            ...styleRequest.config,
+            bpm: Math.max(60, Math.min(200, styleRequest.config.bpm + (nextStep % 3 === 0 ? 4 : 0))),
+            density: Math.max(0, Math.min(1, styleRequest.config.density + ((nextStep % 4) - 1) * 0.04)),
+            brightness: Math.max(0, Math.min(1, styleRequest.config.brightness + ((nextStep % 5) - 2) * 0.035)),
+          },
+        };
+        setLyriaPrompts(styleRequest.weightedPrompts);
+        setLyriaRealtimeConfig(guidedRequest.config);
         const note = LYRIA_KEYBOARD_NOTES[(nextStep * 5) % LYRIA_KEYBOARD_NOTES.length];
         void triggerKeyboardNote(note);
         if (lyriaSession) {
-          window.setTimeout(() => void startOrUpdateLyriaRealtime(), 80);
+          void updateLyriaRealtime(guidedRequest)
+            .then(setLyriaSession)
+            .catch((error) => {
+              setNotice(error instanceof Error ? error.message : "Auto DJ Lyria update failed");
+            });
         }
         return nextStep;
       });
     }, 3_200);
     return () => window.clearInterval(timer);
-  }, [autoDjMode, lyriaSession, startOrUpdateLyriaRealtime, triggerKeyboardNote]);
+  }, [autoDjMode, lyriaSession, triggerKeyboardNote]);
 
   useEffect(() => {
     if (!lyriaSession) return;
@@ -1305,6 +1330,17 @@ export function App() {
                     )))}
                   />
                 </label>
+              ))}
+            </div>
+            <div className="realtime-style-buttons">
+              {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                <button
+                  key={style.id}
+                  onClick={() => void applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`)}
+                  disabled={lyriaRealtimeBusy}
+                >
+                  {style.label}
+                </button>
               ))}
             </div>
             <div className="realtime-grid">

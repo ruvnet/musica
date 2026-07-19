@@ -79,7 +79,7 @@ The left-side Artist Macros turn Signal Bloom into a visual instrument: Sculptur
 
 The visual bank includes Neon Fold, Signal Bloom, Spectral Field, Laser Grid, Aurora Veil, Black Monolith, Pulse Field, and Chroma Wave. VJ presets such as Peak Rave, Cinema Fog, Hyperspace, and Glass Ambient apply scene, intensity, macro, and temporal settings without changing the music. Temporal controls shape realtime animation speed, strobe gating, trail persistence, geometry morph depth, camera movement, and phase offset.
 
-Performance templates apply both sound and visuals: Moonlight Sequencer, Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, Cinematic Pulse, UK Garage Neon, Afro Cosmic House, IDM Crystalline, and Hyperpop Rush. The studio boots into Moonlight Sequencer from the curated MIDI-style song bank so the first play demonstrates the intended old-school workflow: deterministic public-domain note patterns drive the sequencer while Lyria-generated tone sources provide the sampler/synth color. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, and optional temporal controls.
+Performance templates apply both sound and visuals: Moonlight Sequencer, Warehouse Techno, Liquid Breaks, Ambient Dub, Synthwave Drive, Footwork Cuts, Cinematic Pulse, UK Garage Neon, Afro Cosmic House, IDM Crystalline, and Hyperpop Rush. The studio boots into Afro Cosmic House from the curated MIDI-style song bank so first play starts with a stronger groove while the Lyria RealTime deck receives matching samba/afro-house guidance. Each template updates BPM, every track pattern, pitch material, mix position, the active scene, reactivity, visual macros, optional temporal controls, and the realtime Lyria prompt/config guide.
 
 MIDI support uses open-source building blocks where they are strongest: WEBMIDI.js handles live browser controller input, while `@tonejs/midi` parses `.mid` and `.midi` files into editable Musica track templates. Loading a MIDI file through any track's Load button maps percussion, bass, chords, lead, breath, and texture material into the six-track sequencer and applies the first MIDI tempo when available. Audio files still load as clips on the selected track. The AI Tones bank is separate from clip loading: it loads Lyria-generated source material into MIDI-triggered grain voices, so the sequencer keeps playing editable notes instead of replacing a track with a static backing loop.
 
@@ -121,7 +121,7 @@ A runtime environment variable cannot widen the compiled provider allowlist. The
 
 ### Lyria RealTime piano and Auto DJ
 
-The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with weighted prompt rows, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
+The July 2026 live direction is Lyria RealTime, not batch MP3 slicing. The left rail now includes a Lyria RealTime deck with weighted prompt rows, style buttons for Samba, Rock, Jazz, Techno, Classical, and Cinema, BPM, density, brightness, guidance, bass/drum muting, a playable two-octave piano keyboard, and Auto DJ mode. The piano always triggers local Musica notes for immediate feedback; the realtime controls are sent through Tauri so the Gemini key remains native-only.
 
 Run the desktop app with realtime controls enabled:
 
@@ -195,7 +195,7 @@ Current Lyria V1 limits are intentional:
 - English, German, Spanish, French, Hindi, Japanese, Korean, and Portuguese vocal requests are accepted;
 - image conditioning and multiple reference images are deferred;
 - PDF conditioning is an experimental Vertex capability and is rejected by this Gemini adapter;
-- Lyria 3 Clip and Lyria RealTime are modeled routing choices but unavailable;
+- Lyria 3 Clip remains modeled but unavailable; Lyria RealTime is implemented as the live WebSocket stream path;
 - the job registry, cost reservation, and request deduplication do not survive app restart;
 - successful asset-bundle files are immutable but not committed as one filesystem transaction, so a late disk failure can leave private partial files for manual cleanup;
 - Web Audio decoding is not isolated in a constrained native media process;
