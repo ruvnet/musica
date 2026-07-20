@@ -806,6 +806,19 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .update-install-button:hover:not(:disabled) { border-color: rgba(117,244,197,.8); }
 .update-install-button:disabled { opacity: .7; cursor: wait; }
 .update-notes { color: #8a91a0; font: 500 8px/1.4 "DM Mono", monospace; }
+.capture-library { display: grid; gap: 6px; margin-top: 3px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.09); }
+.capture-library > header { display: flex; align-items: center; justify-content: space-between; }
+.capture-library > header span { color: #c4c8d2; font: 700 8px "DM Mono", monospace; }
+.capture-library > header b { color: #9debf6; font: 650 7px "DM Mono", monospace; }
+.capture-library-list { display: grid; gap: 5px; max-height: 168px; overflow-y: auto; }
+.capture-entry { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 6px; background: rgba(0,0,0,.28); }
+.capture-entry-meta { display: grid; gap: 2px; min-width: 0; }
+.capture-entry-meta strong { color: #d6dae2; font: 700 8px "DM Mono", monospace; letter-spacing: .04em; }
+.capture-entry-meta span { color: #7f8695; font: 500 7.5px "DM Mono", monospace; }
+.capture-entry-save { height: 26px; padding: 0 11px; border: 1px solid rgba(53,220,255,.32); border-radius: 5px; background: rgba(53,220,255,.06); color: #9debf6; font: 700 7px "DM Mono", monospace; cursor: pointer; }
+.capture-entry-save:hover { border-color: rgba(53,220,255,.6); }
+.capture-entry-delete { width: 24px; height: 26px; border: 1px solid rgba(255,120,120,.28); border-radius: 5px; background: rgba(255,90,90,.06); color: #f2a3a3; font: 700 12px "DM Mono", monospace; cursor: pointer; }
+.capture-entry-delete:hover { border-color: rgba(255,120,120,.55); }
 .restream-control > header { display: flex; align-items: center; justify-content: space-between; }
 .restream-control > header span { display: flex; align-items: center; gap: 6px; color: #c4c8d2; font: 700 8px "DM Mono"; }
 .restream-control > header i { width: 6px; height: 6px; border-radius: 50%; background: #5a5e68; }

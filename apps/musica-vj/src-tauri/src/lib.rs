@@ -137,6 +137,11 @@ pub fn run() {
             // configurable without a terminal. Existing process env always wins,
             // so the dev shell workflow is unchanged.
             load_all_provider_config(app.path().app_config_dir().ok());
+            // Stamp the running version into the window title so it's obvious
+            // which build is open (helps confirm auto-updates landed).
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&format!("Musica VJ v{}", env!("CARGO_PKG_VERSION")));
+            }
             let asset_root = app.path().app_data_dir()?;
             app.manage(CognitumProvider::default());
             app.manage(CreativeProvider::from_env(asset_root));
