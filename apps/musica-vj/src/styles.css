@@ -1,11 +1,3 @@
-@font-face {
-  font-family: "DM Mono";
-  src: local("SFMono-Regular"), local("Menlo"), local("Monaco");
-  font-style: normal;
-  font-weight: 300 700;
-  font-display: swap;
-}
-
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #f8f5ff;

@@ -26,6 +26,39 @@ use restream_provider::{
 };
 use tauri::Manager;
 
+/// Loads `KEY=value` lines from a provider config file into the process
+/// environment, without overwriting variables already set by the shell.
+/// Only recognized `GEMINI_API_KEY` / `MUSICA_*` / `GOOGLE_*` keys are applied,
+/// so the file cannot inject arbitrary environment. Missing file is fine.
+fn load_provider_config(path: &std::path::Path) {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !(key == "GEMINI_API_KEY" || key.starts_with("MUSICA_") || key.starts_with("GOOGLE_")) {
+            continue;
+        }
+        let mut value = value.trim();
+        if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+        {
+            value = &value[1..value.len() - 1];
+        }
+        if std::env::var_os(key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -33,6 +66,16 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            // A packaged app launched from the Start menu / Finder inherits no
+            // shell environment, so GEMINI_API_KEY and the MUSICA_* provider
+            // flags are absent and every provider reports offline (the "Start
+            // Session does nothing" symptom on Windows). Load a dotenv-style
+            // config file from the app config dir first so the desktop build is
+            // configurable without a terminal. Existing process env always wins,
+            // so the dev shell workflow is unchanged.
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                load_provider_config(&config_dir.join("providers.env"));
+            }
             let asset_root = app.path().app_data_dir()?;
             app.manage(CognitumProvider::default());
             app.manage(CreativeProvider::from_env(asset_root));
