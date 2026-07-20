@@ -1814,11 +1814,16 @@ export function App() {
         : cognitumReady
           ? await generateCognitumVisualDirection(
               mood,
-              VISUAL_SCENES.map((scene) => scene.id),
+              [...VISUAL_SCENES.map((scene) => scene.id), ...visualPlugins.map((plugin) => plugin.id)],
               VISUAL_COLOR_PALETTES.map((palette) => palette.id),
             ).catch(() => localVisualDirection(mood))
           : localVisualDirection(mood);
-      changeScene(direction.scene as VisualSceneId);
+      if (direction.scene.startsWith("plugin-")) {
+        const plugin = visualPlugins.find((spec) => spec.id === direction.scene);
+        if (plugin) activatePlugin(plugin);
+      } else {
+        changeScene(direction.scene as VisualSceneId);
+      }
       changeVisualColor({ palette: direction.palette as VisualColorControls["palette"], hue: direction.hue });
       changeIntensity(direction.intensity);
       changeTemporalControl("speed", direction.speed);
@@ -1832,7 +1837,7 @@ export function App() {
     } finally {
       setVisualMoodBusy(false);
     }
-  }, [changeIntensity, changeScene, changeTemporalControl, changeVisualColor, visualMood, visualMoodBusy]);
+  }, [activatePlugin, changeIntensity, changeScene, changeTemporalControl, changeVisualColor, visualMood, visualMoodBusy, visualPlugins]);
 
   const applySetArcStep = useCallback((arc: SetArc, index: number) => {
     const step = arc.steps[index];
@@ -1854,14 +1859,19 @@ export function App() {
     } else {
       void applyRealtimeStyle(step.styleId);
     }
-    changeScene(step.visualScene as VisualSceneId);
+    if (step.visualScene.startsWith("plugin-")) {
+      const plugin = visualPlugins.find((spec) => spec.id === step.visualScene);
+      if (plugin) activatePlugin(plugin);
+    } else {
+      changeScene(step.visualScene as VisualSceneId);
+    }
     if (step.fx) {
       for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
         if (!fxLocks[effect] && step.fx[effect] !== undefined) changeMasterEffect(effect, step.fx[effect]!);
       }
     }
     setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
-  }, [applyLyriaDeckScene, applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks, lyriaDeckScenes]);
+  }, [activatePlugin, applyLyriaDeckScene, applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks, lyriaDeckScenes, visualPlugins]);
 
   const stopSetArc = useCallback((announce = true) => {
     for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
@@ -1896,7 +1906,7 @@ export function App() {
     setSetArcBusy(true);
     stopSetArc(false);
     const styleIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
-    const sceneIds = VISUAL_SCENES.map((scene) => scene.id);
+    const sceneIds = [...VISUAL_SCENES.map((scene) => scene.id), ...visualPlugins.map((plugin) => plugin.id)];
     try {
       if (cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("autopilot")) {
         const arc = await generateCognitumSetArc(setArcDuration, setArcDirection.trim(), styleIds, sceneIds);
@@ -1917,7 +1927,7 @@ export function App() {
     } finally {
       setSetArcBusy(false);
     }
-  }, [customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
+  }, [customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc, visualPlugins]);
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
