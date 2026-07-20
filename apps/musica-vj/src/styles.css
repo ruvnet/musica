@@ -174,7 +174,7 @@ body {
 .onboarding-shell { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; overflow: hidden; background: #05070b; color: #f4f5f8; }
 .welcome-field { position: absolute; inset: 0; width: 100%; height: 100%; }
 .onboarding-shade { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(3,5,9,.74) 0%, rgba(3,5,9,.58) 36%, rgba(3,5,9,.22) 68%, rgba(3,5,9,.04) 100%); pointer-events: none; }
-.welcome-content { position: relative; z-index: 2; width: min(720px, calc(100vw - 48px)); min-height: min(760px, calc(100vh - 36px)); display: grid; grid-template-rows: auto auto auto auto auto 1fr auto; align-content: center; justify-items: center; text-align: center; }
+.welcome-content { position: relative; z-index: 2; width: min(720px, calc(100vw - 48px)); min-height: min(760px, calc(100vh - 36px)); display: grid; grid-auto-rows: max-content; align-content: center; justify-items: center; text-align: center; }
 .welcome-wordmark { animation: welcome-rise .7s cubic-bezier(.16,.84,.44,1) both; }
 .welcome-wordmark strong {
   display: block;
@@ -234,6 +234,59 @@ body {
 .welcome-cognitum:disabled:not(.online) { opacity: .6; cursor: wait; }
 .welcome-chevron { align-self: end; margin-top: 25px; color: #747c8d; animation: welcome-chevron 1.8s ease-in-out infinite alternate; }
 @keyframes welcome-chevron { to { transform: translateY(5px); color: #b8c1d0; } }
+
+/* Cognitum sign-in gate — the required first step. */
+.cognitum-gate { position: fixed; inset: 0; z-index: 300; display: grid; place-items: center; padding: 24px; overflow: auto; background: #04060a; color: #f4f5f8; animation: cognitum-gate-in .45s ease both; }
+@keyframes cognitum-gate-in { from { opacity: 0; } to { opacity: 1; } }
+.cognitum-gate-field { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cognitum-gate-shade { position: absolute; inset: 0; background: radial-gradient(115% 80% at 50% -8%, rgba(53,220,255,.09), transparent 55%), radial-gradient(90% 70% at 50% 112%, rgba(176,107,242,.1), transparent 60%), rgba(4,6,10,.5); }
+.cognitum-gate-stage { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 22px; }
+
+.cognitum-gate-wordmark { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: welcome-rise .5s cubic-bezier(.16,.84,.44,1) .05s both; }
+.cognitum-gate-wordmark strong { font: 700 clamp(44px, 9vw, 78px) "Space Grotesk", sans-serif; line-height: .9; letter-spacing: .015em; background: linear-gradient(100deg, #35dcff 8%, #8fe6ff 42%, #b06bf2 92%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 4px 30px rgba(53,220,255,.28)); }
+.cognitum-gate-wordmark span { color: #7f8798; font: 600 9px "DM Mono", monospace; letter-spacing: .42em; text-indent: .42em; }
+
+.cognitum-gate-card { position: relative; width: min(440px, calc(100vw - 40px)); border-radius: 20px; background: linear-gradient(rgba(8,11,17,.96), rgba(8,11,17,.96)) padding-box, linear-gradient(130deg, rgba(53,220,255,.55), rgba(176,107,242,.5) 50%, rgba(117,244,197,.45)) border-box; border: 1px solid transparent; box-shadow: 0 30px 100px rgba(0,0,0,.62), 0 0 44px rgba(53,220,255,.08); overflow: hidden; animation: welcome-rise .55s cubic-bezier(.16,.84,.44,1) .12s both; }
+.cognitum-gate-card::before { content: ""; position: absolute; inset: -1px; border-radius: 20px; padding: 1px; background: linear-gradient(130deg, rgba(53,220,255,.8), transparent 40%, transparent 60%, rgba(176,107,242,.75)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: .62; transition: opacity .4s; pointer-events: none; animation: cognitum-border-drift 3.2s linear infinite; }
+.cognitum-gate-card.working::before { opacity: 1; }
+@keyframes cognitum-border-drift { to { filter: hue-rotate(40deg); } }
+.cognitum-gate-wave { display: block; width: 100%; height: 96px; background: linear-gradient(180deg, rgba(53,220,255,.06), transparent); border-bottom: 1px solid rgba(255,255,255,.05); }
+.cognitum-gate-body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 22px 26px 20px; text-align: center; }
+.cognitum-gate-mark { display: inline-flex; align-items: center; gap: 7px; color: #35dcff; font: 700 8px "DM Mono", monospace; letter-spacing: .2em; }
+.cognitum-gate-body h1 { margin: 2px 0 0; font: 600 22px "Space Grotesk", sans-serif; letter-spacing: -.01em; }
+.cognitum-gate-body > p { margin: 0; max-width: 344px; color: #9aa2b2; font: 400 12.5px/1.5 "Space Grotesk", sans-serif; }
+.cognitum-gate-primary { position: relative; width: 100%; min-height: 47px; margin-top: 6px; border: 0; border-radius: 999px; background: linear-gradient(120deg, #35dcff, #6ad0ff 52%, #b06bf2); color: #041016; cursor: pointer; overflow: hidden; transition: filter .15s, transform .15s, box-shadow .15s; box-shadow: 0 8px 26px rgba(53,220,255,.24); }
+.cognitum-gate-primary-label { display: inline-flex; align-items: center; justify-content: center; gap: 9px; width: 100%; min-height: 47px; font: 700 11px "DM Mono", monospace; letter-spacing: .08em; }
+.cognitum-gate-primary::after { content: ""; position: absolute; top: 0; left: -60%; width: 45%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent); transform: skewX(-18deg); animation: cognitum-shimmer 3s ease-in-out infinite; }
+@keyframes cognitum-shimmer { 0% { left: -60%; } 55%, 100% { left: 130%; } }
+.cognitum-gate-primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 12px 34px rgba(53,220,255,.34); }
+.cognitum-gate-primary:disabled { opacity: .62; cursor: wait; }
+.cognitum-gate-primary:disabled::after { animation: none; opacity: 0; }
+.cognitum-gate-manual-toggle { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: #818796; font: 600 8px "DM Mono", monospace; letter-spacing: .06em; text-decoration: underline; cursor: pointer; }
+.cognitum-gate-manual-toggle:disabled { opacity: .5; cursor: wait; }
+.cognitum-gate-manual { display: flex; gap: 8px; width: 100%; }
+.cognitum-gate-manual input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid rgba(53,220,255,.28); border-radius: 9px; background: rgba(0,0,0,.35); color: #eaf6ff; font: 600 12px "DM Mono", monospace; letter-spacing: .06em; }
+.cognitum-gate-manual button { height: 38px; padding: 0 16px; border: 0; border-radius: 9px; background: rgba(53,220,255,.16); color: #bdeeff; font: 700 10px "DM Mono", monospace; letter-spacing: .06em; cursor: pointer; }
+.cognitum-gate-manual button:disabled { opacity: .5; cursor: not-allowed; }
+.cognitum-gate-reason { max-width: 344px; color: #c7a3e6; font: 500 10px/1.5 "DM Mono", monospace; }
+.cognitum-gate-log { width: 100%; margin-top: 6px; border: 1px solid rgba(255,255,255,.07); border-radius: 11px; background: rgba(0,0,0,.34); overflow: hidden; text-align: left; }
+.cognitum-gate-log-head { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border-bottom: 1px solid rgba(255,255,255,.06); color: #6f7686; font: 700 8px "DM Mono", monospace; letter-spacing: .16em; }
+.cognitum-gate-log-dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: #75f4c5; box-shadow: 0 0 8px rgba(117,244,197,.9); animation: provider-pulse 1.6s ease-in-out infinite; }
+.cognitum-gate-log-lines { max-height: 118px; overflow-y: auto; padding: 8px 11px; display: flex; flex-direction: column; gap: 3px; }
+.cognitum-gate-log-lines p { margin: 0; color: #aeb6c4; font: 500 10.5px/1.45 "DM Mono", monospace; animation: cognitum-log-in .25s ease both; }
+@keyframes cognitum-log-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+.cognitum-gate-log-lines p b { margin-right: 7px; color: #5b6270; font-weight: 600; }
+.cognitum-gate-log-lines p.ok { color: #86f4cb; }
+.cognitum-gate-log-lines p.warn { color: #f0c98a; }
+.cognitum-gate-skip { margin-top: 2px; border: 0; background: transparent; color: #6b7280; font: 600 9px "DM Mono", monospace; text-decoration: underline; cursor: pointer; }
+.cognitum-gate-skip:hover { color: #98a1b2; }
+.cognitum-gate-host { color: #4c5361; font: 600 8px "DM Mono", monospace; letter-spacing: .24em; text-transform: uppercase; }
+.cognitum-gate .spin { animation: cognitum-spin 1s linear infinite; }
+@keyframes cognitum-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cognitum-gate, .cognitum-gate-card, .cognitum-gate-wordmark, .cognitum-gate-log-lines p { animation: none; }
+  .cognitum-gate .spin, .cognitum-gate-primary::after, .cognitum-gate-card::before, .cognitum-gate-log-dot { animation: none; }
+}
 
 .onboarding-panel { position: relative; z-index: 2; width: min(720px, calc(100vw - 40px)); max-height: min(760px, calc(100vh - 40px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid rgba(53,220,255,.28); border-radius: 18px; background: rgba(7,9,15,.95); box-shadow: 0 24px 80px rgba(0,0,0,.58); }
 .onboarding-panel > header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid rgba(255,255,255,.08); }

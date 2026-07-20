@@ -182,6 +182,10 @@ enum RealtimeAuth {
 pub(crate) struct LyriaRealtimeProvider {
     enabled: bool,
     auth: Option<RealtimeAuth>,
+    /// A key brokered at runtime after Cognitum sign-in (ADR-179). When present
+    /// it takes precedence and enables the provider, so a packaged app with no
+    /// env config becomes live purely from signing in.
+    runtime_key: Mutex<Option<String>>,
     active: Mutex<HashMap<LyriaRealtimeDeck, ActiveSession>>,
 }
 
@@ -204,8 +208,38 @@ impl LyriaRealtimeProvider {
                 .map(|value| matches!(value.as_str(), "true" | "1" | "yes"))
                 .unwrap_or(false),
             auth,
+            runtime_key: Mutex::new(None),
             active: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Injects (or clears) a runtime-brokered API key from the Cognitum flow.
+    pub(crate) fn set_runtime_key(&self, key: Option<String>) {
+        if let Ok(mut guard) = self.runtime_key.lock() {
+            *guard = key
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+        }
+    }
+
+    /// The auth to use: a brokered runtime key wins over env config.
+    fn effective_auth(&self) -> Option<RealtimeAuth> {
+        if let Ok(guard) = self.runtime_key.lock() {
+            if let Some(key) = guard.as_ref() {
+                return Some(RealtimeAuth::ApiKey(key.clone()));
+            }
+        }
+        self.auth.clone()
+    }
+
+    /// A brokered key implicitly enables the provider even without the env flag.
+    fn effective_enabled(&self) -> bool {
+        self.enabled
+            || self
+                .runtime_key
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false)
     }
 
     fn status(&self, deck: LyriaRealtimeDeck) -> LyriaRealtimeStatus {
@@ -218,18 +252,20 @@ impl LyriaRealtimeProvider {
             .and_then(|guard| guard.get(&deck))
             .map(|active| active.shared.snapshot())
             .unwrap_or_default();
-        let reason = if !self.enabled {
+        let enabled = self.effective_enabled();
+        let auth = self.effective_auth();
+        let reason = if !enabled {
             Some(format!("{ENABLE_ENV}=true is required"))
-        } else if self.auth.is_none() {
+        } else if auth.is_none() {
             Some(format!(
-                "{API_KEY_ENV} or {GCP_AUTH_ENV}=gcloud is required"
+                "{API_KEY_ENV}, {GCP_AUTH_ENV}=gcloud, or Cognitum sign-in is required"
             ))
         } else {
             None
         };
         LyriaRealtimeStatus {
             deck,
-            available: self.enabled && self.auth.is_some(),
+            available: enabled && auth.is_some(),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
             sample_rate_hz: SAMPLE_RATE_HZ,
@@ -249,13 +285,12 @@ impl LyriaRealtimeProvider {
         deck: LyriaRealtimeDeck,
         request: LyriaRealtimeStartRequest,
     ) -> Result<LyriaRealtimeSession, String> {
-        if !self.enabled {
+        if !self.effective_enabled() {
             return Err(format!("{ENABLE_ENV}=true is required"));
         }
-        let auth = self
-            .auth
-            .clone()
-            .ok_or_else(|| format!("{API_KEY_ENV} or {GCP_AUTH_ENV}=gcloud is required"))?;
+        let auth = self.effective_auth().ok_or_else(|| {
+            format!("{API_KEY_ENV}, {GCP_AUTH_ENV}=gcloud, or Cognitum sign-in is required")
+        })?;
         validate_request(&request)?;
         self.stop(deck)?;
         let session = LyriaRealtimeSession {
@@ -700,6 +735,22 @@ pub(crate) fn lyria_realtime_status(
     deck: LyriaRealtimeDeck,
 ) -> LyriaRealtimeStatus {
     state.status(deck)
+}
+
+/// Injects a runtime-brokered API key (from the Cognitum sign-in flow) so a
+/// packaged app with no env config becomes live purely from signing in. Pass an
+/// empty string to clear it and revert to env/BYO-key behavior.
+#[tauri::command]
+pub(crate) fn lyria_realtime_configure_key(
+    state: tauri::State<'_, LyriaRealtimeProvider>,
+    key: String,
+) {
+    let trimmed = key.trim();
+    state.set_runtime_key(if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    });
 }
 
 #[tauri::command]

@@ -8,17 +8,17 @@ mod restream_provider;
 
 use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,
-    cognitum_autodj_brief, cognitum_fx_direction, cognitum_set_arc, cognitum_sign_out,
-    cognitum_status, cognitum_style_pack, cognitum_visual_direction, cognitum_visual_plugin,
-    cognitum_vocal_guidance, CognitumProvider,
+    cognitum_autodj_brief, cognitum_fx_direction, cognitum_lyria_credential, cognitum_set_arc,
+    cognitum_sign_out, cognitum_status, cognitum_style_pack, cognitum_visual_direction,
+    cognitum_visual_plugin, cognitum_vocal_guidance, CognitumProvider,
 };
 use creative_provider::{
     creative_cancel_generation, creative_download_audio, creative_generate,
     creative_generation_status, creative_provider_status, CreativeProvider,
 };
 use lyria_realtime_provider::{
-    lyria_realtime_poll_audio, lyria_realtime_start, lyria_realtime_status, lyria_realtime_stop,
-    lyria_realtime_update, LyriaRealtimeProvider,
+    lyria_realtime_configure_key, lyria_realtime_poll_audio, lyria_realtime_start,
+    lyria_realtime_status, lyria_realtime_stop, lyria_realtime_update, LyriaRealtimeProvider,
 };
 use meta_llm_provider::{meta_llm_plan, meta_llm_status, MetaLlmProvider};
 use restream_provider::{
@@ -48,6 +48,10 @@ const PROVIDER_CONFIG_TEMPLATE: &str = "\
 # MUSICA_COGNITUM_API_BASE=http://127.0.0.1:8787
 # MUSICA_COGNITUM_BEARER=your_meta_proxy_token
 # (Lyria audio still needs GEMINI_API_KEY above; meta-proxy is a text-LLM plane.)
+#
+# Sign in with Cognitum One and get Lyria audio with no GEMINI_API_KEY: point at
+# the credential broker and just sign in from the app (ADR-179):
+# MUSICA_LYRIA_BROKER_URL=https://your-lyria-broker-url
 ";
 
 /// Loads `KEY=value` lines from a provider config file into the process
@@ -148,6 +152,7 @@ pub fn run() {
             cognitum_auth_start,
             cognitum_autodj_brief,
             cognitum_fx_direction,
+            cognitum_lyria_credential,
             cognitum_visual_direction,
             cognitum_visual_plugin,
             cognitum_vocal_guidance,
@@ -161,6 +166,7 @@ pub fn run() {
             creative_download_audio,
             creative_cancel_generation,
             lyria_realtime_status,
+            lyria_realtime_configure_key,
             lyria_realtime_start,
             lyria_realtime_update,
             lyria_realtime_stop,
