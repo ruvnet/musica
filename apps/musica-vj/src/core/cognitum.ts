@@ -86,6 +86,75 @@ export interface SetArc {
   steps: SetArcStep[];
 }
 
+export interface FxMove {
+  effect: "flanger" | "phaser" | "drive" | "crush" | "sweep" | "reverb" | "echo";
+  target: number;
+  atBar: number;
+}
+
+export interface FxDirection {
+  summary: string;
+  moves: FxMove[];
+}
+
+export async function generateCognitumFxDirection(mood: string, bars: number): Promise<FxDirection> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  return invoke<FxDirection>("cognitum_fx_direction", { mood, bars });
+}
+
+/// Keyword fallback when Cognitum is unavailable: a handful of curated
+/// mood shapes over the bar budget, always resolving toward dry.
+export function localFxDirection(mood: string, bars: number): FxDirection {
+  const normalized = mood.toLowerCase();
+  const half = Math.floor(bars / 2);
+  const tail = Math.max(1, bars - 2);
+  if (/underwater|submerge|deep|dive/.test(normalized)) {
+    return {
+      summary: "Dive under, then surface to dry",
+      moves: [
+        { effect: "sweep", target: 0.65, atBar: 0 },
+        { effect: "reverb", target: 0.3, atBar: 1 },
+        { effect: "sweep", target: 0.2, atBar: half },
+        { effect: "sweep", target: 0, atBar: tail },
+        { effect: "reverb", target: 0, atBar: tail },
+      ],
+    };
+  }
+  if (/space|air|wide|dream|float/.test(normalized)) {
+    return {
+      summary: "Open the space, drift, land dry",
+      moves: [
+        { effect: "reverb", target: 0.4, atBar: 0 },
+        { effect: "echo", target: 0.25, atBar: 1 },
+        { effect: "reverb", target: 0.15, atBar: half },
+        { effect: "echo", target: 0, atBar: tail },
+        { effect: "reverb", target: 0, atBar: tail },
+      ],
+    };
+  }
+  if (/aggress|hard|grit|dirty|heavy|rage/.test(normalized)) {
+    return {
+      summary: "Add grit, peak, clean out",
+      moves: [
+        { effect: "drive", target: 0.35, atBar: 0 },
+        { effect: "crush", target: 0.2, atBar: half },
+        { effect: "drive", target: 0.5, atBar: half },
+        { effect: "crush", target: 0, atBar: tail },
+        { effect: "drive", target: 0, atBar: tail },
+      ],
+    };
+  }
+  return {
+    summary: "Gentle motion swell and release",
+    moves: [
+      { effect: "flanger", target: 0.25, atBar: 0 },
+      { effect: "sweep", target: 0.3, atBar: half },
+      { effect: "flanger", target: 0, atBar: tail },
+      { effect: "sweep", target: 0, atBar: tail },
+    ],
+  };
+}
+
 export interface AutoDjBrief {
   brief: string;
   mood: string;

@@ -96,7 +96,9 @@ import {
   COGNITUM_CAPABILITY_LABELS,
   completeCognitumManualSignIn,
   generateCognitumAutoDjBrief,
+  generateCognitumFxDirection,
   generateCognitumSetArc,
+  localFxDirection,
   generateCognitumStylePack,
   getCognitumStatus,
   localSetArc,
@@ -550,6 +552,44 @@ export function App() {
     changeMasterEffect(effect, 0.25 + Math.random() * 0.6);
     setNotice(`${effect.toUpperCase()} settings generated. Lock it to keep them across style changes.`);
   }, [changeMasterEffect, changeMasterEffectParam]);
+
+  const [fxMood, setFxMood] = useState("");
+  const [fxMoodBusy, setFxMoodBusy] = useState(false);
+  const [fxMoodActive, setFxMoodActive] = useState("");
+  const fxMoodTimersRef = useRef<number[]>([]);
+
+  const stopFxMood = useCallback((announce = true) => {
+    for (const timer of fxMoodTimersRef.current) window.clearTimeout(timer);
+    fxMoodTimersRef.current = [];
+    setFxMoodActive("");
+    if (announce) setNotice("FX mood automation cancelled.");
+  }, []);
+
+  const runFxMood = useCallback(async () => {
+    const mood = fxMood.trim();
+    if (!mood || fxMoodBusy) return;
+    setFxMoodBusy(true);
+    stopFxMood(false);
+    const bars = 16;
+    try {
+      const direction = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting")
+        ? await generateCognitumFxDirection(mood, bars).catch(() => localFxDirection(mood, bars))
+        : localFxDirection(mood, bars);
+      const barMs = (60_000 / Math.max(60, snapshotRef.current.bpm)) * 4;
+      for (const move of direction.moves) {
+        if (fxLocks[move.effect]) continue;
+        const timer = window.setTimeout(() => changeMasterEffect(move.effect, move.target), move.atBar * barMs);
+        fxMoodTimersRef.current.push(timer);
+      }
+      setFxMoodActive(direction.summary);
+      window.setTimeout(() => setFxMoodActive(""), bars * barMs + 1_000);
+      setNotice(`FX mood: ${direction.summary} · ${direction.moves.length} moves over ${bars} bars.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "FX mood direction failed");
+    } finally {
+      setFxMoodBusy(false);
+    }
+  }, [changeMasterEffect, fxLocks, fxMood, fxMoodBusy, stopFxMood]);
 
   const [padLoops, setPadLoops] = useState(() => engineRef.current.getPadLoops());
   const [sfxLevel, setSfxLevel] = useState(() => engineRef.current.getSfxLevel());
@@ -3281,6 +3321,23 @@ export function App() {
                   )}
                 </div>
               ))}
+              <div className="fx-mood" title="Describe a feeling; the rack automates itself over the next 16 bars, respecting locks">
+                <input
+                  value={fxMood}
+                  maxLength={300}
+                  placeholder="AI mood: make it feel underwater, then lift…"
+                  onChange={(event) => setFxMood(event.target.value)}
+                  aria-label="FX mood direction"
+                />
+                {fxMoodActive ? (
+                  <button type="button" className="danger" onClick={() => stopFxMood()}>STOP</button>
+                ) : (
+                  <button type="button" onClick={() => void runFxMood()} disabled={fxMoodBusy || !fxMood.trim()}>
+                    {fxMoodBusy ? "…" : "DIRECT"}
+                  </button>
+                )}
+              </div>
+              {fxMoodActive && <small className="fx-mood-active">▶ {fxMoodActive}</small>}
               <button type="button" className="fx-kill" onClick={() => MASTER_EFFECT_IDS.forEach((key) => { if (!fxLocks[key]) changeMasterEffect(key, 0); })} title="Zero all unlocked effects">
                 KILL FX
               </button>

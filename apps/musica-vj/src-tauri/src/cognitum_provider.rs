@@ -789,6 +789,114 @@ pub(crate) async fn cognitum_autodj_brief(
     })
 }
 
+const FX_EFFECTS: [&str; 7] = [
+    "flanger", "phaser", "drive", "crush", "sweep", "reverb", "echo",
+];
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FxMove {
+    effect: String,
+    target: f32,
+    at_bar: u16,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FxDirection {
+    summary: String,
+    moves: Vec<FxMove>,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_fx_direction(
+    provider: State<'_, CognitumProvider>,
+    mood: String,
+    bars: u16,
+) -> Result<FxDirection, String> {
+    let trimmed = mood.trim();
+    if trimmed.is_empty() || trimmed.len() > 300 {
+        return Err("Describe the mood in 1 to 300 characters".into());
+    }
+    if !(4..=128).contains(&bars) {
+        return Err("FX direction length must be 4 to 128 bars".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You automate a live master effects rack over a fixed number of bars. Return only JSON with keys summary (max 90 chars) and moves: 2 to 12 objects with effect (one of: {effects}), target (0-1, the effect amount to reach), and atBar (integer 0 to the bar budget minus one; 0 means immediately). Design a musical journey: introduce effects gradually, resolve back toward dry (targets at or near 0) by the final bars unless the mood demands otherwise. Never exceed 0.85 for drive or crush.",
+        effects = FX_EFFECTS.join(", "),
+    );
+    let user = format!("Bar budget: {bars}. Mood: {trimmed}");
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.65,
+        max_tokens: 500,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum FX direction request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum FX direction was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty FX direction".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid FX direction".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid FX direction".to_string())?;
+    let direction: FxDirection = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid FX direction".to_string())?;
+    validate_fx_direction(&direction, bars)?;
+    Ok(direction)
+}
+
+fn validate_fx_direction(direction: &FxDirection, bars: u16) -> Result<(), String> {
+    if direction.summary.len() > 90 {
+        return Err("FX direction summary is too long".into());
+    }
+    if !(2..=12).contains(&direction.moves.len()) {
+        return Err("FX direction must have 2 to 12 moves".into());
+    }
+    for fx_move in &direction.moves {
+        if !FX_EFFECTS.contains(&fx_move.effect.as_str()) {
+            return Err("FX direction references an unknown effect".into());
+        }
+        if !(0.0..=1.0).contains(&fx_move.target) {
+            return Err("FX direction target is out of range".into());
+        }
+        if fx_move.at_bar >= bars {
+            return Err("FX direction move is beyond the bar budget".into());
+        }
+        if matches!(fx_move.effect.as_str(), "drive" | "crush") && fx_move.target > 0.85 {
+            return Err("FX direction pushes distortion beyond the safe ceiling".into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_set_arc(
     arc: &SetArc,
     duration_minutes: u16,
