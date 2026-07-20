@@ -63,3 +63,65 @@ export async function generateCognitumStylePack(description: string): Promise<Co
   if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
   return invoke<CognitumStylePack>("cognitum_style_pack", { description });
 }
+
+export interface SetArcFx {
+  sweep?: number;
+  reverb?: number;
+  echo?: number;
+  flanger?: number;
+}
+
+export interface SetArcStep {
+  atMinute: number;
+  styleId: string;
+  visualScene: string;
+  bpm: number;
+  fx?: SetArcFx;
+  note: string;
+}
+
+export interface SetArc {
+  title: string;
+  durationMinutes: number;
+  steps: SetArcStep[];
+}
+
+export async function generateCognitumSetArc(
+  durationMinutes: number,
+  direction: string,
+  styleIds: string[],
+  sceneIds: string[],
+): Promise<SetArc> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  return invoke<SetArc>("cognitum_set_arc", { durationMinutes, direction, styleIds, sceneIds });
+}
+
+/// Deterministic fallback used when Cognitum is unavailable: a classic
+/// establish → build → peak → breathe → second peak → resolve energy curve.
+export function localSetArc(durationMinutes: number, styleIds: string[], sceneIds: string[]): SetArc {
+  const duration = Math.max(30, Math.min(90, Math.round(durationMinutes)));
+  const phases: Array<{ share: number; energy: number; note: string; fx?: SetArcFx }> = [
+    { share: 0, energy: 0.35, note: "Establish the identity, low pressure" },
+    { share: 0.14, energy: 0.5, note: "First build, introduce percussion drive" },
+    { share: 0.3, energy: 0.75, note: "Open the floor, main groove" },
+    { share: 0.45, energy: 0.95, note: "First peak, full energy", fx: { sweep: 0.2 } },
+    { share: 0.58, energy: 0.45, note: "Breathe, strip back and add space", fx: { reverb: 0.3 } },
+    { share: 0.7, energy: 0.8, note: "Rebuild toward the second peak" },
+    { share: 0.82, energy: 1, note: "Second peak, strongest material", fx: { sweep: 0.15, echo: 0.15 } },
+    { share: 0.93, energy: 0.3, note: "Resolve and land gently", fx: { reverb: 0.35 } },
+  ];
+  const orderedStyles = styleIds.length > 0 ? styleIds : ["rock"];
+  const orderedScenes = sceneIds.length > 0 ? sceneIds : ["oscilloscope"];
+  return {
+    title: `${duration}-minute local arc`,
+    durationMinutes: duration,
+    steps: phases.map((phase, index) => ({
+      atMinute: Math.round(phase.share * duration * 10) / 10,
+      styleId: orderedStyles[index % orderedStyles.length]!,
+      visualScene: orderedScenes[index % orderedScenes.length]!,
+      bpm: Math.round(96 + phase.energy * 60),
+      fx: phase.fx,
+      note: phase.note,
+    })),
+  };
+}

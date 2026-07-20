@@ -412,6 +412,24 @@ body {
 .cognitum-actions button { height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.02); color: #9da1ad; font: 700 7px "DM Mono", monospace; cursor: pointer; }
 .cognitum-actions button.primary { border-color: rgba(53,220,255,.4); background: rgba(53,220,255,.08); color: #9debf6; }
 .cognitum-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.set-arc { display: grid; gap: 7px; margin-top: 4px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+.set-arc > header { display: flex; align-items: center; justify-content: space-between; }
+.set-arc > header span { color: #c4c8d2; font: 700 8px "DM Mono", monospace; }
+.set-arc > header b { color: #9b8cff; font: 650 7px "DM Mono", monospace; }
+.set-arc-controls { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 7px; }
+.set-arc-controls select, .set-arc-controls input { height: 30px; padding: 0 8px; border: 1px solid rgba(255,255,255,.1); border-radius: 6px; background: rgba(2,3,6,.5); color: #dfe2e9; font: 600 8px "DM Mono", monospace; outline: none; }
+.set-arc-actions { display: flex; gap: 7px; }
+.set-arc-actions button { height: 30px; padding: 0 14px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.02); color: #9da1ad; font: 700 7px "DM Mono", monospace; cursor: pointer; }
+.set-arc-actions button.primary { border-color: rgba(117,244,197,.45); background: rgba(117,244,197,.09); color: var(--mint); }
+.set-arc-actions button.danger { border-color: rgba(255,79,134,.4); background: rgba(255,79,134,.07); color: #ff8caf; }
+.set-arc-actions button:disabled { opacity: .45; cursor: wait; }
+.set-arc-timeline { display: grid; gap: 4px; max-height: 150px; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
+.set-arc-timeline li { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 7px; padding: 5px 7px; border: 1px solid rgba(255,255,255,.06); border-radius: 6px; background: rgba(255,255,255,.015); }
+.set-arc-timeline li b { color: #9b8cff; font: 700 8px "DM Mono", monospace; }
+.set-arc-timeline li span { overflow: hidden; color: #b9bfca; font: 600 7px "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.set-arc-timeline li em { grid-column: 2; color: #6f7582; font: 500 6px "DM Mono", monospace; font-style: normal; }
+.set-arc-timeline li.active { border-color: rgba(117,244,197,.45); background: rgba(117,244,197,.06); }
+.set-arc-timeline li.active span { color: var(--mint); }
 .performance-pads { display: grid; gap: 7px; margin-top: 9px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.07); }
 .pads-label { align-self: center; color: #6f7582; font: 700 7px "DM Mono", monospace; letter-spacing: .1em; }
 .sfx-pads { display: grid; grid-template-columns: 38px repeat(5, minmax(0, 1fr)) 96px; gap: 6px; }

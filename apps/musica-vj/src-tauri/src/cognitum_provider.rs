@@ -590,6 +590,162 @@ pub(crate) async fn cognitum_style_pack(
     Ok(pack)
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArcStep {
+    at_minute: f32,
+    style_id: String,
+    visual_scene: String,
+    bpm: u16,
+    #[serde(default)]
+    fx: Option<SetArcFx>,
+    note: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArcFx {
+    #[serde(default)]
+    sweep: Option<f32>,
+    #[serde(default)]
+    reverb: Option<f32>,
+    #[serde(default)]
+    echo: Option<f32>,
+    #[serde(default)]
+    flanger: Option<f32>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArc {
+    title: String,
+    duration_minutes: u16,
+    steps: Vec<SetArcStep>,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_set_arc(
+    provider: State<'_, CognitumProvider>,
+    duration_minutes: u16,
+    direction: String,
+    style_ids: Vec<String>,
+    scene_ids: Vec<String>,
+) -> Result<SetArc, String> {
+    if !(30..=90).contains(&duration_minutes) {
+        return Err("Set length must be between 30 and 90 minutes".into());
+    }
+    let trimmed = direction.trim();
+    if trimmed.len() > 600 {
+        return Err("Describe the set in at most 600 characters".into());
+    }
+    if style_ids.is_empty() || scene_ids.is_empty() || style_ids.len() > 64 || scene_ids.len() > 32
+    {
+        return Err("Style and scene lists are required".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You plan complete live AI music performances. Return only JSON with keys title (max 40 chars), durationMinutes (echo the requested length), and steps: 6 to 14 objects, each with atMinute (number, 0 = opening, strictly increasing, all below durationMinutes), styleId (one of: {styles}), visualScene (one of: {scenes}), bpm (60-200), fx (optional object with sweep/reverb/echo/flanger each 0-1, omit for dry), and note (max 90 chars stage direction). Design a professional energy arc: establish, build, peak, breathe, second peak, resolve. Adjacent steps should differ meaningfully.",
+        styles = style_ids.join(", "),
+        scenes = scene_ids.join(", "),
+    );
+    let user = if trimmed.is_empty() {
+        format!("Plan a {duration_minutes} minute live set.")
+    } else {
+        format!("Plan a {duration_minutes} minute live set. Direction: {trimmed}")
+    };
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 1_400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum set-arc request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum set-arc planning was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty plan".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid plan".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid plan".to_string())?;
+    let arc: SetArc = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid plan".to_string())?;
+    validate_set_arc(&arc, duration_minutes, &style_ids, &scene_ids)?;
+    Ok(arc)
+}
+
+fn validate_set_arc(
+    arc: &SetArc,
+    duration_minutes: u16,
+    style_ids: &[String],
+    scene_ids: &[String],
+) -> Result<(), String> {
+    if arc.title.trim().is_empty() || arc.title.len() > 40 {
+        return Err("Generated plan title is invalid".into());
+    }
+    if !(6..=14).contains(&arc.steps.len()) {
+        return Err("Generated plan must have 6 to 14 steps".into());
+    }
+    let mut previous = -1.0_f32;
+    for step in &arc.steps {
+        if !step.at_minute.is_finite() || step.at_minute < 0.0 {
+            return Err("Generated plan step time is invalid".into());
+        }
+        if step.at_minute <= previous || step.at_minute >= f32::from(duration_minutes) {
+            return Err("Generated plan step times must strictly increase within the set".into());
+        }
+        previous = step.at_minute;
+        if !style_ids.contains(&step.style_id) {
+            return Err("Generated plan references an unknown style".into());
+        }
+        if !scene_ids.contains(&step.visual_scene) {
+            return Err("Generated plan references an unknown scene".into());
+        }
+        if !(60..=200).contains(&step.bpm) {
+            return Err("Generated plan BPM is out of range".into());
+        }
+        if step.note.len() > 90 {
+            return Err("Generated plan note is too long".into());
+        }
+        if let Some(fx) = &step.fx {
+            for value in [fx.sweep, fx.reverb, fx.echo, fx.flanger]
+                .into_iter()
+                .flatten()
+            {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err("Generated plan FX values are out of range".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_style_pack(pack: &StylePack) -> Result<(), String> {
     if pack.label.trim().is_empty() || pack.label.len() > 24 {
         return Err("Generated style label is invalid".into());
@@ -695,6 +851,45 @@ mod tests {
         let mut bad_bpm = valid.clone();
         bad_bpm.config.bpm = 20;
         assert!(validate_style_pack(&bad_bpm).is_err());
+    }
+
+    #[test]
+    fn set_arc_validation_enforces_timeline_and_vocabulary() {
+        let styles = vec!["rock".to_string(), "techno".to_string()];
+        let scenes = vec!["oscilloscope".to_string(), "terrain".to_string()];
+        let step = |minute: f32, style: &str| SetArcStep {
+            at_minute: minute,
+            style_id: style.into(),
+            visual_scene: "terrain".into(),
+            bpm: 126,
+            fx: Some(SetArcFx {
+                sweep: Some(0.2),
+                ..SetArcFx::default()
+            }),
+            note: "build".into(),
+        };
+        let valid = SetArc {
+            title: "Night Arc".into(),
+            duration_minutes: 60,
+            steps: (0..6).map(|i| step(i as f32 * 9.0, "rock")).collect(),
+        };
+        assert!(validate_set_arc(&valid, 60, &styles, &scenes).is_ok());
+
+        let mut unknown_style = valid.clone();
+        unknown_style.steps[2].style_id = "polka".into();
+        assert!(validate_set_arc(&unknown_style, 60, &styles, &scenes).is_err());
+
+        let mut out_of_order = valid.clone();
+        out_of_order.steps[3].at_minute = 1.0;
+        assert!(validate_set_arc(&out_of_order, 60, &styles, &scenes).is_err());
+
+        let mut beyond_end = valid.clone();
+        beyond_end.steps[5].at_minute = 75.0;
+        assert!(validate_set_arc(&beyond_end, 60, &styles, &scenes).is_err());
+
+        let mut too_few = valid.clone();
+        too_few.steps.truncate(3);
+        assert!(validate_set_arc(&too_few, 60, &styles, &scenes).is_err());
     }
 
     #[test]

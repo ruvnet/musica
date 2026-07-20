@@ -95,12 +95,15 @@ import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatu
 import {
   COGNITUM_CAPABILITY_LABELS,
   completeCognitumManualSignIn,
+  generateCognitumSetArc,
   generateCognitumStylePack,
   getCognitumStatus,
+  localSetArc,
   signOutCognitum,
   startCognitumManualSignIn,
   startCognitumSignIn,
   type CognitumStatus,
+  type SetArc,
 } from "./core/cognitum";
 import {
   loadWorkspaceSettings,
@@ -1630,6 +1633,82 @@ export function App() {
     const sceneName = VISUAL_SCENES.find((candidate) => candidate.id === scene)?.name ?? scene;
     setNotice(`Shuffled look: ${sceneName} · ${settings.animationStyle.toUpperCase()} · ${settings.color.palette.toUpperCase()}.`);
   }, [applySceneSettings, changeScene, saveSceneSettings]);
+
+  const [setArc, setSetArc] = useState<SetArc>();
+  const [setArcSource, setSetArcSource] = useState<"cognitum" | "local">("local");
+  const [setArcDuration, setSetArcDuration] = useState(60);
+  const [setArcDirection, setSetArcDirection] = useState("");
+  const [setArcBusy, setSetArcBusy] = useState(false);
+  const [setArcRunning, setSetArcRunning] = useState(false);
+  const [setArcStepIndex, setSetArcStepIndex] = useState(-1);
+  const setArcTimersRef = useRef<number[]>([]);
+
+  const applySetArcStep = useCallback((arc: SetArc, index: number) => {
+    const step = arc.steps[index];
+    if (!step) return;
+    setSetArcStepIndex(index);
+    engineRef.current.setBpm(step.bpm);
+    void applyRealtimeStyle(step.styleId);
+    changeScene(step.visualScene as VisualSceneId);
+    if (step.fx) {
+      for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
+        if (!fxLocks[effect] && step.fx[effect] !== undefined) changeMasterEffect(effect, step.fx[effect]!);
+      }
+    }
+    setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
+  }, [applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks]);
+
+  const stopSetArc = useCallback((announce = true) => {
+    for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
+    setArcTimersRef.current = [];
+    setSetArcRunning(false);
+    setSetArcStepIndex(-1);
+    if (announce) setNotice("Set arc stopped. Manual control restored.");
+  }, []);
+
+  const runSetArc = useCallback(() => {
+    if (!setArc) return;
+    stopSetArc(false);
+    setSetArcRunning(true);
+    const offset = setArc.steps[0]?.atMinute ?? 0;
+    applySetArcStep(setArc, 0);
+    for (let index = 1; index < setArc.steps.length; index += 1) {
+      const delayMs = Math.max(0, (setArc.steps[index]!.atMinute - offset) * 60_000);
+      setArcTimersRef.current.push(window.setTimeout(() => applySetArcStep(setArc, index), delayMs));
+    }
+    setNotice(`${setArc.title} running · ${setArc.steps.length} steps over ${setArc.durationMinutes} minutes.`);
+  }, [applySetArcStep, setArc, stopSetArc]);
+
+  useEffect(() => () => stopSetArc(false), [stopSetArc]);
+
+  const generateSetArc = useCallback(async () => {
+    if (setArcBusy) return;
+    setSetArcBusy(true);
+    stopSetArc(false);
+    const styleIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
+    const sceneIds = VISUAL_SCENES.map((scene) => scene.id);
+    try {
+      if (cognitumStatus.signedIn && cognitumStatus.capabilities.includes("autopilot")) {
+        const arc = await generateCognitumSetArc(setArcDuration, setArcDirection.trim(), styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("cognitum");
+        setNotice(`${arc.title} planned by Cognitum · ${arc.steps.length} steps. Review, then RUN ARC.`);
+      } else {
+        const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("local");
+        setNotice(`${arc.title} planned locally · sign in to Cognitum for AI-directed arcs.`);
+      }
+    } catch (error) {
+      const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+      setSetArc(arc);
+      setSetArcSource("local");
+      setNotice(`${error instanceof Error ? error.message : "Cognitum planning failed"} — local arc planned instead.`);
+    } finally {
+      setSetArcBusy(false);
+    }
+  }, [cognitumStatus.capabilities, cognitumStatus.signedIn, customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
+
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
@@ -3243,6 +3322,43 @@ export function App() {
                   </div>
                 </>
               )}
+              <section className="set-arc" aria-label="Set arc autopilot">
+                <header>
+                  <span>SET ARC AUTOPILOT</span>
+                  <b>{setArcRunning ? "RUNNING" : setArc ? setArcSource.toUpperCase() : "IDLE"}</b>
+                </header>
+                <div className="set-arc-controls">
+                  <select value={setArcDuration} onChange={(event) => setSetArcDuration(Number(event.target.value))} disabled={setArcRunning} aria-label="Set length in minutes">
+                    {[30, 45, 60, 75, 90].map((minutes) => <option key={minutes} value={minutes}>{minutes} MIN</option>)}
+                  </select>
+                  <input
+                    value={setArcDirection}
+                    maxLength={600}
+                    placeholder="Optional direction: warehouse night, one ambient valley…"
+                    onChange={(event) => setSetArcDirection(event.target.value)}
+                    disabled={setArcRunning}
+                    aria-label="Set arc direction"
+                  />
+                </div>
+                <div className="set-arc-actions">
+                  <button type="button" onClick={() => void generateSetArc()} disabled={setArcBusy || setArcRunning}>
+                    {setArcBusy ? "PLANNING…" : "PLAN ARC"}
+                  </button>
+                  {setArc && !setArcRunning && <button type="button" className="primary" onClick={runSetArc}>RUN ARC</button>}
+                  {setArcRunning && <button type="button" className="danger" onClick={() => stopSetArc()}>STOP ARC</button>}
+                </div>
+                {setArc && (
+                  <ol className="set-arc-timeline">
+                    {setArc.steps.map((step, index) => (
+                      <li key={index} className={index === setArcStepIndex ? "active" : ""}>
+                        <b>{Math.round(step.atMinute)}′</b>
+                        <span>{lyriaRealtimeStyleById(step.styleId).label} · {VISUAL_SCENES.find((scene) => scene.id === step.visualScene)?.name ?? step.visualScene} · {step.bpm} BPM</span>
+                        <em>{step.note}</em>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
             </section>
           ))}
 
