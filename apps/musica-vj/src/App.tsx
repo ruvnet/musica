@@ -121,11 +121,13 @@ import {
 import { SocialRecorder, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
 import { RestreamBroadcaster, getRestreamStatus, type RestreamSource, type RestreamStatus } from "./export/RestreamBroadcaster";
 import {
+  DEFAULT_BLOOM_SETTINGS,
   DEFAULT_VISUAL_COLOR_CONTROLS,
   VISUAL_ANIMATION_STYLES,
   VISUAL_COLOR_PALETTES,
   VisualEngine,
   normalizeAnimationStyle,
+  type BloomSettings,
   normalizeVisualColorControls,
   type RenderStats,
   type VisualAnimationStyle,
@@ -204,6 +206,7 @@ type StudioPanelId =
   | "visual-reactivity"
   | "visual-macros"
   | "visual-temporal"
+  | "visual-advanced"
   | "audio-lyria"
   | "audio-fx"
   | "cognitum-ai"
@@ -1768,6 +1771,22 @@ export function App() {
   const [visualMoodBusy, setVisualMoodBusy] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState(0);
 
+  const [bloomSettings, setBloomSettings] = useState<BloomSettings>({ ...DEFAULT_BLOOM_SETTINGS });
+  const [feedbackBoost, setFeedbackBoost] = useState(0);
+
+  const changeBloomSetting = useCallback((key: keyof BloomSettings, value: number) => {
+    setBloomSettings((current) => {
+      const next = { ...current, [key]: value };
+      visualRef.current?.setBloomSettings(next);
+      return next;
+    });
+  }, []);
+
+  const changeFeedbackBoost = useCallback((value: number) => {
+    setFeedbackBoost(value);
+    visualRef.current?.setFeedbackBoost(value);
+  }, []);
+
   useEffect(() => {
     void memoryCount().then(setMemoryEntries);
   }, [visualMoodBusy, fxMoodBusy]);
@@ -2982,11 +3001,31 @@ export function App() {
                     step="0.01"
                     value={temporalControls[key]}
                     onChange={(event) => changeTemporalControl(key, Number(event.target.value))}
+
                   />
                 </label>
               ))}
             </section>
           ))}
+          {renderStudioPanel("visual-advanced", "ADVANCED VISUALS", `${Math.round(bloomSettings.strength * 100)} GLOW`, (
+            <section className="advanced-visuals" aria-label="Advanced visual controls">
+              {([
+                ["strength", "GLOW", 2.5],
+                ["radius", "RADIUS", 1.5],
+                ["threshold", "THRESH", 1],
+              ] as const).map(([key, label, max]) => (
+                <label key={key} className="control-block">
+                  <span><b>{label}</b><em>{Math.round(bloomSettings[key] * 100)}</em></span>
+                  <input type="range" min="0" max={max} step="0.01" value={bloomSettings[key]} onChange={(event) => changeBloomSetting(key, Number(event.target.value))} />
+                </label>
+              ))}
+              <label className="control-block" title="Frame-feedback echo floor, independent of the TRAIL knob">
+                <span><b>ECHO</b><em>{Math.round(feedbackBoost * 100)}</em></span>
+                <input type="range" min="0" max="1" step="0.01" value={feedbackBoost} onChange={(event) => changeFeedbackBoost(Number(event.target.value))} />
+              </label>
+            </section>
+          ))}
+
         </aside>
 
         <section className="performance-column">

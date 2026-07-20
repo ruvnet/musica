@@ -143,6 +143,28 @@ export interface FeedbackResponse {
   rotate: number;
 }
 
+export interface BloomSettings {
+  strength: number;
+  radius: number;
+  threshold: number;
+}
+
+export const DEFAULT_BLOOM_SETTINGS: Readonly<BloomSettings> = Object.freeze({
+  strength: 0.72,
+  radius: 0.86,
+  threshold: 0.18,
+});
+
+export function normalizeBloomSettings(settings: Partial<BloomSettings>): BloomSettings {
+  const bounded = (value: number | undefined, fallback: number, maximum: number) =>
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(maximum, value)) : fallback;
+  return {
+    strength: bounded(settings.strength, DEFAULT_BLOOM_SETTINGS.strength, 2.5),
+    radius: bounded(settings.radius, DEFAULT_BLOOM_SETTINGS.radius, 1.5),
+    threshold: bounded(settings.threshold, DEFAULT_BLOOM_SETTINGS.threshold, 1),
+  };
+}
+
 export function mapFeedbackResponse(trail: number, motion: number, beatPulse: number, morph: number): FeedbackResponse {
   const boundedTrail = Math.max(0, Math.min(1, trail));
   const boundedMotion = Math.max(0, Math.min(1, motion));
@@ -380,6 +402,8 @@ export class VisualEngine {
   private readonly volumetricGroup = new THREE.Group();
   private readonly afterimageGroup = new THREE.Group();
   private readonly floorGroup = new THREE.Group();
+  private readonly bloomPass: UnrealBloomPass;
+  private feedbackBoost = 0;
   private readonly scopeGroup = new THREE.Group();
   private readonly scopeLines: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
   private scopeSpikes?: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
@@ -504,7 +528,8 @@ export class VisualEngine {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.feedbackPass = new FeedbackPass(Math.max(1, size.x), Math.max(1, size.y));
     this.composer.addPass(this.feedbackPass);
-    this.composer.addPass(new UnrealBloomPass(size, 0.72, 0.86, 0.18));
+    this.bloomPass = new UnrealBloomPass(size, 0.72, 0.86, 0.18);
+    this.composer.addPass(this.bloomPass);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas.parentElement ?? canvas);
@@ -609,6 +634,29 @@ export class VisualEngine {
     return { ...this.temporal };
   }
 
+  setBloomSettings(settings: Partial<BloomSettings>): void {
+    const normalized = normalizeBloomSettings({ ...this.getBloomSettings(), ...settings });
+    this.bloomPass.strength = normalized.strength;
+    this.bloomPass.radius = normalized.radius;
+    this.bloomPass.threshold = normalized.threshold;
+  }
+
+  getBloomSettings(): BloomSettings {
+    return {
+      strength: this.bloomPass.strength,
+      radius: this.bloomPass.radius,
+      threshold: this.bloomPass.threshold,
+    };
+  }
+
+  setFeedbackBoost(value: number): void {
+    this.feedbackBoost = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  }
+
+  getFeedbackBoost(): number {
+    return this.feedbackBoost;
+  }
+
   setAnimationStyle(style: VisualAnimationStyle): void {
     this.animationStyle = normalizeAnimationStyle(style);
     const styleFactors = this.animationStyleFactors();
@@ -698,7 +746,7 @@ export class VisualEngine {
     this.updateKineticField(time, response, low, mid, high, style);
     this.updateScope(time, metrics, response, style);
     const feedback = mapFeedbackResponse(this.temporal.trail, this.artDirection.motion, beatPulse, this.temporal.morph);
-    this.feedbackPass.damp = feedback.damp;
+    this.feedbackPass.damp = Math.max(feedback.damp, this.feedbackBoost * 0.94);
     this.feedbackPass.zoom = feedback.zoom;
     this.feedbackPass.rotate = feedback.rotate;
     this.core.rotation.x = time * 0.21 * style.coreSpin + mid * 0.4;

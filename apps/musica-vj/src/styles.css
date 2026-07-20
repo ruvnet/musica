@@ -869,3 +869,4 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
   .dj-widget-grid { grid-template-columns: 1fr; }
   .dj-widget-grid > .wide { grid-column: auto; }
 }
+.advanced-visuals { display: grid; gap: 9px; }
