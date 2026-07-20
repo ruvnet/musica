@@ -16,13 +16,28 @@ The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop st
 
 | Layer | What Musica does now |
 |---|---|
-| **Agentic direction** | Detailed local Auto DJ direction works by default. Optional, disabled-by-default Meta-LLM can enrich each 32-bar single-stream phrase and plan a complete set state when explicitly enabled. |
-| **Music performance** | Lyria RealTime is the live output: the main arrangement is the only deck enabled at startup, while beat and vocalization decks connect on demand at the next shared bar with per-stream volume, mute, pitch, and beat alignment. |
-| **Visual performance** | Eight visual-bank scenes, five VJ presets, audio-reactive Three.js systems, adaptive quality, scene color themes, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
+| **Agentic direction** | Local planners work by default; an optional Cognitum One sign-in (OAuth 2.1 + PKCE) unlocks AI set-arc planning (30-90 min timelines across styles, scenes, decks, and FX), Auto DJ phrase briefs with memory walking a musical adjacency graph, mood-to-FX and mood-to-look direction, AI style packs, AI vocal guidance, and AI-generated parametric plugin scenes (ADR-175/176/177). Used directions are learned locally in IndexedDB. |
+| **Music performance** | Lyria RealTime is the live output: main, beat, and vocal decks with bar-synced connection, per-stream volume/pitch/nudge, 20 detailed style presets plus user custom styles, a seven-effect master FX rack (flanger/phaser/drive/crush/sweep/reverb/echo with per-effect editors, locks, and generators), a two-stage mastering chain, synthesized SFX pads, and bar-synced loop pads. |
+| **Visual performance** | Nine scenes including the Winamp-style Retro Scope, AI plugin scenes, MilkDrop-style frame feedback with a dedicated echo floor, bloom controls, per-scene rendering characters, spectral-flux onset reactivity, five VJ presets, shuffle-look randomizer, and temporal controls for speed, strobe, trail, morph, camera, and phase. |
 | **Live control** | Keyboard, `Shift+1` through `Shift+4` multi-track deck scenes, magnetically snapping customizable DJ windows, F13-F24 shortcuts, Logitech/Loupedeck Actions SDK bridge, and browser MIDI mapping for pads, scenes, templates, color looks, macros, and temporal controls. |
 | **AI providers** | Rust-only governed boundaries for Gemini/Lyria music generation and Cognitum Meta-LLM planning; tokens stay out of React bundles and are checked by CI secret canaries. |
 | **Musica core** | STFT/ISTFT, graph mincut separation, sparse Lanczos, six-stem separation, streaming separation, HearMusica compressor/limiter/mixer/filter blocks, WAV I/O, visualization helpers, and transcription hooks. |
 | **Release path** | GitHub Actions build frontend plus unsigned macOS `.app`/`.dmg`, Linux `.deb`/AppImage, Windows NSIS artifacts, then gate release publishing behind the `ci-guard` job. |
+
+## v0.3.0 — Meta-LLM Performance Layer
+
+The [v0.3.0 release](https://github.com/ruvnet/musica/releases/tag/v0.3.0) ships the AI performance layer end to end. Everything degrades gracefully: with no account, every feature falls back to deterministic local planners, keyword mappings, and the operator's remembered history.
+
+| Capability | Where | Backed by |
+|---|---|---|
+| Set-arc autopilot | COGNITUM AI panel | `cognitum_set_arc` + local energy-curve planner |
+| Auto DJ phrase briefs with memory | Auto DJ | `cognitum_autodj_brief` + musical adjacency graph |
+| Mood-to-FX automation (lock-aware) | STREAM FX · AI MOOD | `cognitum_fx_direction` + curated local shapes |
+| AI visual direction | VJ PRESETS · AI LOOK | `cognitum_visual_direction` + keyword looks |
+| AI plugin scenes (pure data, never code) | VJ PRESETS · AI SCENE | `cognitum_visual_plugin` (ADR-177 tier 1) |
+| AI style packs | COGNITUM AI panel | `cognitum_style_pack` → editable custom styles |
+| AI vocal guidance | VOCALIZE dialog | `cognitum_vocal_guidance` + style-family templates |
+| Performance memory (LEARNING) | automatic | IndexedDB similarity recall (ADR-176) |
 
 ## Web + WASM Direction
 
