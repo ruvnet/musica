@@ -397,6 +397,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, lyrics, orchestral instruments, realistic drums, guitar, lo-fi tape, muddy bass, harsh piercing leads, random atonal runs, tempo drift, long intro, fade out", weight: -1.12 },
     ],
     config: { bpm: 140, density: 0.6, brightness: 0.7, guidance: 5.4, scale: "C_MAJOR_A_MINOR" },
+    streamFx: { crush: 0.22 },
   },
   {
     id: "lofi",
