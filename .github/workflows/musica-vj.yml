@@ -128,6 +128,8 @@ jobs:
           dotnet-version: 8.0.x
       - run: npm ci
       - run: npm run verify:assets
+      - name: Stage bundled FFmpeg sidecar
+        run: node scripts/setup-ffmpeg-sidecar.mjs
       - run: dotnet test apps/musica-vj/logitech/tests/MusicaVj.Logitech.Core.Tests/MusicaVj.Logitech.Core.Tests.csproj --configuration Release
         working-directory: .
       - run: cargo generate-lockfile
@@ -255,6 +257,8 @@ jobs:
             pkg-config
       - run: npm ci
       - run: npm run verify:assets
+      - name: Stage bundled FFmpeg sidecar
+        run: node scripts/setup-ffmpeg-sidecar.mjs
       - name: Generate native icon bundles from the tracked source PNG
         run: npm run tauri icon src-tauri/icons/128x128@2x.png
       - run: cargo clippy -p musica-vj --all-targets -- -D warnings
@@ -341,6 +345,8 @@ jobs:
           components: clippy
       - run: npm ci
       - run: npm run verify:assets
+      - name: Stage bundled FFmpeg sidecar
+        run: node scripts/setup-ffmpeg-sidecar.mjs
       - run: cargo clippy -p musica-vj --all-targets -- -D warnings
         working-directory: .
       - run: cargo test -p musica-vj
