@@ -2737,7 +2737,7 @@ export function App() {
           firstRun={onboardingFirstRun}
           preferences={onboardingPreferences}
           lyriaAvailable={lyriaRealtimeStatus.available}
-          lyriaStatusLabel={lyriaRealtimeStatus.available ? "LYRIA REALTIME READY" : lyriaRealtimeStatus.provider === "checking" ? "CHECKING LYRIA" : "LYRIA OFFLINE"}
+          lyriaStatusLabel={lyriaRealtimeStatus.available ? "LYRIA REALTIME READY" : lyriaRealtimeStatus.provider === "checking" ? "CHECKING LYRIA" : lyriaRealtimeStatus.reason ? `LYRIA OFFLINE · ${lyriaRealtimeStatus.reason.toUpperCase()}` : "LYRIA OFFLINE"}
           onChange={setOnboardingPreferences}
           cognitum={{ signedIn: cognitumStatus.signedIn, pending: cognitumStatus.pending, account: cognitumStatus.account }}
           onCognitumSignIn={() => void handleCognitumSignIn()}
