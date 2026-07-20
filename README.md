@@ -5,11 +5,11 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db)](apps/musica-vj/src-tauri/tauri.conf.json)
 [![Three.js](https://img.shields.io/badge/Three.js-WebGL2-111111)](apps/musica-vj/src/visual/VisualEngine.ts)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](Cargo.toml)
-[![Release](https://img.shields.io/badge/release-v0.4.0-b06bf2)](https://github.com/ruvnet/musica/releases/tag/musica-vj-v0.4.0)
+[![Release](https://img.shields.io/badge/release-v0.4.1-b06bf2)](https://github.com/ruvnet/musica/releases/tag/musica-vj-v0.4.0)
 
-![Musica VJ Cognitum One sign-in gate: oversized gradient wordmark over an animated wave field, a card with a live wave ribbon, sign-in button, and a running sign-in log](apps/musica-vj/assets/screenshots/musica-vj-signin.png)
+![Musica VJ studio: the live Spectral Field visual center stage, a Visual Bank of nine scenes and VJ presets on the left, and the Lyria RealTime deck stack — Main, Sequence, Vocalize, genre grid, and BPM/density/brightness controls — on the right, over a 16-step Lyria beat with SFX and loop lanes](apps/musica-vj/assets/screenshots/musica-vj-studio.png)
 
-_The required first step: sign in with Cognitum One and Lyria audio just works — no bring-your-own key. An animated wave field and live sign-in log sit under the oversized gradient wordmark; the gate is skipped once you're signed in. See the [welcome/session screen](apps/musica-vj/assets/screenshots/musica-vj-welcome.png) and the [Neon Fold performance view](apps/musica-vj/assets/screenshots/musica-vj-neon-fold.png) for the live studio._
+_The live studio: audio-reactive Three.js visuals center stage, the Visual Bank and VJ presets on the left, and the synchronized Lyria RealTime decks (Main / Sequence / Vocalize) with the genre grid on the right — over a 16-step Lyria beat with SFX and loop lanes, MIDI + MX Console control, and one-click capture. The first run opens with the [Cognitum One sign-in gate](apps/musica-vj/assets/screenshots/musica-vj-signin.png) — sign in and Lyria audio just works, no bring-your-own key._
 
 Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
 
