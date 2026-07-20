@@ -17,7 +17,7 @@ Adopt "sign in, and Lyria just works, metered to your account" as the target mod
 
 ### Protocol reality (the constraint)
 
-- **Meta-LLM / text features** — already on the metered plane. Nothing to do; this ADR only records that they are the proof the pattern works.
+- **Meta-LLM / text features** — already on the metered plane, and now first-class through meta-proxy. `meta-proxy` (per its README) is a local loopback, OpenAI-compatible text data plane with routes for `chat`, `messages`, and a consent-gated `sponsor` plane — no Lyria, music, or WebSocket surface. Musica's Cognitum text commands accept a static gateway bearer (`MUSICA_COGNITUM_BEARER`) and base URL (`MUSICA_COGNITUM_API_BASE`), so pointing them at a running meta-proxy loopback lights up the entire COGNITUM AI panel on every platform with **no browser sign-in** (implemented; the OAuth flow remains the default when no bearer is set).
 - **Lyria generation (batch)** — REST request/response; a Cognitum `/v1/lyria/generate`-style metered passthrough is straightforward for the proxy to add. Musica's `creative_provider` gains a "cognitum" provider kind that sends the OAuth bearer token instead of a Gemini key.
 - **Lyria RealTime (live)** — this is the hard part. It is a **bidirectional audio WebSocket** (`wss://…/BidiGenerateMusic`), not a chat completion. Metering it requires Cognitum/meta-proxy to expose a WebSocket passthrough that (a) authenticates the OAuth token, (b) opens the upstream Google socket with Cognitum's own Google credential, (c) relays PCM frames, and (d) meters by streamed audio-seconds. This is new proxy surface, not a config change.
 

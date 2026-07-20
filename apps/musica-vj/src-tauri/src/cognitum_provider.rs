@@ -15,6 +15,11 @@ use tauri::{Manager, State};
 
 const AUTH_BASE_ENV: &str = "MUSICA_COGNITUM_AUTH_BASE";
 const API_BASE_ENV: &str = "MUSICA_COGNITUM_API_BASE";
+// Static bearer for a meta-proxy / self-hosted gateway. When set, all Cognitum
+// AI commands use it directly and skip the browser OAuth flow — the whole
+// COGNITUM AI panel works on every platform with no sign-in, routed through the
+// configured API base (e.g. a loopback meta-proxy).
+const BEARER_ENV: &str = "MUSICA_COGNITUM_BEARER";
 const CLIENT_ID_ENV: &str = "MUSICA_COGNITUM_CLIENT_ID";
 const SCOPES_ENV: &str = "MUSICA_COGNITUM_SCOPES";
 const DEFAULT_AUTH_BASE: &str = "https://auth.cognitum.one";
@@ -163,6 +168,14 @@ fn oauth_scopes() -> String {
     env::var(SCOPES_ENV).unwrap_or_else(|_| DEFAULT_OAUTH_SCOPES.into())
 }
 
+/// A configured static bearer (meta-proxy / gateway) if present and non-empty.
+fn static_bearer() -> Option<String> {
+    env::var(BEARER_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn random_url_safe(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
     rand::thread_rng().fill_bytes(&mut buffer);
@@ -262,6 +275,24 @@ async fn fetch_capabilities(client: &Client, token: &str) -> (Option<String>, Ve
 
 #[tauri::command]
 pub(crate) fn cognitum_status(provider: State<'_, CognitumProvider>) -> CognitumStatus {
+    // A static gateway bearer (meta-proxy) makes the whole AI panel available on
+    // every platform with no browser sign-in.
+    if static_bearer().is_some() {
+        return CognitumStatus {
+            signed_in: true,
+            pending: false,
+            account: Some("gateway".into()),
+            capabilities: KNOWN_CAPABILITIES
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
+            auth_host: Url::parse(&api_base())
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "meta-proxy".into()),
+            reason: None,
+        };
+    }
     let state = provider.state.lock().expect("cognitum state");
     let pending = state
         .pending_started_at
@@ -422,6 +453,10 @@ fn store_token_response(
 /// identity service rotates refresh tokens with reuse detection, so the stored
 /// refresh token is consumed exactly once and replaced (or the session ends).
 async fn fresh_access_token(provider: &State<'_, CognitumProvider>) -> Result<String, String> {
+    // A static gateway bearer (meta-proxy) short-circuits the OAuth flow.
+    if let Some(bearer) = static_bearer() {
+        return Ok(bearer);
+    }
     let (token, refresh) = {
         let mut state = provider.state.lock().expect("cognitum state");
         let token = state

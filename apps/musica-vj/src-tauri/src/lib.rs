@@ -42,6 +42,12 @@ const PROVIDER_CONFIG_TEMPLATE: &str = "\
 # Cognitum Meta-LLM env fallback (optional; OAuth sign-in is preferred):
 # MUSICA_META_LLM_ENABLED=true
 # MUSICA_META_LLM_API_TOKEN=your_token_here
+#
+# Route all AI text/planning features through a local meta-proxy (or any
+# OpenAI-compatible gateway) with no browser sign-in — works on every platform:
+# MUSICA_COGNITUM_API_BASE=http://127.0.0.1:8787
+# MUSICA_COGNITUM_BEARER=your_meta_proxy_token
+# (Lyria audio still needs GEMINI_API_KEY above; meta-proxy is a text-LLM plane.)
 ";
 
 /// Loads `KEY=value` lines from a provider config file into the process
