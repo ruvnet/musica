@@ -57,12 +57,27 @@ export function DjControlWindow({ profile }: { profile: DjControlProfileId }) {
   const [connected, setConnected] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const [layout, setLayout] = useState<DjControlWidgetLayout[]>(() => loadLayout(profile));
-  const allStyles = useMemo(() => {
+  const readAllStyles = () => {
     try {
       return [...LYRIA_REALTIME_STYLE_PRESETS, ...loadCustomLyriaStyles(window.localStorage.getItem(CUSTOM_LYRIA_STYLES_STORAGE_KEY))];
     } catch {
       return [...LYRIA_REALTIME_STYLE_PRESETS];
     }
+  };
+  const [allStyles, setAllStyles] = useState(readAllStyles);
+  useEffect(() => {
+    // Custom styles created in the main window arrive via the cross-window
+    // storage event; refresh on focus as a fallback for webviews that miss it.
+    const refresh = () => setAllStyles(readAllStyles());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === CUSTOM_LYRIA_STYLES_STORAGE_KEY) refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   useEffect(() => {
