@@ -8,17 +8,17 @@ mod restream_provider;
 
 use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,
-    cognitum_autodj_brief, cognitum_fx_direction, cognitum_set_arc, cognitum_sign_out,
-    cognitum_status, cognitum_style_pack, cognitum_visual_direction, cognitum_visual_plugin,
-    cognitum_vocal_guidance, CognitumProvider,
+    cognitum_autodj_brief, cognitum_fx_direction, cognitum_lyria_credential, cognitum_set_arc,
+    cognitum_sign_out, cognitum_status, cognitum_style_pack, cognitum_visual_direction,
+    cognitum_visual_plugin, cognitum_vocal_guidance, CognitumProvider,
 };
 use creative_provider::{
     creative_cancel_generation, creative_download_audio, creative_generate,
     creative_generation_status, creative_provider_status, CreativeProvider,
 };
 use lyria_realtime_provider::{
-    lyria_realtime_poll_audio, lyria_realtime_start, lyria_realtime_status, lyria_realtime_stop,
-    lyria_realtime_update, LyriaRealtimeProvider,
+    lyria_realtime_configure_key, lyria_realtime_poll_audio, lyria_realtime_start,
+    lyria_realtime_status, lyria_realtime_stop, lyria_realtime_update, LyriaRealtimeProvider,
 };
 use meta_llm_provider::{meta_llm_plan, meta_llm_status, MetaLlmProvider};
 use restream_provider::{
@@ -26,13 +26,42 @@ use restream_provider::{
 };
 use tauri::Manager;
 
+const PROVIDER_CONFIG_TEMPLATE: &str = "\
+# Musica VJ provider configuration.
+# Restart Musica after editing. Lines are KEY=value; # starts a comment.
+#
+# Google Lyria / Gemini (live AI music + generation). Both lines are required
+# for the Start Session button to activate:
+# MUSICA_LYRIA_REALTIME_ENABLED=true
+# GEMINI_API_KEY=your_gemini_api_key_here
+#
+# Batch song/loop export (optional):
+# MUSICA_CREATIVE_ENABLED=true
+# MUSICA_CREATIVE_PROVIDER=lyria_3_pro
+#
+# Cognitum Meta-LLM env fallback (optional; OAuth sign-in is preferred):
+# MUSICA_META_LLM_ENABLED=true
+# MUSICA_META_LLM_API_TOKEN=your_token_here
+#
+# Route all AI text/planning features through a local meta-proxy (or any
+# OpenAI-compatible gateway) with no browser sign-in — works on every platform:
+# MUSICA_COGNITUM_API_BASE=http://127.0.0.1:8787
+# MUSICA_COGNITUM_BEARER=your_meta_proxy_token
+# (Lyria audio still needs GEMINI_API_KEY above; meta-proxy is a text-LLM plane.)
+#
+# Sign in with Cognitum One and get Lyria audio with no GEMINI_API_KEY: point at
+# the credential broker and just sign in from the app (ADR-179):
+# MUSICA_LYRIA_BROKER_URL=https://your-lyria-broker-url
+";
+
 /// Loads `KEY=value` lines from a provider config file into the process
 /// environment, without overwriting variables already set by the shell.
 /// Only recognized `GEMINI_API_KEY` / `MUSICA_*` / `GOOGLE_*` keys are applied,
 /// so the file cannot inject arbitrary environment. Missing file is fine.
-fn load_provider_config(path: &std::path::Path) {
+/// Returns true if the file existed and was read.
+fn load_provider_config(path: &std::path::Path) -> bool {
     let Ok(contents) = std::fs::read_to_string(path) else {
-        return;
+        return false;
     };
     for raw_line in contents.lines() {
         let line = raw_line.trim();
@@ -57,6 +86,38 @@ fn load_provider_config(path: &std::path::Path) {
             std::env::set_var(key, value);
         }
     }
+    true
+}
+
+/// Loads provider config from every supported location so the packaged app is
+/// configurable without a shell. Precedence (first value for a key wins, and
+/// real process env always beats all of them):
+///   1. `MUSICA_ENV_FILE` — explicit path override
+///   2. `providers.env` next to the executable — drop-in-beside-the-app
+///   3. `<app config dir>/providers.env` — the canonical writable location
+///
+/// On first run, creates the config dir and writes a self-documenting
+/// `providers.env.example` there so the user can see exactly where and what to
+/// configure.
+fn load_all_provider_config(config_dir: Option<std::path::PathBuf>) {
+    if let Some(path) = std::env::var_os("MUSICA_ENV_FILE") {
+        load_provider_config(std::path::Path::new(&path));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            load_provider_config(&dir.join("providers.env"));
+        }
+    }
+    if let Some(dir) = config_dir {
+        let loaded = load_provider_config(&dir.join("providers.env"));
+        if !loaded {
+            let _ = std::fs::create_dir_all(&dir);
+            let example = dir.join("providers.env.example");
+            if !example.exists() {
+                let _ = std::fs::write(&example, PROVIDER_CONFIG_TEMPLATE);
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -73,9 +134,7 @@ pub fn run() {
             // config file from the app config dir first so the desktop build is
             // configurable without a terminal. Existing process env always wins,
             // so the dev shell workflow is unchanged.
-            if let Ok(config_dir) = app.path().app_config_dir() {
-                load_provider_config(&config_dir.join("providers.env"));
-            }
+            load_all_provider_config(app.path().app_config_dir().ok());
             let asset_root = app.path().app_data_dir()?;
             app.manage(CognitumProvider::default());
             app.manage(CreativeProvider::from_env(asset_root));
@@ -93,6 +152,7 @@ pub fn run() {
             cognitum_auth_start,
             cognitum_autodj_brief,
             cognitum_fx_direction,
+            cognitum_lyria_credential,
             cognitum_visual_direction,
             cognitum_visual_plugin,
             cognitum_vocal_guidance,
@@ -106,6 +166,7 @@ pub fn run() {
             creative_download_audio,
             creative_cancel_generation,
             lyria_realtime_status,
+            lyria_realtime_configure_key,
             lyria_realtime_start,
             lyria_realtime_update,
             lyria_realtime_stop,

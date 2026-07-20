@@ -60,6 +60,23 @@ export async function completeCognitumManualSignIn(code: string): Promise<void> 
   await invoke("cognitum_auth_manual_complete", { code });
 }
 
+/// Exchanges the current Cognitum sign-in for a short-lived Lyria key at the
+/// configured broker and injects it into the RealTime provider, so a signed-in
+/// user gets live audio with no bring-your-own key (ADR-179). Silently a no-op
+/// when no broker is configured or the user is not signed in; returns whether a
+/// key was injected so callers can refresh provider status.
+export async function activateCognitumLyria(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const key = await invoke<string>("cognitum_lyria_credential");
+    if (!key) return false;
+    await invoke("lyria_realtime_configure_key", { key });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function generateCognitumStylePack(description: string): Promise<CognitumStylePack> {
   if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
   return invoke<CognitumStylePack>("cognitum_style_pack", { description });

@@ -15,8 +15,22 @@ use tauri::{Manager, State};
 
 const AUTH_BASE_ENV: &str = "MUSICA_COGNITUM_AUTH_BASE";
 const API_BASE_ENV: &str = "MUSICA_COGNITUM_API_BASE";
+// Static bearer for a meta-proxy / self-hosted gateway. When set, all Cognitum
+// AI commands use it directly and skip the browser OAuth flow — the whole
+// COGNITUM AI panel works on every platform with no sign-in, routed through the
+// configured API base (e.g. a loopback meta-proxy).
+const BEARER_ENV: &str = "MUSICA_COGNITUM_BEARER";
 const CLIENT_ID_ENV: &str = "MUSICA_COGNITUM_CLIENT_ID";
 const SCOPES_ENV: &str = "MUSICA_COGNITUM_SCOPES";
+// Lyria credential broker: an endpoint that, given a valid Cognitum bearer,
+// returns a short-lived Lyria/Gemini key so signed-in users get "sign in and
+// Lyria works" with no BYO key (ADR-179).
+const LYRIA_BROKER_ENV: &str = "MUSICA_LYRIA_BROKER_URL";
+// The deployed Cognitum org broker (ADR-179, cognitum-one/api
+// functions/lyria-broker). Baked in so a shipped build lights up Lyria purely
+// from signing in, with no config; override via MUSICA_LYRIA_BROKER_URL.
+const DEFAULT_LYRIA_BROKER_URL: &str =
+    "https://us-central1-cognitum-20260110.cloudfunctions.net/lyriaBroker";
 const DEFAULT_AUTH_BASE: &str = "https://auth.cognitum.one";
 const DEFAULT_API_BASE: &str = "https://api.cognitum.one";
 // The registered native client from identity seed migration 0014, shared with
@@ -163,6 +177,14 @@ fn oauth_scopes() -> String {
     env::var(SCOPES_ENV).unwrap_or_else(|_| DEFAULT_OAUTH_SCOPES.into())
 }
 
+/// A configured static bearer (meta-proxy / gateway) if present and non-empty.
+fn static_bearer() -> Option<String> {
+    env::var(BEARER_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn random_url_safe(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
     rand::thread_rng().fill_bytes(&mut buffer);
@@ -262,6 +284,24 @@ async fn fetch_capabilities(client: &Client, token: &str) -> (Option<String>, Ve
 
 #[tauri::command]
 pub(crate) fn cognitum_status(provider: State<'_, CognitumProvider>) -> CognitumStatus {
+    // A static gateway bearer (meta-proxy) makes the whole AI panel available on
+    // every platform with no browser sign-in.
+    if static_bearer().is_some() {
+        return CognitumStatus {
+            signed_in: true,
+            pending: false,
+            account: Some("gateway".into()),
+            capabilities: KNOWN_CAPABILITIES
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
+            auth_host: Url::parse(&api_base())
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_else(|| "meta-proxy".into()),
+            reason: None,
+        };
+    }
     let state = provider.state.lock().expect("cognitum state");
     let pending = state
         .pending_started_at
@@ -278,6 +318,53 @@ pub(crate) fn cognitum_status(provider: State<'_, CognitumProvider>) -> Cognitum
             .unwrap_or_else(|| "cognitum.one".into()),
         reason: state.last_error.clone(),
     }
+}
+
+fn lyria_broker_url() -> Option<String> {
+    let url = env::var(LYRIA_BROKER_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_LYRIA_BROKER_URL.to_string());
+    Some(url).filter(|value| value.starts_with("https://"))
+}
+
+#[derive(Deserialize)]
+struct BrokerResponse {
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    key: Option<String>,
+}
+
+/// Exchanges the current Cognitum bearer for a short-lived Lyria API key at the
+/// configured broker. Returns the key so the caller can inject it into the
+/// RealTime/creative providers. Errors (no broker, not signed in, rejected) are
+/// non-fatal — the app keeps its env/BYO-key behavior.
+#[tauri::command]
+pub(crate) async fn cognitum_lyria_credential(
+    provider: State<'_, CognitumProvider>,
+) -> Result<String, String> {
+    let url = lyria_broker_url().ok_or_else(|| "No Lyria broker configured".to_string())?;
+    let token = fresh_access_token(&provider).await?;
+    let client = http_client()?;
+    let response = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|_| "Lyria broker request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Lyria broker rejected the request".into());
+    }
+    let broker: BrokerResponse = read_bounded_json(response).await?;
+    let key = broker
+        .api_key
+        .or(broker.key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| value.len() >= 20 && value.len() <= 512)
+        .ok_or_else(|| "Lyria broker returned no usable key".to_string())?;
+    Ok(key)
 }
 
 #[tauri::command]
@@ -422,6 +509,10 @@ fn store_token_response(
 /// identity service rotates refresh tokens with reuse detection, so the stored
 /// refresh token is consumed exactly once and replaced (or the session ends).
 async fn fresh_access_token(provider: &State<'_, CognitumProvider>) -> Result<String, String> {
+    // A static gateway bearer (meta-proxy) short-circuits the OAuth flow.
+    if let Some(bearer) = static_bearer() {
+        return Ok(bearer);
+    }
     let (token, refresh) = {
         let mut state = provider.state.lock().expect("cognitum state");
         let token = state

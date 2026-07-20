@@ -13,6 +13,8 @@ import {
   type SfxKind,
 } from "./audio/AudioEngine";
 import { OnboardingWizard, type OnboardingView } from "./OnboardingWizard";
+import { CognitumGate, type CognitumGateLogEntry } from "./CognitumGate";
+import { isTauri } from "@tauri-apps/api/core";
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
 import {
@@ -105,6 +107,7 @@ import {
   localVocalGuidance,
   localFxDirection,
   localVisualDirection,
+  activateCognitumLyria,
   generateCognitumStylePack,
   getCognitumStatus,
   localSetArc,
@@ -1288,35 +1291,89 @@ export function App() {
   const [aiStyleDescription, setAiStyleDescription] = useState("");
   const [aiStyleBusy, setAiStyleBusy] = useState(false);
 
-  useEffect(() => {
-    void getCognitumStatus().then(setCognitumStatus).catch(() => undefined);
+  // Cognitum sign-in gate: the required first step, shown until the user is
+  // signed in (skipped entirely when already signed in), with a running log.
+  const cognitumSignInAvailable = isTauri();
+  const [cognitumGateSkipped, setCognitumGateSkipped] = useState(false);
+  const [cognitumLog, setCognitumLog] = useState<CognitumGateLogEntry[]>([]);
+  const appendCognitumLog = useCallback((text: string, tone: CognitumGateLogEntry["tone"] = "info") => {
+    const at = new Date().toLocaleTimeString([], { hour12: false });
+    setCognitumLog((current) => {
+      // Skip consecutive duplicates (e.g. React StrictMode double-invokes the
+      // initial status effect in dev) so the log stays clean.
+      const last = current[current.length - 1];
+      if (last && last.text === text) return current;
+      return [...current.slice(-40), { at, text, tone }];
+    });
   }, []);
+
+  useEffect(() => {
+    void getCognitumStatus().then((status) => {
+      setCognitumStatus(status);
+      if (status.signedIn) {
+        appendCognitumLog(`Signed in as ${status.account ?? "your account"}.`, "ok");
+      } else if (!isTauri()) {
+        appendCognitumLog("Running in the browser — sign-in requires the desktop app.", "warn");
+      } else {
+        appendCognitumLog("Ready. Sign in with Cognitum One to begin.");
+      }
+    }).catch(() => undefined);
+  }, [appendCognitumLog]);
 
   useEffect(() => {
     if (!cognitumStatus.pending) return;
     const timer = window.setInterval(() => {
       void getCognitumStatus()
         .then((status) => {
+          const justSignedIn = status.signedIn && !cognitumStatusRef.current.signedIn;
           setCognitumStatus(status);
-          if (status.signedIn) setNotice(`Cognitum One connected${status.account ? ` as ${status.account}` : ""} · SOTA capabilities unlocked.`);
+          if (justSignedIn) {
+            appendCognitumLog(`Connected as ${status.account ?? "your account"}.`, "ok");
+            setNotice(`Cognitum One connected${status.account ? ` as ${status.account}` : ""} · SOTA capabilities unlocked.`);
+          }
         })
         .catch(() => undefined);
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [cognitumStatus.pending]);
+  }, [appendCognitumLog, cognitumStatus.pending]);
+
+  // Once signed in, redeem the Cognitum session for a brokered Lyria key so
+  // live audio works with no bring-your-own key (ADR-179), then refresh the
+  // provider status so the UI reflects the newly-available decks.
+  useEffect(() => {
+    if (!cognitumStatus.signedIn) return;
+    let cancelled = false;
+    appendCognitumLog("Redeeming Lyria credential…");
+    void activateCognitumLyria().then((activated) => {
+      if (cancelled) return;
+      if (activated) {
+        appendCognitumLog("Lyria authorized — live audio enabled.", "ok");
+        void refreshLyriaRealtimeStatus();
+      } else {
+        appendCognitumLog("No brokered Lyria key; using local key if present.", "warn");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendCognitumLog, cognitumStatus.signedIn, refreshLyriaRealtimeStatus]);
 
   const handleCognitumSignIn = useCallback(async () => {
     setCognitumBusy(true);
+    appendCognitumLog("Opening Cognitum One in your browser…");
     try {
       await startCognitumSignIn();
       setNotice("Complete the Cognitum One sign-in in your browser.");
+      appendCognitumLog("Waiting for browser approval…");
       setCognitumStatus((current) => ({ ...current, pending: true, reason: undefined }));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Cognitum sign-in could not start");
+      const message = error instanceof Error ? error.message : "Cognitum sign-in could not start";
+      setNotice(message);
+      appendCognitumLog(message, "warn");
     } finally {
       setCognitumBusy(false);
     }
-  }, []);
+  }, [appendCognitumLog]);
 
   const handleCognitumSignOut = useCallback(async () => {
     await signOutCognitum().catch(() => undefined);
@@ -1329,34 +1386,42 @@ export function App() {
 
   const handleManualSignInStart = useCallback(async () => {
     setCognitumBusy(true);
+    appendCognitumLog("Starting manual (paste-a-code) sign-in…");
     try {
       await startCognitumManualSignIn();
       setManualCodeMode(true);
       setNotice("Approve access in the browser, then paste the CGN- code here.");
+      appendCognitumLog("Approve in the browser, then paste the CGN- code.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Cognitum sign-in could not start");
+      const message = error instanceof Error ? error.message : "Cognitum sign-in could not start";
+      setNotice(message);
+      appendCognitumLog(message, "warn");
     } finally {
       setCognitumBusy(false);
     }
-  }, []);
+  }, [appendCognitumLog]);
 
   const handleManualSignInComplete = useCallback(async () => {
     const code = manualCode.trim();
     if (!code) return;
     setCognitumBusy(true);
+    appendCognitumLog("Exchanging code…");
     try {
       await completeCognitumManualSignIn(code);
       setManualCode("");
       setManualCodeMode(false);
       const status = await getCognitumStatus();
       setCognitumStatus(status);
+      appendCognitumLog(`Connected as ${status.account ?? "your account"}.`, "ok");
       setNotice(`Cognitum One connected${status.account ? ` as ${status.account}` : ""} · SOTA capabilities unlocked.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Cognitum code exchange failed");
+      const message = error instanceof Error ? error.message : "Cognitum code exchange failed";
+      setNotice(message);
+      appendCognitumLog(message, "warn");
     } finally {
       setCognitumBusy(false);
     }
-  }, [manualCode]);
+  }, [appendCognitumLog, manualCode]);
 
   const handleGenerateAiStyle = useCallback(async () => {
     const description = aiStyleDescription.trim();
@@ -2729,15 +2794,37 @@ export function App() {
     );
   };
 
+  const showCognitumGate = !cognitumStatus.signedIn && !cognitumGateSkipped;
+
   return (
     <main className="app-shell">
-      {onboardingView && (
+      {showCognitumGate && (
+        <CognitumGate
+          authHost={cognitumStatus.authHost}
+          pending={cognitumStatus.pending}
+          busy={cognitumBusy}
+          reason={cognitumStatus.reason}
+          log={cognitumLog}
+          manualCodeMode={manualCodeMode}
+          manualCode={manualCode}
+          signInAvailable={cognitumSignInAvailable}
+          onSignIn={() => void handleCognitumSignIn()}
+          onManualStart={() => void handleManualSignInStart()}
+          onManualComplete={() => void handleManualSignInComplete()}
+          onManualCodeChange={setManualCode}
+          onSkip={() => {
+            appendCognitumLog("Continuing without an account — local planners only.", "warn");
+            setCognitumGateSkipped(true);
+          }}
+        />
+      )}
+      {onboardingView && !showCognitumGate && (
         <OnboardingWizard
           view={onboardingView}
           firstRun={onboardingFirstRun}
           preferences={onboardingPreferences}
           lyriaAvailable={lyriaRealtimeStatus.available}
-          lyriaStatusLabel={lyriaRealtimeStatus.available ? "LYRIA REALTIME READY" : lyriaRealtimeStatus.provider === "checking" ? "CHECKING LYRIA" : "LYRIA OFFLINE"}
+          lyriaStatusLabel={lyriaRealtimeStatus.available ? "LYRIA REALTIME READY" : lyriaRealtimeStatus.provider === "checking" ? "CHECKING LYRIA" : lyriaRealtimeStatus.reason ? `LYRIA OFFLINE · ${lyriaRealtimeStatus.reason.toUpperCase()}` : "LYRIA OFFLINE"}
           onChange={setOnboardingPreferences}
           cognitum={{ signedIn: cognitumStatus.signedIn, pending: cognitumStatus.pending, account: cognitumStatus.account }}
           onCognitumSignIn={() => void handleCognitumSignIn()}
