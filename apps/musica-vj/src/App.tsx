@@ -110,6 +110,7 @@ import {
   type CognitumStatus,
   type SetArc,
 } from "./core/cognitum";
+import { memoryCount, recallDirection, recordDirection } from "./core/performanceMemory";
 import {
   loadWorkspaceSettings,
   normalizeWorkspaceSettings,
@@ -574,9 +575,14 @@ export function App() {
     stopFxMood(false);
     const bars = 16;
     try {
-      const direction = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting")
-        ? await generateCognitumFxDirection(mood, bars).catch(() => localFxDirection(mood, bars))
-        : localFxDirection(mood, bars);
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const rememberedFx = cognitumReady ? undefined : await recallDirection("fx-mood", mood);
+      const direction = rememberedFx
+        ? rememberedFx.payload as ReturnType<typeof localFxDirection>
+        : cognitumReady
+          ? await generateCognitumFxDirection(mood, bars).catch(() => localFxDirection(mood, bars))
+          : localFxDirection(mood, bars);
+      if (!rememberedFx) void recordDirection("fx-mood", mood, direction, direction.summary);
       const barMs = (60_000 / Math.max(60, snapshotRef.current.bpm)) * 4;
       for (const move of direction.moves) {
         if (fxLocks[move.effect]) continue;
@@ -1760,19 +1766,28 @@ export function App() {
 
   const [visualMood, setVisualMood] = useState("");
   const [visualMoodBusy, setVisualMoodBusy] = useState(false);
+  const [memoryEntries, setMemoryEntries] = useState(0);
+
+  useEffect(() => {
+    void memoryCount().then(setMemoryEntries);
+  }, [visualMoodBusy, fxMoodBusy]);
 
   const directVisuals = useCallback(async () => {
     const mood = visualMood.trim();
     if (!mood || visualMoodBusy) return;
     setVisualMoodBusy(true);
     try {
-      const direction = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting")
-        ? await generateCognitumVisualDirection(
-            mood,
-            VISUAL_SCENES.map((scene) => scene.id),
-            VISUAL_COLOR_PALETTES.map((palette) => palette.id),
-          ).catch(() => localVisualDirection(mood))
-        : localVisualDirection(mood);
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const remembered = cognitumReady ? undefined : await recallDirection("ai-look", mood);
+      const direction = remembered
+        ? remembered.payload as ReturnType<typeof localVisualDirection>
+        : cognitumReady
+          ? await generateCognitumVisualDirection(
+              mood,
+              VISUAL_SCENES.map((scene) => scene.id),
+              VISUAL_COLOR_PALETTES.map((palette) => palette.id),
+            ).catch(() => localVisualDirection(mood))
+          : localVisualDirection(mood);
       changeScene(direction.scene as VisualSceneId);
       changeVisualColor({ palette: direction.palette as VisualColorControls["palette"], hue: direction.hue });
       changeIntensity(direction.intensity);
@@ -1780,7 +1795,8 @@ export function App() {
       changeTemporalControl("trail", direction.trail);
       changeTemporalControl("morph", direction.morph);
       changeTemporalControl("camera", direction.camera);
-      setNotice(`AI look: ${direction.note}`);
+      if (!remembered) void recordDirection("ai-look", mood, direction, direction.note);
+      setNotice(remembered ? `Recalled look from your set history: ${direction.note}` : `AI look: ${direction.note}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "AI visual direction failed");
     } finally {
@@ -3397,7 +3413,7 @@ export function App() {
                     {(Object.keys(COGNITUM_CAPABILITY_LABELS) as Array<keyof typeof COGNITUM_CAPABILITY_LABELS>).map((capability) => (
                       <div key={capability} className="capability locked">
                         <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
-                        <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                        <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}{capability === "learning" && memoryEntries > 0 ? ` · ${memoryEntries} remembered locally` : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -3433,7 +3449,7 @@ export function App() {
                       return (
                         <div key={capability} className={`capability ${enabled ? "enabled" : "locked"}`}>
                           <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
-                          <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                          <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}{capability === "learning" && memoryEntries > 0 ? ` · ${memoryEntries} remembered` : ""}</span>
                         </div>
                       );
                     })}

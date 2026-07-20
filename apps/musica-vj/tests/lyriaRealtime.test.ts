@@ -229,3 +229,15 @@ describe("workspace settings", () => {
     expect(roundTripped!.savedAt).toBeTruthy();
   });
 });
+
+describe("performance memory", () => {
+  it("scores mood similarity by bounded token overlap", async () => {
+    const { similarity, tokenize } = await import("../src/core/performanceMemory");
+    expect(tokenize("Dark, RISING tension!")).toEqual(["dark", "rising", "tension"]);
+    expect(similarity("dark rising tension", "dark rising tension")).toBe(1);
+    expect(similarity("dark rising tension", "dark tension at night")).toBeGreaterThan(0.4);
+    expect(similarity("dark rising tension", "golden sunset drift")).toBe(0);
+    expect(similarity("", "anything")).toBe(0);
+    expect(similarity("a b", "a b")).toBe(0);
+  });
+});
