@@ -200,8 +200,14 @@ export class SocialRecorder {
 
     const mimeType = chooseRecordingMime((mime) => MediaRecorder.isTypeSupported(mime), mode);
     if (!mimeType) throw new Error(`This webview does not provide a supported ${mode === "audio-only" ? "AAC or Opus audio" : "MP4 or WebM video"} recorder codec`);
-    if (mode === "video-audio" && isTauri() && !mimeType.startsWith("video/mp4")) {
-      throw new Error("This Mac webview cannot provide the required H.264 and AAC MP4 export");
+    // Only macOS (WKWebView) is expected to produce H.264/AAC MP4; if it falls
+    // back to WebM there, something is wrong. Windows (WebView2) and Linux
+    // (WebKitGTK) provide VP8/VP9 WebM via MediaRecorder, which is a fully
+    // supported export container here — so accept it rather than blocking
+    // capture entirely (the "no Save button" symptom on Windows/Linux).
+    const isMacWebview = typeof navigator !== "undefined" && /Macintosh|Mac OS X/i.test(navigator.userAgent);
+    if (mode === "video-audio" && isTauri() && isMacWebview && !mimeType.startsWith("video/mp4")) {
+      throw new Error("This macOS webview cannot provide the required H.264 and AAC MP4 export");
     }
     this.state = "starting";
     this.mode = mode;
