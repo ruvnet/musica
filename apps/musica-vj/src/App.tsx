@@ -1837,7 +1837,14 @@ export function App() {
     if (!step) return;
     setSetArcStepIndex(index);
     engineRef.current.setBpm(step.bpm);
-    void applyRealtimeStyle(step.styleId);
+    const matchingDeckScene = lyriaDeckScenes.find((scene) => scene.styleId === step.styleId);
+    if (matchingDeckScene) {
+      // A saved deck scene for this style carries the full three-deck
+      // configuration; prefer it so arcs can bring companion decks in and out.
+      void applyLyriaDeckScene({ ...cloneLyriaDeckScene(matchingDeckScene), bpm: step.bpm });
+    } else {
+      void applyRealtimeStyle(step.styleId);
+    }
     changeScene(step.visualScene as VisualSceneId);
     if (step.fx) {
       for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
@@ -1845,7 +1852,7 @@ export function App() {
       }
     }
     setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
-  }, [applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks]);
+  }, [applyLyriaDeckScene, applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks, lyriaDeckScenes]);
 
   const stopSetArc = useCallback((announce = true) => {
     for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
