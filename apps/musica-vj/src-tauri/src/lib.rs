@@ -10,7 +10,7 @@ use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,
     cognitum_autodj_brief, cognitum_fx_direction, cognitum_set_arc, cognitum_sign_out,
     cognitum_status, cognitum_style_pack, cognitum_visual_direction, cognitum_visual_plugin,
-    CognitumProvider,
+    cognitum_vocal_guidance, CognitumProvider,
 };
 use creative_provider::{
     creative_cancel_generation, creative_download_audio, creative_generate,
@@ -52,6 +52,7 @@ pub fn run() {
             cognitum_fx_direction,
             cognitum_visual_direction,
             cognitum_visual_plugin,
+            cognitum_vocal_guidance,
             cognitum_set_arc,
             cognitum_sign_out,
             cognitum_status,

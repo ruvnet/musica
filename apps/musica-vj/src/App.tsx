@@ -100,6 +100,8 @@ import {
   generateCognitumSetArc,
   generateCognitumVisualDirection,
   generateCognitumVisualPlugin,
+  generateCognitumVocalGuidance,
+  localVocalGuidance,
   localFxDirection,
   localVisualDirection,
   generateCognitumStylePack,
@@ -1397,6 +1399,25 @@ export function App() {
       setNotice(`${style.label} primary guidance saved for the next switch.`);
     }
   }, [applyRealtimeRequest, customLyriaStyles, lyriaGuidanceDialog, lyriaStyleId, persistCustomStyles]);
+
+  const [vocalAiBusy, setVocalAiBusy] = useState(false);
+
+  const writeVocalGuidanceWithAi = useCallback(async () => {
+    if (vocalAiBusy) return;
+    setVocalAiBusy(true);
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("realtime-vocals");
+      const hint = lyriaCompanionDialog?.text.trim() ?? "";
+      const result = cognitumReady
+        ? await generateCognitumVocalGuidance(activeLyriaStyle.label, hint).catch(() => localVocalGuidance(activeLyriaStyle.label))
+        : localVocalGuidance(activeLyriaStyle.label);
+      const combined = result.hook ? `${result.guidance}. Hook: ${result.hook}` : result.guidance;
+      setLyriaCompanionDialog((current) => current ? { ...current, text: combined.slice(0, 240) } : current);
+      setNotice(cognitumReady ? "Cognitum wrote fresh vocal guidance — review and apply." : "Local vocal guidance written — review and apply.");
+    } finally {
+      setVocalAiBusy(false);
+    }
+  }, [activeLyriaStyle.label, lyriaCompanionDialog, vocalAiBusy]);
 
   const applyLyriaCompanionDialog = useCallback(() => {
     if (!lyriaCompanionDialog) return;
@@ -2777,6 +2798,11 @@ export function App() {
             <div className="guidance-scope">
               <span>{lyriaCompanionDialog.deck === "sequence" ? "MAIN SCALE · ROOT MOTION · 8-BAR PHRASES" : "MAIN SCALE · 32-BAR VOCAL FORM · VOICE ONLY"}</span>
             </div>
+            {lyriaCompanionDialog.deck === "vocal" && (
+              <button type="button" className="vocal-ai-write" onClick={() => void writeVocalGuidanceWithAi()} disabled={vocalAiBusy}>
+                {vocalAiBusy ? "WRITING…" : "✦ AI WRITE VOCAL DIRECTION"}
+              </button>
+            )}
             <footer>
               <button
                 type="button"

@@ -877,3 +877,6 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .plugin-tile .plugin-delete:hover { color: #ff8caf; }
 .plugin-tile.active { border-color: rgba(93,255,138,.65); background: rgba(93,255,138,.09); }
 .plugin-tile.active button { color: #c9ffdc; }
+.vocal-ai-write { height: 28px; border: 1px solid rgba(189,104,230,.4); border-radius: 6px; background: rgba(189,104,230,.07); color: #d9b3ec; font: 700 7px "DM Mono", monospace; cursor: pointer; }
+.vocal-ai-write:hover:not(:disabled) { border-color: rgba(189,104,230,.65); }
+.vocal-ai-write:disabled { opacity: .5; cursor: wait; }

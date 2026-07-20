@@ -1053,6 +1053,87 @@ pub(crate) async fn cognitum_visual_plugin(
     Ok(spec)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VocalGuidance {
+    guidance: String,
+    hook: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_vocal_guidance(
+    provider: State<'_, CognitumProvider>,
+    style_label: String,
+    hint: String,
+) -> Result<VocalGuidance, String> {
+    if style_label.len() > 40 || hint.len() > 300 {
+        return Err("Vocal guidance inputs are too long".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You direct a wordless AI vocal companion deck synced to a live instrumental stream. Return only JSON with keys guidance (max 240 chars: the vocal character and behavior — register, vowel colors, phrasing, where to answer the main motif, where to rest; wordless voice only, no lyrics) and hook (max 120 chars: one concrete singable chorus contour described in note-direction language, e.g. 'rise a fifth, hold, fall stepwise home'). Match the named style's energy.".to_string();
+    let user = if hint.trim().is_empty() {
+        format!("Style: {style_label}. Write fresh vocal deck guidance.")
+    } else {
+        format!("Style: {style_label}. Operator hint: {}", hint.trim())
+    };
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.8,
+        max_tokens: 300,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum vocal guidance request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum vocal guidance was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned empty vocal guidance".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned invalid vocal guidance".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned invalid vocal guidance".to_string())?;
+    #[derive(Deserialize)]
+    struct RawGuidance {
+        guidance: String,
+        #[serde(default)]
+        hook: String,
+    }
+    let raw: RawGuidance = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned invalid vocal guidance".to_string())?;
+    let guidance = raw.guidance.trim();
+    if guidance.is_empty() {
+        return Err("Cognitum returned empty vocal guidance".into());
+    }
+    Ok(VocalGuidance {
+        guidance: guidance.chars().take(240).collect(),
+        hook: raw.hook.trim().chars().take(120).collect(),
+    })
+}
+
 fn is_hex_color(value: &str) -> bool {
     value.len() == 7
         && value.starts_with('#')

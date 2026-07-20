@@ -261,3 +261,40 @@ export async function generateCognitumVisualPlugin(description: string): Promise
   if (!spec) throw new Error("Cognitum returned an invalid plugin");
   return spec;
 }
+
+export interface VocalGuidance {
+  guidance: string;
+  hook: string;
+}
+
+export async function generateCognitumVocalGuidance(styleLabel: string, hint: string): Promise<VocalGuidance> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  return invoke<VocalGuidance>("cognitum_vocal_guidance", { styleLabel, hint });
+}
+
+/// Local fallback vocal guidance templates keyed by broad style family.
+export function localVocalGuidance(styleLabel: string): VocalGuidance {
+  const normalized = styleLabel.toLowerCase();
+  if (/rock|blues|country/.test(normalized)) {
+    return {
+      guidance: "Raspy chest-voice lead; short powerful phrases answering the guitar hook; open ah and oh vowels; rest through verses, commit hard in the chorus",
+      hook: "Leap up a fourth, hold with grit, fall back home in two steps",
+    };
+  }
+  if (/house|techno|edm|dubstep|drum/.test(normalized)) {
+    return {
+      guidance: "Airy processed head voice; clipped rhythmic syllables locked to the offbeats; long sustained oo pad through breakdowns; silence during drops",
+      hook: "Two-note call, octave echo answer, let it decay into the beat",
+    };
+  }
+  if (/lofi|ambient|cinema|classical|jazz/.test(normalized)) {
+    return {
+      guidance: "Soft intimate hums and mm vowels close to the mic; behind-the-beat phrasing; leave two-bar rests; one gentle rising motif per sixteen bars",
+      hook: "Slow stepwise rise of three notes, suspended, resolving down a third",
+    };
+  }
+  return {
+    guidance: "Expressive wordless lead with a memorable chorus contour; answer the main motif without competing; alternate breathy verses with full-voice chorus",
+    hook: "Rise a fifth, hold, fall stepwise home",
+  };
+}
