@@ -127,7 +127,8 @@ import {
   serializeWorkspaceSettings,
   type WorkspaceSettings,
 } from "./core/settingsStore";
-import { SocialRecorder, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
+import { SocialRecorder, saveMediaBlob, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
+import { addCapture, deleteCapture, listCaptures, type CaptureEntry } from "./core/captureLibrary";
 import { RestreamBroadcaster, getRestreamStatus, type RestreamSource, type RestreamStatus } from "./export/RestreamBroadcaster";
 import {
   DEFAULT_BLOOM_SETTINGS,
@@ -531,6 +532,7 @@ export function App() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("video-audio");
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
+  const [captures, setCaptures] = useState<CaptureEntry[]>([]);
   const [restreamStatus, setRestreamStatus] = useState<RestreamStatus>({ available: false, active: false, reason: "Checking FFmpeg" });
   const [restreamSource, setRestreamSource] = useState<RestreamSource>("program");
   const [restreamIngestUrl, setRestreamIngestUrl] = useState("rtmps://live.restream.io/live");
@@ -1741,7 +1743,12 @@ export function App() {
       setRecording(false);
       setRecordProgress(1);
       setLastRecording(result);
-      setNotice(`${result.mode === "audio-only" ? "Audio" : "Video + audio"} captured · ${(result.bytes / 1_000_000).toFixed(1)} MB · ready to save.`);
+      // Auto-save to the on-device library so the clip is never lost, then
+      // refresh the gallery.
+      void addCapture(result).then((entry) => {
+        if (entry) void listCaptures().then(setCaptures);
+      });
+      setNotice(`${result.mode === "audio-only" ? "Audio" : "Video + audio"} captured · ${(result.bytes / 1_000_000).toFixed(1)} MB · saved to library.`);
     });
     const unlistenErrors = recorder.subscribeErrors((error) => {
       setRecording(false);
@@ -2775,6 +2782,25 @@ export function App() {
     }
   };
 
+  useEffect(() => {
+    void listCaptures().then(setCaptures);
+  }, []);
+
+  const saveCaptureEntry = useCallback(async (entry: CaptureEntry) => {
+    try {
+      const path = await saveMediaBlob(entry.blob, entry.fileName, entry.fileExtension);
+      if (path) setNotice(`Saved ${path}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not save clip");
+    }
+  }, []);
+
+  const deleteCaptureEntry = useCallback(async (id: string) => {
+    await deleteCapture(id);
+    setCaptures((current) => current.filter((entry) => entry.id !== id));
+    setNotice("Clip removed from library.");
+  }, []);
+
   const copyProgramSourceUrl = async () => {
     const url = `${window.location.origin}${window.location.pathname}`;
     try {
@@ -3099,7 +3125,7 @@ export function App() {
       <header className="topbar">
         <div className="brand" aria-label="Musica VJ">
           <span className="brand-mark">M</span>
-          <div><strong>MUSICA</strong><span>VJ STUDIO</span></div>
+          <div><strong>MUSICA</strong><span>VJ STUDIO{appVersion ? ` · v${appVersion}` : ""}</span></div>
         </div>
 
         <div className="transport" aria-label="Transport controls">
@@ -3999,6 +4025,23 @@ export function App() {
                 </select>
               </label>
               {lastRecording && <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE {lastRecording.mode === "audio-only" ? "AUDIO" : "VIDEO + AUDIO"}</button>}
+              {captures.length > 0 && (
+                <section className="capture-library" aria-label="Capture library">
+                  <header><span>CAPTURES</span><b>{captures.length} SAVED</b></header>
+                  <div className="capture-library-list">
+                    {captures.map((entry) => (
+                      <div className="capture-entry" key={entry.id}>
+                        <div className="capture-entry-meta">
+                          <strong>{entry.mode === "audio-only" ? "AUDIO" : "VIDEO"} · {entry.fileExtension.toUpperCase()}</strong>
+                          <span>{(entry.bytes / 1_000_000).toFixed(1)} MB · {entry.durationSeconds.toFixed(1)}s · {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                        </div>
+                        <button type="button" className="capture-entry-save" onClick={() => void saveCaptureEntry(entry)} aria-label="Save clip to disk">SAVE</button>
+                        <button type="button" className="capture-entry-delete" onClick={() => void deleteCaptureEntry(entry.id)} aria-label="Remove clip from library">×</button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               <section className="restream-control" aria-label="Restream live output">
                 <header><span><i className={restreamStatus.active ? "online" : ""} /> RESTREAM</span><b>{restreamStatus.active ? "LIVE" : restreamStatus.available ? "READY" : "OFFLINE"}</b></header>
                 <div className="capture-mode-control" role="group" aria-label="Restream source">

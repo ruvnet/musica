@@ -45,6 +45,29 @@ export function chooseRecordingMime(
   return candidates.find((candidate) => isSupported(candidate)) ?? "";
 }
 
+/// Writes a media blob to disk: a native Save dialog in the desktop app, or a
+/// browser download otherwise. Returns the chosen path/name, or undefined if
+/// the user cancelled. Shared by live capture and the capture library.
+export async function saveMediaBlob(blob: Blob, fileName: string, fileExtension: string): Promise<string | undefined> {
+  if (isTauri()) {
+    const [{ save }, { writeFile }] = await Promise.all([import("@tauri-apps/plugin-dialog"), import("@tauri-apps/plugin-fs")]);
+    const path = await save({
+      defaultPath: fileName,
+      filters: [{ name: fileExtension.toUpperCase(), extensions: [fileExtension] }],
+    });
+    if (!path) return undefined;
+    await writeFile(path, new Uint8Array(await blob.arrayBuffer()));
+    return path;
+  }
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = fileName;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(href), 1_000);
+  return fileName;
+}
+
 export interface RecordingContainerInspection {
   container: "mp4" | "webm";
   videoCodec: "h264" | "vp8" | "vp9" | "none" | "unknown";
@@ -283,25 +306,7 @@ export class SocialRecorder {
   }
 
   async save(result: RecordingResult): Promise<string | undefined> {
-    if (isTauri()) {
-      const [{ save }, { writeFile }] = await Promise.all([import("@tauri-apps/plugin-dialog"), import("@tauri-apps/plugin-fs")]);
-      const extension = result.fileExtension;
-      const path = await save({
-        defaultPath: result.fileName,
-        filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
-      });
-      if (!path) return undefined;
-      await writeFile(path, new Uint8Array(await result.blob.arrayBuffer()));
-      return path;
-    }
-
-    const href = URL.createObjectURL(result.blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = result.fileName;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(href), 1_000);
-    return result.fileName;
+    return saveMediaBlob(result.blob, result.fileName, result.fileExtension);
   }
 
   private async finishRecording(): Promise<void> {
