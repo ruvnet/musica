@@ -2,6 +2,7 @@ import { DEFAULT_MASTER_EFFECT_PARAMS, MASTER_EFFECT_IDS, type MasterEffectParam
 import { loadCustomLyriaStyles, type LyriaRealtimeStylePreset } from "./lyriaRealtime";
 import { loadLyriaDeckScenes, type LyriaDeckScene } from "./lyriaDeckScenes";
 import { normalizeVisualPluginList, type VisualPluginSpec } from "./visualPlugins";
+import type { SetArc } from "./cognitum";
 import { DEFAULT_ONBOARDING_PREFERENCES, normalizeOnboardingPreferences, type OnboardingPreferences } from "./onboarding";
 
 const DB_NAME = "musica-settings";
@@ -20,6 +21,7 @@ export interface WorkspaceSettings {
   fxLocks: Record<string, boolean>;
   sfxLevel: number;
   plugins?: VisualPluginSpec[];
+  setArc?: SetArc;
 }
 
 function boundedUnit(value: unknown, fallback: number): number {
@@ -49,7 +51,23 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings | 
     fxLocks: Object.fromEntries(MASTER_EFFECT_IDS.map((effect) => [effect, locks[effect] === true])),
     sfxLevel: boundedUnit(raw.sfxLevel, 0.5),
     plugins: normalizeVisualPluginList(raw.plugins),
+    setArc: normalizeStoredSetArc(raw.setArc),
   };
+}
+
+function normalizeStoredSetArc(value: unknown): SetArc | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Partial<SetArc>;
+  if (typeof raw.title !== "string" || typeof raw.durationMinutes !== "number" || !Array.isArray(raw.steps)) return undefined;
+  const steps = raw.steps.filter((step) => (
+    typeof step === "object" && step !== null
+    && typeof (step as { atMinute?: unknown }).atMinute === "number"
+    && typeof (step as { styleId?: unknown }).styleId === "string"
+    && typeof (step as { visualScene?: unknown }).visualScene === "string"
+    && typeof (step as { bpm?: unknown }).bpm === "number"
+  ));
+  if (steps.length === 0) return undefined;
+  return { title: raw.title.slice(0, 40), durationMinutes: Math.max(30, Math.min(90, Math.round(raw.durationMinutes))), steps: steps as SetArc["steps"] };
 }
 
 export function serializeWorkspaceSettings(settings: WorkspaceSettings): string {

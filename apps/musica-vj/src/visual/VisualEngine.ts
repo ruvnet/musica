@@ -626,6 +626,39 @@ export class VisualEngine {
   setColorControls(controls: VisualColorControls): void {
     this.colorControls = normalizeVisualColorControls(controls);
     this.applySceneTheme(this.currentScene);
+    this.applyPluginColors();
+  }
+
+  /// Plugin scenes honor the shared hue/saturation controls by re-tinting
+  /// their materials from the spec's base colors (ADR-177 acceptance 2).
+  private applyPluginColors(): void {
+    const spec = this.activePlugin;
+    if (!spec) return;
+    const hueShift = (this.colorControls.hue - 0.5) * 0.9;
+    const saturationScale = 0.35 + this.colorControls.saturation * 1.15;
+    const tint = (hex: string) => {
+      const color = new THREE.Color(hex).offsetHSL(hueShift, 0, 0);
+      const hsl = { h: 0, s: 0, l: 0 };
+      color.getHSL(hsl);
+      color.setHSL(hsl.h, Math.min(1, hsl.s * saturationScale), hsl.l);
+      return color;
+    };
+    const primary = tint(spec.colors.primary);
+    const accent = tint(spec.colors.accent);
+    for (const [index, child] of this.pluginGroup.children.entries()) {
+      if (child instanceof THREE.Points) {
+        const colors = child.geometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+        if (colors) {
+          for (let point = 0; point < colors.count; point += 1) {
+            const seed = this.pluginSeeds[point % this.pluginSeeds.length] ?? 0.5;
+            (seed < 0.3 ? accent : primary).toArray(colors.array as Float32Array, point * 3);
+          }
+          colors.needsUpdate = true;
+        }
+      } else if (child instanceof THREE.Line) {
+        (child.material as THREE.LineBasicMaterial).color = index % 2 === 0 ? primary : accent;
+      }
+    }
   }
 
   getColorControls(): VisualColorControls {
@@ -739,6 +772,7 @@ export class VisualEngine {
     if (this.scene.background instanceof THREE.Color) this.scene.background.set(spec.colors.background);
     if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0.008 + spec.fog * 0.035;
     this.renderer.toneMappingExposure = 0.55 + spec.exposure * 0.6;
+    this.applyPluginColors();
   }
 
   getActivePluginId(): string | undefined {

@@ -1190,6 +1190,17 @@ export function App() {
     setNotice("Plugin scene removed.");
   }, [activatePlugin, activePluginId]);
 
+  const [setArc, setSetArc] = useState<SetArc>();
+  const [setArcSource, setSetArcSource] = useState<"cognitum" | "local">("local");
+  const [setArcDuration, setSetArcDuration] = useState(60);
+  const [setArcDirection, setSetArcDirection] = useState("");
+  const [setArcBusy, setSetArcBusy] = useState(false);
+  const [setArcRunning, setSetArcRunning] = useState(false);
+  const [setArcStepIndex, setSetArcStepIndex] = useState(-1);
+  const setArcTimersRef = useRef<number[]>([]);
+
+
+
   const collectWorkspaceSettings = useCallback((): WorkspaceSettings => ({
     version: 1,
     onboarding: onboardingPreferences,
@@ -1200,7 +1211,8 @@ export function App() {
     fxLocks,
     sfxLevel,
     plugins: visualPlugins,
-  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, sfxLevel, visualPlugins]);
+    setArc,
+  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, setArc, sfxLevel, visualPlugins]);
 
   const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
     setOnboardingPreferences(settings.onboarding);
@@ -1213,6 +1225,10 @@ export function App() {
     setFxLocks((current) => ({ ...current, ...settings.fxLocks }));
     changeSfxLevel(settings.sfxLevel);
     setVisualPlugins(normalizeVisualPluginList(settings.plugins));
+    if (settings.setArc) {
+      setSetArc(settings.setArc);
+      setSetArcSource("local");
+    }
   }, [changeMasterEffect, changeMasterEffectParam, changeSfxLevel, persistCustomStyles]);
 
   const workspaceLoadedRef = useRef(false);
@@ -1754,80 +1770,7 @@ export function App() {
     setNotice(`Shuffled look: ${sceneName} · ${settings.animationStyle.toUpperCase()} · ${settings.color.palette.toUpperCase()}.`);
   }, [applySceneSettings, changeScene, saveSceneSettings]);
 
-  const [setArc, setSetArc] = useState<SetArc>();
-  const [setArcSource, setSetArcSource] = useState<"cognitum" | "local">("local");
-  const [setArcDuration, setSetArcDuration] = useState(60);
-  const [setArcDirection, setSetArcDirection] = useState("");
-  const [setArcBusy, setSetArcBusy] = useState(false);
-  const [setArcRunning, setSetArcRunning] = useState(false);
-  const [setArcStepIndex, setSetArcStepIndex] = useState(-1);
-  const setArcTimersRef = useRef<number[]>([]);
 
-  const applySetArcStep = useCallback((arc: SetArc, index: number) => {
-    const step = arc.steps[index];
-    if (!step) return;
-    setSetArcStepIndex(index);
-    engineRef.current.setBpm(step.bpm);
-    void applyRealtimeStyle(step.styleId);
-    changeScene(step.visualScene as VisualSceneId);
-    if (step.fx) {
-      for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
-        if (!fxLocks[effect] && step.fx[effect] !== undefined) changeMasterEffect(effect, step.fx[effect]!);
-      }
-    }
-    setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
-  }, [applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks]);
-
-  const stopSetArc = useCallback((announce = true) => {
-    for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
-    setArcTimersRef.current = [];
-    setSetArcRunning(false);
-    setSetArcStepIndex(-1);
-    if (announce) setNotice("Set arc stopped. Manual control restored.");
-  }, []);
-
-  const runSetArc = useCallback(() => {
-    if (!setArc) return;
-    stopSetArc(false);
-    setSetArcRunning(true);
-    const offset = setArc.steps[0]?.atMinute ?? 0;
-    applySetArcStep(setArc, 0);
-    for (let index = 1; index < setArc.steps.length; index += 1) {
-      const delayMs = Math.max(0, (setArc.steps[index]!.atMinute - offset) * 60_000);
-      setArcTimersRef.current.push(window.setTimeout(() => applySetArcStep(setArc, index), delayMs));
-    }
-    setNotice(`${setArc.title} running · ${setArc.steps.length} steps over ${setArc.durationMinutes} minutes.`);
-  }, [applySetArcStep, setArc, stopSetArc]);
-
-  useEffect(() => () => stopSetArc(false), [stopSetArc]);
-
-  const generateSetArc = useCallback(async () => {
-    if (setArcBusy) return;
-    setSetArcBusy(true);
-    stopSetArc(false);
-    const styleIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
-    const sceneIds = VISUAL_SCENES.map((scene) => scene.id);
-    try {
-      if (cognitumStatus.signedIn && cognitumStatus.capabilities.includes("autopilot")) {
-        const arc = await generateCognitumSetArc(setArcDuration, setArcDirection.trim(), styleIds, sceneIds);
-        setSetArc(arc);
-        setSetArcSource("cognitum");
-        setNotice(`${arc.title} planned by Cognitum · ${arc.steps.length} steps. Review, then RUN ARC.`);
-      } else {
-        const arc = localSetArc(setArcDuration, styleIds, sceneIds);
-        setSetArc(arc);
-        setSetArcSource("local");
-        setNotice(`${arc.title} planned locally · sign in to Cognitum for AI-directed arcs.`);
-      }
-    } catch (error) {
-      const arc = localSetArc(setArcDuration, styleIds, sceneIds);
-      setSetArc(arc);
-      setSetArcSource("local");
-      setNotice(`${error instanceof Error ? error.message : "Cognitum planning failed"} — local arc planned instead.`);
-    } finally {
-      setSetArcBusy(false);
-    }
-  }, [cognitumStatus.capabilities, cognitumStatus.signedIn, customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
 
 
   const [visualMood, setVisualMood] = useState("");
@@ -1887,6 +1830,72 @@ export function App() {
       setVisualMoodBusy(false);
     }
   }, [changeIntensity, changeScene, changeTemporalControl, changeVisualColor, visualMood, visualMoodBusy]);
+
+  const applySetArcStep = useCallback((arc: SetArc, index: number) => {
+    const step = arc.steps[index];
+    if (!step) return;
+    setSetArcStepIndex(index);
+    engineRef.current.setBpm(step.bpm);
+    void applyRealtimeStyle(step.styleId);
+    changeScene(step.visualScene as VisualSceneId);
+    if (step.fx) {
+      for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
+        if (!fxLocks[effect] && step.fx[effect] !== undefined) changeMasterEffect(effect, step.fx[effect]!);
+      }
+    }
+    setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
+  }, [applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks]);
+
+  const stopSetArc = useCallback((announce = true) => {
+    for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
+    setArcTimersRef.current = [];
+    setSetArcRunning(false);
+    setSetArcStepIndex(-1);
+    if (announce) setNotice("Set arc stopped. Manual control restored.");
+  }, []);
+
+  const runSetArc = useCallback(() => {
+    if (!setArc) return;
+    stopSetArc(false);
+    setSetArcRunning(true);
+    const offset = setArc.steps[0]?.atMinute ?? 0;
+    applySetArcStep(setArc, 0);
+    for (let index = 1; index < setArc.steps.length; index += 1) {
+      const delayMs = Math.max(0, (setArc.steps[index]!.atMinute - offset) * 60_000);
+      setArcTimersRef.current.push(window.setTimeout(() => applySetArcStep(setArc, index), delayMs));
+    }
+    setNotice(`${setArc.title} running · ${setArc.steps.length} steps over ${setArc.durationMinutes} minutes.`);
+  }, [applySetArcStep, setArc, stopSetArc]);
+
+  useEffect(() => () => stopSetArc(false), [stopSetArc]);
+
+  const generateSetArc = useCallback(async () => {
+    if (setArcBusy) return;
+    setSetArcBusy(true);
+    stopSetArc(false);
+    const styleIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
+    const sceneIds = VISUAL_SCENES.map((scene) => scene.id);
+    try {
+      if (cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("autopilot")) {
+        const arc = await generateCognitumSetArc(setArcDuration, setArcDirection.trim(), styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("cognitum");
+        setNotice(`${arc.title} planned by Cognitum · ${arc.steps.length} steps. Review, then RUN ARC.`);
+      } else {
+        const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("local");
+        setNotice(`${arc.title} planned locally · sign in to Cognitum for AI-directed arcs.`);
+      }
+    } catch (error) {
+      const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+      setSetArc(arc);
+      setSetArcSource("local");
+      setNotice(`${error instanceof Error ? error.message : "Cognitum planning failed"} — local arc planned instead.`);
+    } finally {
+      setSetArcBusy(false);
+    }
+  }, [customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
