@@ -873,6 +873,115 @@ pub(crate) async fn cognitum_fx_direction(
     Ok(direction)
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VisualDirection {
+    scene: String,
+    palette: String,
+    hue: f32,
+    intensity: f32,
+    speed: f32,
+    trail: f32,
+    morph: f32,
+    camera: f32,
+    note: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_visual_direction(
+    provider: State<'_, CognitumProvider>,
+    mood: String,
+    scene_ids: Vec<String>,
+    palette_ids: Vec<String>,
+) -> Result<VisualDirection, String> {
+    let trimmed = mood.trim();
+    if trimmed.is_empty() || trimmed.len() > 300 {
+        return Err("Describe the visual mood in 1 to 300 characters".into());
+    }
+    if scene_ids.is_empty()
+        || palette_ids.is_empty()
+        || scene_ids.len() > 32
+        || palette_ids.len() > 16
+    {
+        return Err("Scene and palette lists are required".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You art-direct a live generative visual system. Return only JSON with keys scene (one of: {scenes}), palette (one of: {palettes}), hue (0-1 color wheel position), intensity (0.2-1), speed (0-1), trail (0-1, motion persistence/echo), morph (0-1, shape evolution), camera (0-1, camera movement), and note (max 80 chars describing the look). Choose a coherent look that embodies the mood; prefer restraint over spectacle.",
+        scenes = scene_ids.join(", "),
+        palettes = palette_ids.join(", "),
+    );
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: trimmed.to_string(),
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 300,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum visual direction request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum visual direction was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty visual direction".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid visual direction".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid visual direction".to_string())?;
+    let direction: VisualDirection = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid visual direction".to_string())?;
+    validate_visual_direction(&direction, &scene_ids, &palette_ids)?;
+    Ok(direction)
+}
+
+fn validate_visual_direction(
+    direction: &VisualDirection,
+    scene_ids: &[String],
+    palette_ids: &[String],
+) -> Result<(), String> {
+    if !scene_ids.contains(&direction.scene) {
+        return Err("Visual direction references an unknown scene".into());
+    }
+    if !palette_ids.contains(&direction.palette) {
+        return Err("Visual direction references an unknown palette".into());
+    }
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    if !unit(direction.hue)
+        || !unit(direction.speed)
+        || !unit(direction.trail)
+        || !unit(direction.morph)
+        || !unit(direction.camera)
+        || !(0.2..=1.0).contains(&direction.intensity)
+        || direction.note.len() > 80
+    {
+        return Err("Visual direction values are out of range".into());
+    }
+    Ok(())
+}
+
 fn validate_fx_direction(direction: &FxDirection, bars: u16) -> Result<(), String> {
     if direction.summary.len() > 90 {
         return Err("FX direction summary is too long".into());

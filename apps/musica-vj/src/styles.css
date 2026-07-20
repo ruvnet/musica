@@ -457,6 +457,10 @@ body {
 .fx-edit.on { border-color: rgba(53,220,255,.45); color: #9debf6; background: rgba(53,220,255,.07); }
 .fx-generate:hover { border-color: rgba(189,104,230,.45); color: #d9b3ec; }
 .fx-row-params { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; padding: 8px 8px 8px 31px; border: 1px dashed rgba(53,220,255,.18); border-radius: 8px; background: rgba(53,220,255,.025); }
+.ai-look { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; margin-top: 7px; }
+.ai-look input { height: 28px; padding: 0 9px; border: 1px solid rgba(155,140,255,.28); border-radius: 6px; background: rgba(2,3,6,.5); color: #dfe2e9; font: 500 8px "DM Mono", monospace; outline: none; }
+.ai-look button { height: 28px; padding: 0 13px; border: 1px solid rgba(155,140,255,.4); border-radius: 6px; background: rgba(155,140,255,.08); color: #c3b8ff; font: 700 7px "DM Mono", monospace; cursor: pointer; }
+.ai-look button:disabled { opacity: .45; cursor: wait; }
 .fx-mood { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
 .fx-mood input { height: 28px; padding: 0 9px; border: 1px solid rgba(155,140,255,.28); border-radius: 6px; background: rgba(2,3,6,.5); color: #dfe2e9; font: 500 8px "DM Mono", monospace; outline: none; }
 .fx-mood button { height: 28px; padding: 0 13px; border: 1px solid rgba(155,140,255,.4); border-radius: 6px; background: rgba(155,140,255,.08); color: #c3b8ff; font: 700 7px "DM Mono", monospace; cursor: pointer; }

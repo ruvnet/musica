@@ -155,6 +155,48 @@ export function localFxDirection(mood: string, bars: number): FxDirection {
   };
 }
 
+export interface VisualDirection {
+  scene: string;
+  palette: string;
+  hue: number;
+  intensity: number;
+  speed: number;
+  trail: number;
+  morph: number;
+  camera: number;
+  note: string;
+}
+
+export async function generateCognitumVisualDirection(
+  mood: string,
+  sceneIds: string[],
+  paletteIds: string[],
+): Promise<VisualDirection> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  return invoke<VisualDirection>("cognitum_visual_direction", { mood, sceneIds, paletteIds });
+}
+
+/// Keyword fallback for AI visual direction when Cognitum is unavailable.
+export function localVisualDirection(mood: string): VisualDirection {
+  const normalized = mood.toLowerCase();
+  if (/dark|night|shadow|tension|noir/.test(normalized)) {
+    return { scene: "monolith", palette: "mono", hue: 0.78, intensity: 0.55, speed: 0.3, trail: 0.6, morph: 0.5, camera: 0.3, note: "Stark monolith, long shadows, slow drift" };
+  }
+  if (/retro|scope|analog|vintage|arcade/.test(normalized)) {
+    return { scene: "oscilloscope", palette: "scene", hue: 0.4, intensity: 0.7, speed: 0.5, trail: 0.55, morph: 0.4, camera: 0.4, note: "Retro scope rings with phosphor trails" };
+  }
+  if (/euphoric|peak|rave|festival|explosive/.test(normalized)) {
+    return { scene: "lasergrid", palette: "neon", hue: 0.9, intensity: 0.9, speed: 0.85, trail: 0.7, morph: 0.75, camera: 0.85, note: "Full laser peak, fast and bright" };
+  }
+  if (/calm|ambient|drift|water|dream|float/.test(normalized)) {
+    return { scene: "aurora", palette: "ice", hue: 0.55, intensity: 0.45, speed: 0.2, trail: 0.85, morph: 0.45, camera: 0.2, note: "Slow aurora veil, icy and weightless" };
+  }
+  if (/warm|golden|sunset|soul|dusty/.test(normalized)) {
+    return { scene: "terrain", palette: "ember", hue: 0.08, intensity: 0.65, speed: 0.4, trail: 0.5, morph: 0.55, camera: 0.4, note: "Warm spectral field in ember light" };
+  }
+  return { scene: "bloom", palette: "prism", hue: 0.6, intensity: 0.7, speed: 0.5, trail: 0.5, morph: 0.6, camera: 0.5, note: "Balanced bloom with prismatic color" };
+}
+
 export interface AutoDjBrief {
   brief: string;
   mood: string;

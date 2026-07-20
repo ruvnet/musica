@@ -98,7 +98,9 @@ import {
   generateCognitumAutoDjBrief,
   generateCognitumFxDirection,
   generateCognitumSetArc,
+  generateCognitumVisualDirection,
   localFxDirection,
+  localVisualDirection,
   generateCognitumStylePack,
   getCognitumStatus,
   localSetArc,
@@ -1756,6 +1758,36 @@ export function App() {
   }, [cognitumStatus.capabilities, cognitumStatus.signedIn, customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
 
 
+  const [visualMood, setVisualMood] = useState("");
+  const [visualMoodBusy, setVisualMoodBusy] = useState(false);
+
+  const directVisuals = useCallback(async () => {
+    const mood = visualMood.trim();
+    if (!mood || visualMoodBusy) return;
+    setVisualMoodBusy(true);
+    try {
+      const direction = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting")
+        ? await generateCognitumVisualDirection(
+            mood,
+            VISUAL_SCENES.map((scene) => scene.id),
+            VISUAL_COLOR_PALETTES.map((palette) => palette.id),
+          ).catch(() => localVisualDirection(mood))
+        : localVisualDirection(mood);
+      changeScene(direction.scene as VisualSceneId);
+      changeVisualColor({ palette: direction.palette as VisualColorControls["palette"], hue: direction.hue });
+      changeIntensity(direction.intensity);
+      changeTemporalControl("speed", direction.speed);
+      changeTemporalControl("trail", direction.trail);
+      changeTemporalControl("morph", direction.morph);
+      changeTemporalControl("camera", direction.camera);
+      setNotice(`AI look: ${direction.note}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI visual direction failed");
+    } finally {
+      setVisualMoodBusy(false);
+    }
+  }, [changeIntensity, changeScene, changeTemporalControl, changeVisualColor, visualMood, visualMoodBusy]);
+
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
     const baseStyle = lyriaRealtimeStyleForTemplate(template);
@@ -2829,6 +2861,18 @@ export function App() {
                 <button className="shuffle-look" onClick={shuffleLook} title="Randomize scene, motion, palette, and temporal controls — like cycling Winamp presets">
                   <strong>SHUFFLE LOOK</strong>
                   <span>random scene + motion + color</span>
+                </button>
+              </div>
+              <div className="ai-look" title="Describe a mood; the visuals pick a scene, palette, and motion to match">
+                <input
+                  value={visualMood}
+                  maxLength={300}
+                  placeholder="AI look: stark noir tension… golden sunset drift…"
+                  onChange={(event) => setVisualMood(event.target.value)}
+                  aria-label="AI visual mood"
+                />
+                <button type="button" onClick={() => void directVisuals()} disabled={visualMoodBusy || !visualMood.trim()}>
+                  {visualMoodBusy ? "…" : "DIRECT"}
                 </button>
               </div>
             </section>
