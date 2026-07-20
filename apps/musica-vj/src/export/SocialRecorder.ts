@@ -45,6 +45,17 @@ export function chooseRecordingMime(
   return candidates.find((candidate) => isSupported(candidate)) ?? "";
 }
 
+/// Transcodes a WebM clip to H.264/AAC MP4 via the bundled FFmpeg and saves it
+/// through a native dialog (desktop only). Returns the saved path, or undefined
+/// if cancelled. Lets Windows/Linux captures export a portable MP4.
+export async function transcodeWebmToMp4(blob: Blob): Promise<string | undefined> {
+  if (!isTauri()) throw new Error("MP4 export requires the desktop app");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const path = await invoke<string | null>("transcode_to_mp4", bytes);
+  return path ?? undefined;
+}
+
 /// Writes a media blob to disk: a native Save dialog in the desktop app, or a
 /// browser download otherwise. Returns the chosen path/name, or undefined if
 /// the user cancelled. Shared by live capture and the capture library.

@@ -127,7 +127,7 @@ import {
   serializeWorkspaceSettings,
   type WorkspaceSettings,
 } from "./core/settingsStore";
-import { SocialRecorder, saveMediaBlob, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
+import { SocialRecorder, saveMediaBlob, transcodeWebmToMp4, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
 import { addCapture, deleteCapture, listCaptures, type CaptureEntry } from "./core/captureLibrary";
 import { RestreamBroadcaster, getRestreamStatus, type RestreamSource, type RestreamStatus } from "./export/RestreamBroadcaster";
 import {
@@ -2801,6 +2801,20 @@ export function App() {
     setNotice("Clip removed from library.");
   }, []);
 
+  const [transcodingId, setTranscodingId] = useState<string>();
+  const saveBlobAsMp4 = useCallback(async (blob: Blob, id: string) => {
+    setTranscodingId(id);
+    setNotice("Transcoding to MP4…");
+    try {
+      const path = await transcodeWebmToMp4(blob);
+      setNotice(path ? `Saved ${path}.` : "MP4 export cancelled.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not export MP4");
+    } finally {
+      setTranscodingId(undefined);
+    }
+  }, []);
+
   const copyProgramSourceUrl = async () => {
     const url = `${window.location.origin}${window.location.pathname}`;
     try {
@@ -4024,7 +4038,16 @@ export function App() {
                   {SOCIAL_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{captureMode === "audio-only" ? `${preset.durationSeconds} seconds` : `${preset.label} · ${preset.width}x${preset.height}`}</option>)}
                 </select>
               </label>
-              {lastRecording && <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE {lastRecording.mode === "audio-only" ? "AUDIO" : "VIDEO + AUDIO"}</button>}
+              {lastRecording && (
+                <div className="av-save-row">
+                  <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE {lastRecording.mode === "audio-only" ? "AUDIO" : lastRecording.container === "webm" ? "WEBM" : "VIDEO"}</button>
+                  {lastRecording.mode !== "audio-only" && lastRecording.container === "webm" && isTauri() && (
+                    <button className="save-button av-mp4-button" disabled={transcodingId === "last"} onClick={() => void saveBlobAsMp4(lastRecording.blob, "last")}>
+                      {transcodingId === "last" ? "TRANSCODING…" : "SAVE MP4"}
+                    </button>
+                  )}
+                </div>
+              )}
               {captures.length > 0 && (
                 <section className="capture-library" aria-label="Capture library">
                   <header><span>CAPTURES</span><b>{captures.length} SAVED</b></header>
@@ -4036,6 +4059,11 @@ export function App() {
                           <span>{(entry.bytes / 1_000_000).toFixed(1)} MB · {entry.durationSeconds.toFixed(1)}s · {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                         </div>
                         <button type="button" className="capture-entry-save" onClick={() => void saveCaptureEntry(entry)} aria-label="Save clip to disk">SAVE</button>
+                        {entry.mode !== "audio-only" && entry.container === "webm" && isTauri() && (
+                          <button type="button" className="capture-entry-save capture-entry-mp4" disabled={transcodingId === entry.id} onClick={() => void saveBlobAsMp4(entry.blob, entry.id)} aria-label="Transcode and save as MP4">
+                            {transcodingId === entry.id ? "…" : "MP4"}
+                          </button>
+                        )}
                         <button type="button" className="capture-entry-delete" onClick={() => void deleteCaptureEntry(entry.id)} aria-label="Remove clip from library">×</button>
                       </div>
                     ))}

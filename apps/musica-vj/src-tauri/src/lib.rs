@@ -22,7 +22,8 @@ use lyria_realtime_provider::{
 };
 use meta_llm_provider::{meta_llm_plan, meta_llm_status, MetaLlmProvider};
 use restream_provider::{
-    restream_push_chunk, restream_start, restream_status, restream_stop, RestreamProvider,
+    restream_push_chunk, restream_start, restream_status, restream_stop, transcode_to_mp4,
+    RestreamProvider,
 };
 use tauri::Manager;
 
@@ -183,7 +184,8 @@ pub fn run() {
             restream_status,
             restream_start,
             restream_push_chunk,
-            restream_stop
+            restream_stop,
+            transcode_to_mp4
         ])
         .run(tauri::generate_context!())
         .expect("error while running Musica VJ");
