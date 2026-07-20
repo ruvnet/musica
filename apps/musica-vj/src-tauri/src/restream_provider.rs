@@ -248,7 +248,7 @@ pub(crate) fn restream_push_chunk(
         .stdin
         .as_mut()
         .ok_or_else(|| "FFmpeg input pipe is closed".to_string())?
-        .write_all(&chunk)
+        .write_all(chunk)
         .map_err(|error| format!("Could not send media to FFmpeg: {error}"))
 }
 
