@@ -1,6 +1,6 @@
 {
   "name": "@musica/vj-studio",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -45,6 +45,7 @@
     "@types/react-dom": "19.2.3",
     "@types/three": "0.185.1",
     "@vitejs/plugin-react": "6.0.3",
+    "ffmpeg-static": "^5.3.0",
     "jsdom": "29.1.1",
     "typescript": "7.0.2",
     "vite": "8.1.5",

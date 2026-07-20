@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Musica VJ",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "identifier": "one.cognitum.musica.vj",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/setup-ffmpeg-sidecar.mjs && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "node scripts/setup-ffmpeg-sidecar.mjs && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/ffmpeg"],
     "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",

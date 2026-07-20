@@ -1,9 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
 const DEFAULT_RESTREAM_URL: &str = "rtmps://live.restream.io/live";
+
+/// Resolves the FFmpeg binary: the bundled sidecar sits next to the app
+/// executable at runtime; in dev (unbundled) fall back to `ffmpeg` on PATH.
+pub(crate) fn ffmpeg_binary() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let name = if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from("ffmpeg")
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +90,7 @@ fn validate_stream_key(value: &str) -> Result<String, String> {
 }
 
 fn ffmpeg_version() -> Result<String, String> {
-    let output = Command::new("ffmpeg")
+    let output = Command::new(ffmpeg_binary())
         .arg("-version")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -148,7 +168,7 @@ pub(crate) fn restream_start(
     if active.is_some() {
         return Err("A Restream broadcast is already active".to_string());
     }
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(ffmpeg_binary())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -277,6 +297,87 @@ pub(crate) fn restream_stop(
     }
     drop(active);
     Ok(status_for(&state))
+}
+
+/// Transcodes a WebM clip (raw binary IPC body) to H.264/AAC MP4 using the
+/// bundled FFmpeg, prompting for the destination via a native Save dialog.
+/// Returns the saved path, or None if the user cancelled. Lets Windows/Linux
+/// captures (which record WebM) export a portable MP4.
+#[tauri::command]
+pub(crate) fn transcode_to_mp4(
+    app: tauri::AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.to_vec(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("Transcode input must use binary IPC".to_string())
+        }
+    };
+    if bytes.is_empty() {
+        return Err("Nothing to transcode".to_string());
+    }
+    if bytes.len() > 1024 * 1024 * 1024 {
+        return Err("Clip exceeds the 1 GB transcode limit".to_string());
+    }
+    let destination = app
+        .dialog()
+        .file()
+        .add_filter("MP4 video", &["mp4"])
+        .set_file_name("musica-clip.mp4")
+        .blocking_save_file();
+    let Some(destination) = destination else {
+        return Ok(None);
+    };
+    let output = destination
+        .into_path()
+        .map_err(|error| format!("Invalid destination: {error}"))?;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let input = std::env::temp_dir().join(format!("musica-transcode-{stamp}.webm"));
+    std::fs::write(&input, &bytes).map_err(|error| format!("Could not stage clip: {error}"))?;
+
+    let result = Command::new(ffmpeg_binary())
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            &input.to_string_lossy(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            &output.to_string_lossy(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+    let _ = std::fs::remove_file(&input);
+    let result = result.map_err(|error| format!("Could not start FFmpeg: {error}"))?;
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        return Err(format!(
+            "FFmpeg transcode failed: {}",
+            stderr.lines().last().unwrap_or("unknown error")
+        ));
+    }
+    Ok(Some(output.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
