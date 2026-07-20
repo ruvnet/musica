@@ -89,5 +89,7 @@ Phase 2 shipped as four Tauri commands, all schema-validated in Rust with local 
 | `cognitum_set_arc` | SET ARC AUTOPILOT (30-90 min timeline; local energy-curve fallback) |
 | `cognitum_autodj_brief` | Auto DJ per-phrase briefs with previous-phrase memory; mood tag nudges visuals |
 | `cognitum_fx_direction` / `cognitum_visual_direction` | AI MOOD (lock-aware FX automation) and AI LOOK (scene/palette/motion) |
+| `cognitum_vocal_guidance` | AI WRITE in the VOCALIZE guidance dialog (realtime-vocals chip; style-family local fallbacks) |
+| `cognitum_visual_plugin` | AI SCENE generator (ADR-177 tier 1 parametric plugin scenes) |
 
 The LEARNING chip is backed by local performance memory (ADR-176). Phase 3 (Restream OAuth) remains unimplemented.
