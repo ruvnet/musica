@@ -1837,6 +1837,13 @@ export function App() {
   const applySetArcStep = useCallback((arc: SetArc, index: number) => {
     const step = arc.steps[index];
     if (!step) return;
+    if (index > 0 && !snapshotRef.current.playing) {
+      // The operator stopped the transport mid-show; a silent arc firing
+      // style changes for another hour is never what they want.
+      stopSetArcRef.current(false);
+      setNotice("Set arc paused with the transport. Press RUN ARC to restart it.");
+      return;
+    }
     setSetArcStepIndex(index);
     engineRef.current.setBpm(step.bpm);
     const matchingDeckScene = lyriaDeckScenes.find((scene) => scene.styleId === step.styleId);
