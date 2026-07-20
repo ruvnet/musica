@@ -870,3 +870,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
   .dj-widget-grid > .wide { grid-column: auto; }
 }
 .advanced-visuals { display: grid; gap: 9px; }
+.plugin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 7px; }
+.plugin-tile { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 22px; border: 1px dashed rgba(93,255,138,.3); border-radius: 7px; overflow: hidden; background: rgba(93,255,138,.03); }
+.plugin-tile button { min-width: 0; height: 30px; padding: 0 8px; overflow: hidden; border: 0; background: transparent; color: #9fe8b8; font: 700 7px "DM Mono", monospace; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.plugin-tile .plugin-delete { display: grid; place-items: center; border-left: 1px solid rgba(93,255,138,.18); color: #6f7582; font-size: 11px; }
+.plugin-tile .plugin-delete:hover { color: #ff8caf; }
+.plugin-tile.active { border-color: rgba(93,255,138,.65); background: rgba(93,255,138,.09); }
+.plugin-tile.active button { color: #c9ffdc; }

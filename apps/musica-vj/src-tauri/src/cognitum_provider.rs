@@ -957,6 +957,146 @@ pub(crate) async fn cognitum_visual_direction(
     Ok(direction)
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginMotion {
+    orbit: f32,
+    pulse: f32,
+    drift: f32,
+    twist: f32,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginAudio {
+    bass_to: String,
+    high_to: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginColors {
+    primary: String,
+    accent: String,
+    background: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VisualPluginSpec {
+    name: String,
+    base: String,
+    count: u16,
+    size: f32,
+    spread: f32,
+    motion: PluginMotion,
+    audio: PluginAudio,
+    colors: PluginColors,
+    fog: f32,
+    exposure: f32,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_visual_plugin(
+    provider: State<'_, CognitumProvider>,
+    description: String,
+) -> Result<VisualPluginSpec, String> {
+    let trimmed = description.trim();
+    if trimmed.is_empty() || trimmed.len() > 400 {
+        return Err("Describe the plugin scene in 1 to 400 characters".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You design parametric visual plugin scenes for a live music visualizer (ADR-177 tier 1: pure data, no code). Return only JSON with keys name (max 24 chars), base (particles | ribbons | rings), count (50-4000), size (0-1), spread (0-1), motion {orbit, pulse, drift, twist each 0-1}, audio {bassTo: scale|speed|none, highTo: brightness|jitter|none}, colors {primary, accent, background — each a #rrggbb hex, background very dark}, fog (0-1), exposure (0-1). Choose parameters that embody the described look; particles suit fields and storms, ribbons suit flowing silk and waves, rings suit portals and orbits.".to_string();
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: trimmed.to_string(),
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum plugin request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum plugin generation was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty plugin".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid plugin".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid plugin".to_string())?;
+    let spec: VisualPluginSpec = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid plugin".to_string())?;
+    validate_visual_plugin(&spec)?;
+    Ok(spec)
+}
+
+fn is_hex_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
+fn validate_visual_plugin(spec: &VisualPluginSpec) -> Result<(), String> {
+    if spec.name.trim().is_empty() || spec.name.len() > 24 {
+        return Err("Plugin name is invalid".into());
+    }
+    if !["particles", "ribbons", "rings"].contains(&spec.base.as_str()) {
+        return Err("Plugin base is unknown".into());
+    }
+    if !(50..=4_000).contains(&spec.count) {
+        return Err("Plugin count is out of range".into());
+    }
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    if !unit(spec.size)
+        || !unit(spec.spread)
+        || !unit(spec.motion.orbit)
+        || !unit(spec.motion.pulse)
+        || !unit(spec.motion.drift)
+        || !unit(spec.motion.twist)
+        || !unit(spec.fog)
+        || !unit(spec.exposure)
+    {
+        return Err("Plugin values are out of range".into());
+    }
+    if !["scale", "speed", "none"].contains(&spec.audio.bass_to.as_str())
+        || !["brightness", "jitter", "none"].contains(&spec.audio.high_to.as_str())
+    {
+        return Err("Plugin audio mapping is unknown".into());
+    }
+    if !is_hex_color(&spec.colors.primary)
+        || !is_hex_color(&spec.colors.accent)
+        || !is_hex_color(&spec.colors.background)
+    {
+        return Err("Plugin colors must be #rrggbb hex".into());
+    }
+    Ok(())
+}
+
 fn validate_visual_direction(
     direction: &VisualDirection,
     scene_ids: &[String],

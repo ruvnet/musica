@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { LyriaRealtimeConfig, LyriaWeightedPrompt } from "./lyriaRealtime";
+import { normalizeVisualPluginSpec, type VisualPluginSpec } from "./visualPlugins";
 
 export type CognitumCapability = "advanced-prompting" | "autopilot" | "learning" | "realtime-vocals";
 
@@ -251,4 +252,12 @@ export function localSetArc(durationMinutes: number, styleIds: string[], sceneId
       note: phase.note,
     })),
   };
+}
+
+export async function generateCognitumVisualPlugin(description: string): Promise<VisualPluginSpec> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  const raw = await invoke<unknown>("cognitum_visual_plugin", { description });
+  const spec = normalizeVisualPluginSpec(raw);
+  if (!spec) throw new Error("Cognitum returned an invalid plugin");
+  return spec;
 }

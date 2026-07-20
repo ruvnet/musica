@@ -99,6 +99,7 @@ import {
   generateCognitumFxDirection,
   generateCognitumSetArc,
   generateCognitumVisualDirection,
+  generateCognitumVisualPlugin,
   localFxDirection,
   localVisualDirection,
   generateCognitumStylePack,
@@ -111,6 +112,7 @@ import {
   type SetArc,
 } from "./core/cognitum";
 import { memoryCount, recallDirection, recordDirection } from "./core/performanceMemory";
+import { localVisualPluginSpec, normalizeVisualPluginList, type VisualPluginSpec } from "./core/visualPlugins";
 import {
   loadWorkspaceSettings,
   normalizeWorkspaceSettings,
@@ -1149,6 +1151,43 @@ export function App() {
     setNotice("Custom style removed.");
   }, [customLyriaStyles, lyriaStyleId, persistCustomStyles]);
 
+  const [visualPlugins, setVisualPlugins] = useState<VisualPluginSpec[]>([]);
+  const [activePluginId, setActivePluginId] = useState<string>();
+  const [pluginPrompt, setPluginPrompt] = useState("");
+  const [pluginBusy, setPluginBusy] = useState(false);
+
+  const activatePlugin = useCallback((spec?: VisualPluginSpec) => {
+    visualRef.current?.setActivePlugin(spec);
+    setActivePluginId(spec?.id);
+    if (spec) setNotice(`${spec.name} plugin scene active · pick any scene tile to return to built-ins.`);
+  }, []);
+
+  const generateVisualPlugin = useCallback(async () => {
+    const description = pluginPrompt.trim();
+    if (!description || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const spec = cognitumReady
+        ? await generateCognitumVisualPlugin(description).catch(() => localVisualPluginSpec(description))
+        : localVisualPluginSpec(description);
+      setVisualPlugins((current) => [...current, spec].slice(-12));
+      setPluginPrompt("");
+      activatePlugin(spec);
+      setNotice(`${spec.name} generated (${spec.base}, ${spec.count} elements) and activated.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Plugin generation failed");
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [activatePlugin, pluginBusy, pluginPrompt]);
+
+  const deletePlugin = useCallback((id: string) => {
+    setVisualPlugins((current) => current.filter((spec) => spec.id !== id));
+    if (activePluginId === id) activatePlugin(undefined);
+    setNotice("Plugin scene removed.");
+  }, [activatePlugin, activePluginId]);
+
   const collectWorkspaceSettings = useCallback((): WorkspaceSettings => ({
     version: 1,
     onboarding: onboardingPreferences,
@@ -1158,7 +1197,8 @@ export function App() {
     masterEffectParams,
     fxLocks,
     sfxLevel,
-  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, sfxLevel]);
+    plugins: visualPlugins,
+  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, sfxLevel, visualPlugins]);
 
   const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
     setOnboardingPreferences(settings.onboarding);
@@ -1170,6 +1210,7 @@ export function App() {
     }
     setFxLocks((current) => ({ ...current, ...settings.fxLocks }));
     changeSfxLevel(settings.sfxLevel);
+    setVisualPlugins(normalizeVisualPluginList(settings.plugins));
   }, [changeMasterEffect, changeMasterEffectParam, changeSfxLevel, persistCustomStyles]);
 
   const workspaceLoadedRef = useRef(false);
@@ -1594,6 +1635,7 @@ export function App() {
   }, []);
 
   const changeScene = useCallback((scene: VisualSceneId) => {
+    setActivePluginId(undefined);
     setSelectedScene(scene);
     selectedSceneRef.current = scene;
     visualRef.current?.setScene(scene);
@@ -1786,6 +1828,8 @@ export function App() {
     setFeedbackBoost(value);
     visualRef.current?.setFeedbackBoost(value);
   }, []);
+
+
 
   useEffect(() => {
     void memoryCount().then(setMemoryEntries);
@@ -2910,6 +2954,30 @@ export function App() {
                   {visualMoodBusy ? "…" : "DIRECT"}
                 </button>
               </div>
+              <div className="ai-look plugin-generator" title="Generate a brand-new parametric plugin scene from a description (ADR-177)">
+                <input
+                  value={pluginPrompt}
+                  maxLength={400}
+                  placeholder="AI scene: slow silver starfield… molten ember storm…"
+                  onChange={(event) => setPluginPrompt(event.target.value)}
+                  aria-label="AI plugin scene description"
+                />
+                <button type="button" onClick={() => void generateVisualPlugin()} disabled={pluginBusy || !pluginPrompt.trim()}>
+                  {pluginBusy ? "…" : "CREATE"}
+                </button>
+              </div>
+              {visualPlugins.length > 0 && (
+                <div className="plugin-grid" role="group" aria-label="AI plugin scenes">
+                  {visualPlugins.map((spec) => (
+                    <span key={spec.id} className={`plugin-tile ${spec.id === activePluginId ? "active" : ""}`}>
+                      <button type="button" onClick={() => activatePlugin(spec.id === activePluginId ? undefined : spec)} title={`${spec.base} · ${spec.count} elements`}>
+                        {spec.name}
+                      </button>
+                      <button type="button" className="plugin-delete" onClick={() => deletePlugin(spec.id)} aria-label={`Delete ${spec.name}`}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </section>
           ))}
 

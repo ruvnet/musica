@@ -1,6 +1,7 @@
 import { DEFAULT_MASTER_EFFECT_PARAMS, MASTER_EFFECT_IDS, type MasterEffectParams, type MasterEffectsState } from "../audio/AudioEngine";
 import { loadCustomLyriaStyles, type LyriaRealtimeStylePreset } from "./lyriaRealtime";
 import { loadLyriaDeckScenes, type LyriaDeckScene } from "./lyriaDeckScenes";
+import { normalizeVisualPluginList, type VisualPluginSpec } from "./visualPlugins";
 import { DEFAULT_ONBOARDING_PREFERENCES, normalizeOnboardingPreferences, type OnboardingPreferences } from "./onboarding";
 
 const DB_NAME = "musica-settings";
@@ -18,6 +19,7 @@ export interface WorkspaceSettings {
   masterEffectParams: MasterEffectParams;
   fxLocks: Record<string, boolean>;
   sfxLevel: number;
+  plugins?: VisualPluginSpec[];
 }
 
 function boundedUnit(value: unknown, fallback: number): number {
@@ -46,6 +48,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings | 
     ) as unknown as MasterEffectParams,
     fxLocks: Object.fromEntries(MASTER_EFFECT_IDS.map((effect) => [effect, locks[effect] === true])),
     sfxLevel: boundedUnit(raw.sfxLevel, 0.5),
+    plugins: normalizeVisualPluginList(raw.plugins),
   };
 }
 

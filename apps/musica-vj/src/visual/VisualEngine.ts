@@ -7,6 +7,7 @@ import type { AudioEngine } from "../audio/AudioEngine";
 import type { AudioAnalysisResult, MeasuredSectionType } from "../audio/audioAnalysis";
 import { DEFAULT_TEMPORAL_CONTROLS, visualSceneById } from "../core/presets";
 import type { AudioMetrics, TrackId, VisualColorControls, VisualPaletteId, VisualSceneId, VisualTemporalControls } from "../core/types";
+import type { VisualPluginSpec } from "../core/visualPlugins";
 
 export interface RenderStats {
   fps: number;
@@ -404,6 +405,9 @@ export class VisualEngine {
   private readonly floorGroup = new THREE.Group();
   private readonly bloomPass: UnrealBloomPass;
   private feedbackBoost = 0;
+  private readonly pluginGroup = new THREE.Group();
+  private activePlugin?: VisualPluginSpec;
+  private pluginSeeds: Float32Array = new Float32Array(0);
   private readonly scopeGroup = new THREE.Group();
   private readonly scopeLines: Array<THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>> = [];
   private scopeSpikes?: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
@@ -519,6 +523,7 @@ export class VisualEngine {
       this.afterimageGroup,
       this.atmosphereGroup,
       this.scopeGroup,
+      this.pluginGroup,
       this.core,
     );
 
@@ -572,6 +577,7 @@ export class VisualEngine {
   }
 
   setScene(scene: VisualSceneId): void {
+    if (this.activePlugin) this.setActivePlugin(undefined);
     const changed = scene !== this.currentScene;
     this.currentScene = scene;
     this.sceneCharacter = sceneCharacterById(scene);
@@ -632,6 +638,156 @@ export class VisualEngine {
 
   getTemporalControls(): VisualTemporalControls {
     return { ...this.temporal };
+  }
+
+  setActivePlugin(spec: VisualPluginSpec | undefined): void {
+    this.activePlugin = spec;
+    this.pluginGroup.clear();
+    for (const child of [...this.pluginGroup.children]) {
+      if (child instanceof THREE.Points || child instanceof THREE.Line) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    }
+    const showBuiltIns = spec === undefined;
+    this.tunnelGroup.visible = showBuiltIns && visualSceneById(this.currentScene).mode === "tunnel";
+    this.bloomGroup.visible = showBuiltIns && visualSceneById(this.currentScene).mode === "bloom";
+    this.terrainGroup.visible = showBuiltIns && visualSceneById(this.currentScene).mode === "terrain";
+    this.scopeGroup.visible = showBuiltIns && visualSceneById(this.currentScene).mode === "scope";
+    this.kineticFieldGroup.visible = showBuiltIns;
+    this.volumetricGroup.visible = showBuiltIns;
+    this.afterimageGroup.visible = showBuiltIns;
+    this.floorGroup.visible = showBuiltIns;
+    this.core.visible = showBuiltIns && !["terrain", "scope"].includes(visualSceneById(this.currentScene).mode);
+    this.pluginGroup.visible = !showBuiltIns;
+    if (!spec) {
+      this.applySceneTheme(this.currentScene);
+      return;
+    }
+
+    let state = 0x5eed ^ spec.count;
+    const random = () => {
+      state = Math.imul(state ^ (state >>> 15), 1 | state);
+      state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
+      return ((state ^ (state >>> 14)) >>> 0) / 4294967296;
+    };
+    const primary = new THREE.Color(spec.colors.primary);
+    const accent = new THREE.Color(spec.colors.accent);
+    this.pluginSeeds = new Float32Array(spec.count);
+    for (let index = 0; index < spec.count; index += 1) this.pluginSeeds[index] = random();
+
+    if (spec.base === "particles") {
+      const positions = new Float32Array(spec.count * 3);
+      const colors = new Float32Array(spec.count * 3);
+      for (let index = 0; index < spec.count; index += 1) {
+        const radius = Math.pow(random(), 0.6) * (2 + spec.spread * 7);
+        const angle = random() * Math.PI * 2;
+        positions[index * 3] = Math.cos(angle) * radius;
+        positions[index * 3 + 1] = (random() - 0.5) * (2 + spec.spread * 6);
+        positions[index * 3 + 2] = -2 - random() * 10;
+        (random() < 0.3 ? accent : primary).toArray(colors, index * 3);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      this.pluginGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({
+        size: 0.02 + spec.size * 0.12,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        sizeAttenuation: true,
+      })));
+    } else if (spec.base === "rings") {
+      const ringCount = Math.max(3, Math.min(24, Math.round(spec.count / 60)));
+      for (let ring = 0; ring < ringCount; ring += 1) {
+        const points = 96;
+        const positions = new Float32Array((points + 1) * 3);
+        const radius = 1 + (ring / ringCount) * (2.5 + spec.spread * 5.5);
+        for (let point = 0; point <= points; point += 1) {
+          const angle = (point / points) * Math.PI * 2;
+          positions[point * 3] = Math.cos(angle) * radius;
+          positions[point * 3 + 1] = Math.sin(angle) * radius;
+          positions[point * 3 + 2] = -3 - ring * 0.4;
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        this.pluginGroup.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({
+          color: ring % 2 === 0 ? primary : accent,
+          transparent: true,
+          opacity: 0.5,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })));
+      }
+    } else {
+      const ribbonCount = Math.max(3, Math.min(20, Math.round(spec.count / 80)));
+      for (let ribbon = 0; ribbon < ribbonCount; ribbon += 1) {
+        const points = 140;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points * 3), 3));
+        this.pluginGroup.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({
+          color: ribbon % 2 === 0 ? primary : accent,
+          transparent: true,
+          opacity: 0.45,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })));
+      }
+    }
+    if (this.scene.background instanceof THREE.Color) this.scene.background.set(spec.colors.background);
+    if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0.008 + spec.fog * 0.035;
+    this.renderer.toneMappingExposure = 0.55 + spec.exposure * 0.6;
+  }
+
+  getActivePluginId(): string | undefined {
+    return this.activePlugin?.id;
+  }
+
+  private updatePlugin(time: number, low: number, high: number, beatPulse: number): void {
+    const spec = this.activePlugin;
+    if (!spec || !this.pluginGroup.visible) return;
+    const speedBoost = spec.audio.bassTo === "speed" ? 1 + low * 2.2 : 1;
+    const scaleBoost = spec.audio.bassTo === "scale" ? 1 + low * 0.5 + beatPulse * 0.35 : 1;
+    const jitter = spec.audio.highTo === "jitter" ? high * 0.35 : 0;
+    const speed = (0.2 + spec.motion.drift * 1.4) * speedBoost;
+    this.pluginGroup.rotation.z = time * 0.05 * spec.motion.twist + Math.sin(time * 0.2) * spec.motion.orbit * 0.15;
+    this.pluginGroup.rotation.y = Math.sin(time * 0.08 * spec.motion.orbit) * 0.3;
+    const pulseScale = (1 + Math.sin(time * (0.5 + spec.motion.pulse * 2)) * spec.motion.pulse * 0.08) * scaleBoost;
+    this.pluginGroup.scale.setScalar(pulseScale);
+    for (const child of this.pluginGroup.children) {
+      if (child instanceof THREE.Points) {
+        const material = child.material as THREE.PointsMaterial;
+        material.opacity = spec.audio.highTo === "brightness" ? 0.5 + high * 0.5 : 0.85;
+        const positions = child.geometry.getAttribute("position") as THREE.BufferAttribute;
+        for (let index = 0; index < positions.count; index += 1) {
+          const seed = this.pluginSeeds[index % this.pluginSeeds.length] ?? 0.5;
+          let z = positions.getZ(index) + speed * 0.016 * (0.5 + seed);
+          if (z > 2) z = -12;
+          positions.setZ(index, z);
+          if (jitter > 0) {
+            positions.setX(index, positions.getX(index) + (seed - 0.5) * jitter * 0.1);
+          }
+        }
+        positions.needsUpdate = true;
+      } else if (child instanceof THREE.Line && spec.base === "ribbons") {
+        const index = this.pluginGroup.children.indexOf(child);
+        const positions = child.geometry.getAttribute("position") as THREE.BufferAttribute;
+        for (let point = 0; point < positions.count; point += 1) {
+          const progress = point / (positions.count - 1);
+          const x = -6 + progress * 12;
+          const phase = time * speed * 0.4 + index * 0.9;
+          const y = Math.sin(progress * (4 + spec.motion.twist * 8) + phase) * (0.5 + spec.spread * 1.6)
+            + Math.sin(progress * 13 + phase * 1.7) * jitter;
+          positions.setXYZ(point, x, y - 1 + index * 0.24, -3 - index * 0.3);
+        }
+        positions.needsUpdate = true;
+        (child.material as THREE.LineBasicMaterial).opacity = spec.audio.highTo === "brightness" ? 0.25 + high * 0.5 : 0.45;
+      } else if (child instanceof THREE.Line) {
+        child.rotation.z = time * (0.1 + spec.motion.orbit * 0.4) * (this.pluginGroup.children.indexOf(child) % 2 === 0 ? 1 : -1);
+      }
+    }
   }
 
   setBloomSettings(settings: Partial<BloomSettings>): void {
@@ -745,6 +901,7 @@ export class VisualEngine {
     this.updateSignalBloom(time, metrics, response, low, mid, high, style);
     this.updateKineticField(time, response, low, mid, high, style);
     this.updateScope(time, metrics, response, style);
+    this.updatePlugin(time, low, high, beatPulse);
     const feedback = mapFeedbackResponse(this.temporal.trail, this.artDirection.motion, beatPulse, this.temporal.morph);
     this.feedbackPass.damp = Math.max(feedback.damp, this.feedbackBoost * 0.94);
     this.feedbackPass.zoom = feedback.zoom;
