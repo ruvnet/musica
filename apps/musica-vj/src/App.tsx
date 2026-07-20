@@ -58,6 +58,7 @@ import {
   createLyriaVocalPrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
+  nextAutoDjStyleId,
   getLyriaRealtimeStatus,
   lyriaRealtimeStyleById,
   lyriaRealtimeStyleForTemplate,
@@ -2210,9 +2211,10 @@ export function App() {
       if (autoDjTransitionRef.current || cancelled) return;
       autoDjTransitionRef.current = true;
       try {
-        const currentIndex = Math.max(0, LYRIA_REALTIME_STYLE_PRESETS.findIndex((style) => style.id === autoDjStyleRef.current));
         const step = advance ? autoDjStepRef.current + 1 : autoDjStepRef.current;
-        const baseStyle = LYRIA_REALTIME_STYLE_PRESETS[(currentIndex + (advance ? 1 : 0)) % LYRIA_REALTIME_STYLE_PRESETS.length];
+        const nextStyleId = advance ? nextAutoDjStyleId(autoDjStyleRef.current, step) : autoDjStyleRef.current;
+        const baseStyle = LYRIA_REALTIME_STYLE_PRESETS.find((style) => style.id === nextStyleId)
+          ?? LYRIA_REALTIME_STYLE_PRESETS[0];
         const style = applyPrimaryGuidance(baseStyle, lyriaStyleGuidance[baseStyle.id]);
         const localRequest = createAutoDjRealtimeRequest(style, {
           personalization: autoDjPersonalizationRef.current,
