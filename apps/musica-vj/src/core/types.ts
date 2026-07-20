@@ -10,8 +10,9 @@ export type VisualSceneId =
   | "aurora"
   | "monolith"
   | "pulsefield"
-  | "chromawave";
-export type VisualSceneMode = "tunnel" | "bloom" | "terrain";
+  | "chromawave"
+  | "oscilloscope";
+export type VisualSceneMode = "tunnel" | "bloom" | "terrain" | "scope";
 
 export interface VisualSceneMeta {
   id: VisualSceneId;

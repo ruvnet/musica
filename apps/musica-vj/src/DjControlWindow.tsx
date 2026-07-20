@@ -10,7 +10,7 @@ import {
   type DjControlWidgetLayout,
 } from "./core/djControls";
 import { installMagneticWindowSnapping } from "./core/djWindows";
-import { LYRIA_REALTIME_STYLE_PRESETS } from "./core/lyriaRealtime";
+import { CUSTOM_LYRIA_STYLES_STORAGE_KEY, LYRIA_REALTIME_STYLE_PRESETS, loadCustomLyriaStyles } from "./core/lyriaRealtime";
 import { DEFAULT_LYRIA_DECK_CONTROLS, DEFAULT_LYRIA_DECK_SCENES, cloneLyriaDeckScene, type LyriaDeckControl } from "./core/lyriaDeckScenes";
 import { VISUAL_SCENES } from "./core/presets";
 import { DEFAULT_VISUAL_COLOR_CONTROLS, VISUAL_COLOR_PALETTES } from "./visual/VisualEngine";
@@ -57,6 +57,13 @@ export function DjControlWindow({ profile }: { profile: DjControlProfileId }) {
   const [connected, setConnected] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const [layout, setLayout] = useState<DjControlWidgetLayout[]>(() => loadLayout(profile));
+  const allStyles = useMemo(() => {
+    try {
+      return [...LYRIA_REALTIME_STYLE_PRESETS, ...loadCustomLyriaStyles(window.localStorage.getItem(CUSTOM_LYRIA_STYLES_STORAGE_KEY))];
+    } catch {
+      return [...LYRIA_REALTIME_STYLE_PRESETS];
+    }
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(`musica.dj-window.${profile}.v1`, JSON.stringify(layout));
@@ -176,9 +183,18 @@ export function DjControlWindow({ profile }: { profile: DjControlProfileId }) {
     if (id === "styles") return (
       <section className="dj-widget">
         <header><span>MUSICAL STYLE</span><b>LYRIA</b></header>
-        <select className="dj-style-select" value={state.styleId} onChange={(event) => void sendDjControlCommand({ type: "style", styleId: event.target.value })}>
-          {LYRIA_REALTIME_STYLE_PRESETS.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-        </select>
+        <div className="dj-style-grid">
+          {allStyles.map((style) => (
+            <button
+              key={style.id}
+              className={`${style.id === state.styleId ? "active" : ""} ${style.id.startsWith("custom-") ? "custom-style" : ""}`}
+              title={style.description}
+              onClick={() => void sendDjControlCommand({ type: "style", styleId: style.id })}
+            >
+              {style.label}
+            </button>
+          ))}
+        </div>
       </section>
     );
 

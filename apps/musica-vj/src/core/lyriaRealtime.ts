@@ -44,12 +44,23 @@ export interface LyriaRealtimeRequest {
   config: LyriaRealtimeConfig;
 }
 
+export interface LyriaStreamFxDefaults {
+  flanger?: number;
+  sweep?: number;
+  reverb?: number;
+  echo?: number;
+  drive?: number;
+  crush?: number;
+  phaser?: number;
+}
+
 export interface LyriaRealtimeStylePreset {
   id: string;
   label: string;
   description: string;
   prompts: LyriaWeightedPrompt[];
   config: Partial<LyriaRealtimeConfig>;
+  streamFx?: LyriaStreamFxDefaults;
 }
 
 export interface AutoDjDirection {
@@ -122,7 +133,7 @@ export const DEFAULT_LYRIA_REALTIME_PROMPTS: LyriaWeightedPrompt[] = [
   { text: "free tempo, random genre changes, clashing harmony, overbusy arrangement, long intro, abrupt fills, muddy mix, harsh master", weight: -0.62 },
 ];
 
-export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "house";
+export const DEFAULT_LYRIA_REALTIME_STYLE_ID = "rock";
 
 export const AUTO_DJ_PHRASE_BARS = 32;
 
@@ -294,9 +305,9 @@ export function createLyriaVocalPrompts(
   const scale = readableScale(context?.scale);
   const custom = context?.customDirection?.trim() || "Expressive wordless lead with a memorable chorus contour; answer the main motif without competing with it";
   return [
-    { text: `${style.label} a cappella companion vocal in ${scale}; main identity: ${identity}; ${custom}; isolated human voice, expressive vowels and rhythmic syllables, no intelligible words`.slice(0, 240), weight: 1.42 },
-    { text: "32-bar vocal form: bars 1-4 rest; 5-8 introduce short motif; 9-16 sparse verse answers; 17-20 pre-chorus lift; 21-28 sustained chorus hook; 29-32 resolve and leave space on final downbeat", weight: 1.3 },
-    { text: "Match the main tempo, scale, emotional arc, eight-bar boundaries, and cadences; favor root, third, fifth and consonant extensions; reuse one singable motif; voice only with complete silence between phrases", weight: 1.18 },
+    { text: `Vocal character and direction: ${custom}; isolated human voice, no intelligible words`.slice(0, 240), weight: 1.55 },
+    { text: `${style.label} a cappella companion vocal in ${scale}; main identity: ${identity}; expressive vowels and rhythmic syllables only`.slice(0, 240), weight: 1.32 },
+    { text: "32-bar vocal form: bars 1-4 rest; 5-8 introduce short motif; 9-16 sparse verse answers; 17-20 pre-chorus lift; 21-28 sustained chorus hook; 29-32 resolve; match the main tempo, scale, and cadences; voice only with silence between phrases", weight: 1.16 },
     { text: "independent song, different key, new chord progression, lyrics, intelligible words, drums, percussion, bass, synths, pads, piano, guitar, strings, brass, sound effects, accompaniment, continuous vocal wall", weight: -1.3 },
   ];
 }
@@ -329,6 +340,69 @@ export function createLyriaSequenceConfig(
 
 export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
   {
+    id: "rock",
+    label: "Rock",
+    description: "Hard-driving 2026 instrumental rock with dominant overdriven guitars, a thunderous live rhythm section, anthemic hooks, and physical room energy.",
+    prompts: [
+      { text: "Hard-driving 2026 instrumental rock at 126 BPM; two dominant overdriven electric rhythm guitars, palm-muted eighth-note riff, huge acoustic kick and snare, picked bass, anthemic octave lead hook", weight: 1.35 },
+      { text: "Real four-piece band performance with relentless forward motion, powerful crash accents, energetic tom fills, controlled feedback, tight bass-and-kick lock, muscular human timing, physical live-room impact", weight: 1.15 },
+      { text: "Immediate riff-first 32-bar arc; tense verse-sized variation, massive chorus-sized instrumental payoff, short drum-and-bass break, strongest final return; wide guitars, focused lows, hard clean transients", weight: 1.02 },
+      { text: "vocals, lyrics, acoustic folk, country, latin rhythm, funk, jazz, orchestral score, electronic dance beat, programmed drums, soft rock, retro pastiche, endless solo, fizzy guitar, muddy room, weak snare", weight: -1.2 },
+    ],
+    config: { bpm: 126, density: 0.78, brightness: 0.62, guidance: 5.8, temperature: 0.78, topK: 28, scale: "G_MAJOR_E_MINOR" },
+  },
+  {
+    id: "8bit",
+    label: "8-Bit",
+    description: "Authentic chiptune with square-wave leads, triangle bass, noise-channel drums, and a catchy heroic video-game theme.",
+    prompts: [
+      { text: "Authentic 2026 chiptune instrumental at 140 BPM; NES-style square-wave lead melody, pulse-width arpeggios, triangle-wave bass line, noise-channel drums, bright heroic 8-bit video game energy, catchy singable main theme", weight: 1.32 },
+      { text: "Blend classic console chiptune with modern game-soundtrack craft; tight arpeggiated chord stabs, octave-jumping bass, dramatic key-change lift, precise quantized sequencing with expressive melody phrasing", weight: 1.08 },
+      { text: "Complete 32-bar level-theme arc: immediate main theme, B-section variation, short bridge breakdown, triumphant final return; clean digital mix, crisp squares, controlled low end", weight: 0.96 },
+      { text: "vocals, lyrics, orchestral instruments, realistic drums, guitar, lo-fi tape, muddy bass, harsh piercing leads, random atonal runs, tempo drift, long intro, fade out", weight: -1.12 },
+    ],
+    config: { bpm: 140, density: 0.6, brightness: 0.7, guidance: 5.4, scale: "C_MAJOR_A_MINOR" },
+  },
+  {
+    id: "lofi",
+    label: "Lo-Fi",
+    description: "Dusty lo-fi hip-hop with swung boom-bap drums, vinyl crackle, mellow jazzy Rhodes, and warm tape saturation.",
+    prompts: [
+      { text: "Warm 2026 lo-fi hip-hop instrumental at 76 BPM; dusty swung boom-bap drums, soft rounded kick, vinyl crackle patina, mellow jazzy Rhodes chords, muted upright-style bass, gentle tape wobble and saturation", weight: 1.32 },
+      { text: "Blend classic lo-fi beat-tape aesthetics with jazz seventh-chord harmony, nostalgic melodic fragments, subtle sidechain breathing, rain-on-window intimacy, head-nod pocket with human microtiming", weight: 1.08 },
+      { text: "Relaxed 32-bar loop-friendly arc: theme, gentle variation, sparse bridge with bass and crackle only, warm resolved return; soft high end, cozy saturated master, deep but tidy low end", weight: 0.96 },
+      { text: "vocals, lyrics, trap hi-hat rolls, aggressive drums, bright digital synths, EDM drop, harsh highs, clipping, fast tempo, busy arrangement, long intro, fade out", weight: -1.1 },
+    ],
+    config: { bpm: 76, density: 0.4, brightness: 0.32, guidance: 5, scale: "E_FLAT_MAJOR_C_MINOR" },
+    streamFx: { reverb: 0.18, flanger: 0.06 },
+  },
+  {
+    id: "dubstep",
+    label: "Dubstep",
+    description: "Half-time 140 BPM pressure with wobble and growl bass conversation, surgical low end, and cinematic drop architecture.",
+    prompts: [
+      { text: "Forward-looking 2026 dubstep instrumental at 140 BPM; half-time drop with massive wobble bass and growl bass modulation, crisp cracking snare on the three, deep clean sub foundation, cinematic sound-design weight", weight: 1.32 },
+      { text: "Blend classic UK dubstep space, modern riddim precision, and melodic dubstep color; LFO wobble patterns that answer the drum pattern, call-and-response bass conversation, tension risers only at phrase boundaries", weight: 1.08 },
+      { text: "DJ-ready 32-bar arc: atmospheric pressure intro, controlled build, massive half-time drop, sparse breakdown breath, harder second-drop variation; surgical mono low end, sharp transients, controlled loudness", weight: 0.96 },
+      { text: "vocals, lyrics, brostep noise wall, random screeches, four-on-the-floor kick, muddy sub, weak snare, constant risers, tempo drift, long intro, fade out", weight: -1.12 },
+    ],
+    config: { bpm: 140, density: 0.66, brightness: 0.5, guidance: 5.2, scale: "F_MAJOR_D_MINOR" },
+    streamFx: { sweep: 0.15, echo: 0.12 },
+  },
+  {
+    id: "neuroflux",
+    label: "Neuroflux",
+    description: "An AI-native genre: timbres re-synthesize continuously mid-phrase — drums morph from acoustic to granular, harmony rotates — while one hypnotic motif holds it all together.",
+    prompts: [
+      { text: "Neuroflux, a new AI-native genre at 122 BPM; continuously morphing hybrid of club pulse, chamber acoustics, and synthetic voice-like textures; instrument timbres interpolate smoothly into one another mid-phrase, re-synthesized live", weight: 1.32 },
+      { text: "One hypnotic four-note motif anchors everything while the world drifts: drums morph gradually from acoustic to granular, harmony rotates through modal colors, textures crossfade between organic and machine; continuous, never abrupt", weight: 1.1 },
+      { text: "Slow 32-bar metamorphosis: every eight bars the ensemble has audibly become something new while the motif and groove never break; deep dimensional mix, pristine transients, wide evolving space", weight: 0.96 },
+      { text: "vocals, lyrics, static loop, abrupt genre jumps, chaos, atonality, tempo drift, muddy blend, harsh resonances, random noise collage, drop cliche", weight: -1.1 },
+    ],
+    config: { bpm: 122, density: 0.56, brightness: 0.52, guidance: 4.6, scale: "D_MAJOR_B_MINOR", musicGenerationMode: "DIVERSITY" },
+    streamFx: { flanger: 0.15, sweep: 0.1, reverb: 0.2 },
+  },
+  {
     id: "house",
     label: "House",
     description: "Forward-looking 2026 deep house with elastic sub bass, shuffled percussion, glossy piano hooks, and elegant club dynamics.",
@@ -339,6 +413,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "actual vocals, lyrics, cheesy melody, retro imitation, festival EDM drop, supersaw wall, latin percussion, muddy sub, weak kick, harsh master, random fills, tempo drift, long intro, fade out", weight: -1.08 },
     ],
     config: { bpm: 123, density: 0.6, brightness: 0.5, guidance: 4.8, scale: "C_MAJOR_A_MINOR" },
+    streamFx: { reverb: 0.1 },
   },
   {
     id: "techno",
@@ -351,6 +426,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, lyrics, big-room EDM, trance supersaws, cheesy acid riff, random breakdowns, constant risers, distorted kick wash, muddy rumble, harsh hats, tempo drift, excessive reverb, long intro", weight: -1.1 },
     ],
     config: { bpm: 132, density: 0.64, brightness: 0.44, guidance: 4.8, scale: "F_MAJOR_D_MINOR" },
+    streamFx: { echo: 0.1 },
   },
   {
     id: "cinematic",
@@ -363,6 +439,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, choir words, generic trailer braams, superhero ostinato, sentimental piano cliche, constant impacts, melodrama, random key changes, boomy lows, washed-out reverb, abrupt edits", weight: -1.05 },
     ],
     config: { bpm: 104, density: 0.5, brightness: 0.44, guidance: 5, scale: "C_MAJOR_A_MINOR" },
+    streamFx: { reverb: 0.28 },
   },
   {
     id: "drum-bass",
@@ -375,6 +452,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, lyrics, jump-up wobble cliche, abrasive reese wall, neurofunk overload, random amen edits, trap hats, weak snare, distorted sub, piercing tops, washed pads, tempo drift, long intro", weight: -1.1 },
     ],
     config: { bpm: 174, density: 0.72, brightness: 0.5, guidance: 4.8, scale: "D_MAJOR_B_MINOR" },
+    streamFx: { echo: 0.08 },
   },
   {
     id: "hiphop",
@@ -413,16 +491,65 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
     config: { bpm: 108, density: 0.72, brightness: 0.62, guidance: 5, scale: "C_MAJOR_A_MINOR" },
   },
   {
-    id: "rock",
-    label: "Rock",
-    description: "Forward-leaning 2026 instrumental rock with a tight live band, wide expressive guitars, acoustic drum impact, and cinematic dynamics.",
+    id: "country",
+    label: "Country",
+    description: "Contemporary instrumental country with a convincing live rhythm section, articulate guitars, organic dynamics, and modern Nashville clarity.",
     prompts: [
-      { text: "Forward-leaning 2026 instrumental rock at 126 BPM built around a tight live band; expressive electric guitars, wide rhythm parts, sharp melodic accents, controlled feedback, bold anthemic lead hook", weight: 1.3 },
-      { text: "Punchy bass locked closely to a real acoustic drum kit; deep kick, hard snare hits, energetic tom fills, natural cymbal dynamics; muscular immediate performance with human timing and live-room energy", weight: 1.1 },
-      { text: "Cinematic 32-bar arc moving from restrained tension into a huge chorus-sized instrumental payoff; modern polished mix, strong transient impact, wide guitars, focused low end, minimal studio gloss", weight: 0.98 },
-      { text: "vocals, lyrics, programmed drums, drum machine, generic arena-rock cliche, retro imitation, endless soloing, metal wall, pop-punk melody, fizzy guitars, muddy bass, crushed dynamics, synthetic room", weight: -1.12 },
+      { text: "Forward-looking 2026 instrumental country at 106 BPM; tight acoustic drum kit, rounded electric bass, articulate acoustic strum, warm Telecaster accents, pedal steel color, concise fiddle hook", weight: 1.3 },
+      { text: "Blend modern roots, Americana, and restrained Nashville production; human pocket, clean picking, honest chord movement, short call-and-response phrases, and dynamic live ensemble interplay", weight: 1.08 },
+      { text: "Coherent 32-bar live-set arc with immediate groove, memorable instrumental refrain, spacious bridge, and confident final return; natural room, focused lows, wide guitars, polished but organic mix", weight: 0.95 },
+      { text: "vocals, lyrics, bro-country cliche, novelty banjo, pop drum machine, arena-rock wall, endless guitar solo, fake southern pastiche, stiff timing, harsh fiddle, muddy low mids, crushed master", weight: -1.1 },
     ],
-    config: { bpm: 126, density: 0.68, brightness: 0.56, guidance: 4.8, scale: "E_MAJOR_D_FLAT_MINOR" },
+    config: { bpm: 106, density: 0.54, brightness: 0.5, guidance: 5, scale: "G_MAJOR_E_MINOR" },
+  },
+  {
+    id: "edm",
+    label: "EDM",
+    description: "Modern 2026 electronic dance music with premium sound design, disciplined impact, memorable synthesis, and controlled large-scale energy.",
+    prompts: [
+      { text: "Forward-looking 2026 instrumental electronic dance music at 128 BPM; physical four-on-floor kick, controlled sub, crisp percussion, dimensional chord stack, distinctive synth hook, detailed transitions", weight: 1.3 },
+      { text: "Blend progressive, melodic, bass, and left-field club production with one strong identity; tension through subtraction, automation, granular ear candy, and precise eight-bar phrase changes", weight: 1.08 },
+      { text: "DJ-ready 32-bar arc with short groove-first opening, restrained build, impactful but controlled drop, breathing breakdown, and evolved final return; wide clean master, deep mono bass, sharp transients", weight: 0.96 },
+      { text: "vocals, lyrics, generic festival supersaws, cheesy melody, predictable white-noise riser, big-room cliche, constant drop, muddy sub, harsh limiter, random fills, retro imitation, tempo drift", weight: -1.12 },
+    ],
+    config: { bpm: 128, density: 0.68, brightness: 0.62, guidance: 4.9, scale: "D_MAJOR_B_MINOR" },
+  },
+  {
+    id: "rnb",
+    label: "R&B",
+    description: "Contemporary instrumental R&B with deep pocket, sophisticated harmony, tactile drums, expressive keys, and spacious future-facing production.",
+    prompts: [
+      { text: "Forward-looking 2026 instrumental R&B at 88 BPM; deep human drum pocket, soft punchy kick, rim and ghost-note detail, rounded sub bass, expressive Rhodes voicings, muted guitar, concise synth motif", weight: 1.3 },
+      { text: "Blend alternative R&B, neo-soul harmony, progressive beat craft, and subtle electronic sound design without vocals; microtiming, intentional silence, rich extensions, responsive bass movement", weight: 1.08 },
+      { text: "Elegant 32-bar form with intimate theme, fuller harmonic answer, stripped pocket bridge, and emotionally resolved final variation; warm close center, wide ambience, clean low end, dynamic premium mix", weight: 0.95 },
+      { text: "vocals, lyrics, generic trap beat, nonstop hi-hat rolls, smooth-jazz cliche, pop ballad melody, overplayed runs, muddy sub, washed reverb, stiff quantization, crushed master, long intro", weight: -1.1 },
+    ],
+    config: { bpm: 88, density: 0.46, brightness: 0.4, guidance: 5, scale: "E_FLAT_MAJOR_C_MINOR" },
+    streamFx: { reverb: 0.12 },
+  },
+  {
+    id: "blues",
+    label: "Blues",
+    description: "Contemporary electric blues with a deep live pocket, expressive guitar conversation, grounded harmony, and natural room dynamics.",
+    prompts: [
+      { text: "Forward-looking 2026 instrumental electric blues at 96 BPM; deep live drum pocket, warm fingered bass, expressive tube-amp guitar, concise organ responses, memorable bent-note motif", weight: 1.3 },
+      { text: "Build from authentic call-and-response, tasteful dominant harmony, human microtiming, dynamic touch, and modern spacious production; let guitar, organ, and rhythm section leave deliberate room", weight: 1.08 },
+      { text: "Coherent 32-bar arc with restrained opening statement, confident full-band answer, quiet tension passage, and emotionally resolved final lift; tactile transients, focused lows, natural room depth", weight: 0.96 },
+      { text: "vocals, lyrics, blues-rock cliche, endless guitar solo, bar-band shuffle parody, synthetic drums, excessive distortion, random turnarounds, stiff timing, muddy bass, harsh organ, crushed dynamics", weight: -1.1 },
+    ],
+    config: { bpm: 96, density: 0.48, brightness: 0.42, guidance: 5, scale: "A_MAJOR_G_FLAT_MINOR" },
+  },
+  {
+    id: "experimental",
+    label: "Experimental",
+    description: "Controlled generative music with an intelligible pulse, unusual acoustic-electronic timbres, evolving spatial form, and disciplined surprise.",
+    prompts: [
+      { text: "Forward-looking 2026 experimental instrumental at 118 BPM; prepared piano attacks, physical-model percussion, elastic sub pulse, spectral synth fragments, resonant metal, one clear three-note identity", weight: 1.3 },
+      { text: "Combine electro-acoustic detail, generative rhythm, microtonal color around a stable tonal center, granular transformations, asymmetric accents, and controlled negative space without losing the downbeat", weight: 1.08 },
+      { text: "Evolve in coherent eight-bar cells: establish, mutate one parameter, subtract, then resolve; immersive spatial motion, precise transients, deep clean center, surprising but performance-ready dynamics", weight: 0.96 },
+      { text: "vocals, lyrics, random noise collage, beatless drift, genre roulette, constant glitching, key collapse, tempo drift, academic abstraction, novelty sounds, harsh resonances, muddy spectrum, no motif", weight: -1.12 },
+    ],
+    config: { bpm: 118, density: 0.54, brightness: 0.58, guidance: 5.2, scale: "D_MAJOR_B_MINOR", musicGenerationMode: "DIVERSITY" },
   },
   {
     id: "jazz",
@@ -435,6 +562,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, scat, lounge cliche, smooth-jazz sax, endless solos, bebop imitation, random chord substitutions, stiff quantization, busy drums, boomy upright bass, washy room, cocktail background music", weight: -1.05 },
     ],
     config: { bpm: 112, density: 0.5, brightness: 0.4, guidance: 5, scale: "B_FLAT_MAJOR_G_MINOR", muteDrums: false },
+    streamFx: { reverb: 0.15 },
   },
   {
     id: "classical",
@@ -447,6 +575,7 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, choir, direct imitation of a named recording, generic trailer music, sentimental cliche, constant arpeggios, oversized percussion, synthetic strings, boomy hall, harsh piano, abrupt key changes", weight: -1.08 },
     ],
     config: { bpm: 76, density: 0.38, brightness: 0.34, guidance: 5.2, scale: "E_FLAT_MAJOR_C_MINOR", muteDrums: true },
+    streamFx: { reverb: 0.3 },
   },
   {
     id: "ambient",
@@ -459,10 +588,12 @@ export const LYRIA_REALTIME_STYLE_PRESETS: LyriaRealtimeStylePreset[] = [
       { text: "vocals, nature-sound cliche, meditation stock music, new-age melody, conventional drum beat, constant drone, random notes, excessive shimmer, muddy reverb, sub rumble, harsh particles, sudden climax", weight: -1.05 },
     ],
     config: { bpm: 78, density: 0.28, brightness: 0.32, guidance: 4.9, scale: "C_MAJOR_A_MINOR", muteDrums: true },
+    streamFx: { reverb: 0.35, echo: 0.2 },
   },
 ];
 
 const TEMPLATE_STYLE_MAP: Record<string, string> = {
+  "live-band-rock": "rock",
   "moonlight-sequencer": "classical",
   "warehouse-techno": "techno",
   "liquid-breaks": "drum-bass",
@@ -495,8 +626,61 @@ export async function getLyriaRealtimeStatus(deck: LyriaRealtimeDeckId = "main")
   return invoke<LyriaRealtimeStatus>("lyria_realtime_status", { deck });
 }
 
+export const CUSTOM_LYRIA_STYLES_STORAGE_KEY = "musica.customLyriaStyles.v1";
+
+function cloneStylePreset(style: LyriaRealtimeStylePreset): LyriaRealtimeStylePreset {
+  return { ...style, prompts: style.prompts.map((prompt) => ({ ...prompt })), config: { ...style.config } };
+}
+
+let customLyriaStyleRegistry: LyriaRealtimeStylePreset[] = [];
+
+export function registerCustomLyriaStyles(styles: LyriaRealtimeStylePreset[]): void {
+  customLyriaStyleRegistry = styles.map(cloneStylePreset);
+}
+
+export function loadCustomLyriaStyles(serialized?: string | null): LyriaRealtimeStylePreset[] {
+  if (!serialized) return [];
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry): entry is LyriaRealtimeStylePreset => (
+        typeof entry === "object" && entry !== null
+        && typeof (entry as LyriaRealtimeStylePreset).id === "string"
+        && (entry as LyriaRealtimeStylePreset).id.startsWith("custom-")
+        && typeof (entry as LyriaRealtimeStylePreset).label === "string"
+        && Array.isArray((entry as LyriaRealtimeStylePreset).prompts)
+        && (entry as LyriaRealtimeStylePreset).prompts.every((prompt) => typeof prompt?.text === "string" && typeof prompt?.weight === "number")
+        && typeof (entry as LyriaRealtimeStylePreset).config === "object"
+      ))
+      .slice(0, 24)
+      .map(cloneStylePreset);
+  } catch {
+    return [];
+  }
+}
+
+export function createCustomLyriaStyle(
+  label: string,
+  base: LyriaRealtimeStylePreset,
+  existingIds: string[],
+): LyriaRealtimeStylePreset {
+  const trimmed = label.trim().slice(0, 24) || "My Style";
+  const slug = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "style";
+  let id = `custom-${slug}`;
+  let suffix = 2;
+  while (existingIds.includes(id)) id = `custom-${slug}-${suffix++}`;
+  return {
+    ...cloneStylePreset(base),
+    id,
+    label: trimmed,
+    description: `Custom style based on ${base.label}. Right-click to edit its primary prompt.`,
+  };
+}
+
 export function lyriaRealtimeStyleById(id: string): LyriaRealtimeStylePreset {
-  return LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === id)
+  return customLyriaStyleRegistry.find((preset) => preset.id === id)
+    ?? LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === id)
     ?? LYRIA_REALTIME_STYLE_PRESETS.find((preset) => preset.id === DEFAULT_LYRIA_REALTIME_STYLE_ID)
     ?? LYRIA_REALTIME_STYLE_PRESETS[0];
 }

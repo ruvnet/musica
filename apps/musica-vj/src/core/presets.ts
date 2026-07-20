@@ -17,6 +17,7 @@ export const VISUAL_SCENES: VisualSceneMeta[] = [
   { id: "monolith", mode: "terrain", name: "Black Monolith", label: "06", color: "#f7f5ff", accent: "#b889ff" },
   { id: "pulsefield", mode: "tunnel", name: "Pulse Field", label: "07", color: "#ff9c42", accent: "#35dcff" },
   { id: "chromawave", mode: "bloom", name: "Chroma Wave", label: "08", color: "#70a9ff", accent: "#ffb7eb" },
+  { id: "oscilloscope", mode: "scope", name: "Retro Scope", label: "09", color: "#5dff8a", accent: "#35dcff" },
 ];
 
 export const DEFAULT_TEMPORAL_CONTROLS: Readonly<VisualTemporalControls> = Object.freeze({
@@ -262,6 +263,25 @@ export const PERFORMANCE_TEMPLATES: PerformanceTemplate[] = [
     },
   },
   {
+    id: "live-band-rock",
+    name: "Live Band Rock",
+    description: "Forward-leaning live rock, wide guitars, acoustic drum impact, cinematic payoff",
+    bpm: 126,
+    prompt: "forward-leaning 2026 instrumental rock, tight live band, expressive wide electric guitars, acoustic drums, bold anthemic hook, cinematic dynamics",
+    scene: "terrain",
+    intensity: 0.82,
+    artDirection: { sculpture: 0.72, motion: 0.78, atmosphere: 0.54, ribbon: 0.68 },
+    temporal: { speed: 0.7, strobe: 0.06, trail: 0.48, morph: 0.66, camera: 0.72, phase: 0.2 },
+    tracks: {
+      drums: { pattern: [0, 2, 4, 6, 8, 10, 12, 14, 15], notes: [36, 42, 38, 42, 36, 45, 38, 46, 36, 42, 38, 47, 36, 45, 38, 49], volume: 0.9 },
+      bass: { pattern: [0, 2, 4, 6, 8, 10, 12, 14], notes: [28, 28, 31, 33, 35, 33, 31, 28, 26, 26, 28, 31, 33, 31, 28, 26], volume: 0.84 },
+      chords: { pattern: [0, 4, 8, 12], notes: [52, 55, 59, 64, 55, 59, 62, 67, 50, 54, 57, 62, 47, 52, 55, 59], volume: 0.66, pan: -0.18 },
+      lead: { pattern: [2, 6, 10, 14], notes: [64, 67, 71, 76, 74, 71, 67, 64, 62, 67, 71, 74, 76, 74, 71, 67, 64, 69, 72, 76, 79, 76, 72, 69], volume: 0.62, pan: 0.22 },
+      voice: { pattern: [3, 7, 11, 15], notes: [59, 64, 67, 71, 69, 67, 64, 59, 57, 62, 66, 69, 71, 69, 66, 62], volume: 0.28, pan: -0.26 },
+      texture: { pattern: [0, 8, 14], notes: [40, 47, 52, 59, 64, 59, 52, 47, 38, 45, 50, 57, 62, 57, 50, 45], volume: 0.38, pan: 0.3 },
+    },
+  },
+  {
     id: "hyperpop-rush",
     name: "Hyperpop Rush",
     description: "Glossy supersaw hooks, pitched voice cuts, restless club drums",
@@ -290,9 +310,10 @@ export function performanceTemplateById(id: string): PerformanceTemplate {
   return PERFORMANCE_TEMPLATES.find((template) => template.id === id) ?? PERFORMANCE_TEMPLATES[0];
 }
 
-export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "afro-cosmic-house";
+export const DEFAULT_PERFORMANCE_TEMPLATE_ID = "live-band-rock";
 
 export const DEFAULT_MIDI_SONG_BANK_IDS = [
+  "live-band-rock",
   "afro-cosmic-house",
   "uk-garage-neon",
   "moonlight-sequencer",

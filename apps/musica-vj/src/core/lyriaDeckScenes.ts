@@ -21,20 +21,20 @@ export const LYRIA_DECK_SCENE_STORAGE_KEY = "musica.lyria.deck-scenes.v1";
 export const DEFAULT_LYRIA_DECK_CONTROLS: Record<LyriaRealtimeDeckId, LyriaDeckControl> = {
   main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
   sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
+  vocal: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
 };
 
 export const DEFAULT_LYRIA_DECK_SCENES: LyriaDeckScene[] = [
   {
     id: "club",
-    name: "Club",
-    styleId: "house",
-    bpm: 122,
+    name: "Rock",
+    styleId: "rock",
+    bpm: 126,
     enabled: { main: true, sequence: false, vocal: false },
     controls: {
       main: { volume: 0.76, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
       sequence: { volume: 0.38, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-      vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
+      vocal: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
     },
   },
   {
@@ -46,7 +46,7 @@ export const DEFAULT_LYRIA_DECK_SCENES: LyriaDeckScene[] = [
     controls: {
       main: { volume: 0.7, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
       sequence: { volume: 0.58, muted: false, pitchSemitones: 0, beatNudgeMs: -20 },
-      vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
+      vocal: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
     },
   },
   {
@@ -70,7 +70,7 @@ export const DEFAULT_LYRIA_DECK_SCENES: LyriaDeckScene[] = [
     controls: {
       main: { volume: 0.58, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
       sequence: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: -15 },
-      vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
+      vocal: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
     },
   },
 ];

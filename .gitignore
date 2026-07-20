@@ -19,3 +19,18 @@ apps/musica-vj/src-tauri/icons/*
 !apps/musica-vj/src-tauri/icons/128x128@2x.png
 !apps/musica-vj/src-tauri/icons/icon.icns
 !apps/musica-vj/src-tauri/icons/icon.ico
+
+# Codex local configuration
+.codex/
+
+# Claude Flow runtime data
+.claude-flow/data/
+.claude-flow/logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Onboarding preview bank is runtime-required
+!apps/musica-vj/public/previews/lyria/*.mp3

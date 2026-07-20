@@ -67,6 +67,25 @@ class FakeDelayNode extends FakeAudioNode {
   delayTime = new FakeAudioParam();
 }
 
+class FakeBiquadFilterNode extends FakeAudioNode {
+  type = "lowpass";
+  frequency = new FakeAudioParam();
+  Q = new FakeAudioParam();
+  gain = new FakeAudioParam();
+}
+
+class FakeOscillatorNode extends FakeAudioNode {
+  type = "sine";
+  frequency = new FakeAudioParam();
+  start(): void {}
+  stop(): void {}
+}
+
+class FakeWaveShaperNode extends FakeAudioNode {
+  curve: Float32Array | null = null;
+  oversample = "none";
+}
+
 class FakeConvolverNode extends FakeAudioNode {
   buffer: AudioBuffer | null = null;
 }
@@ -111,6 +130,18 @@ class FakeAudioContext {
 
   createConvolver(): ConvolverNode {
     return new FakeConvolverNode() as unknown as ConvolverNode;
+  }
+
+  createBiquadFilter(): BiquadFilterNode {
+    return new FakeBiquadFilterNode() as unknown as BiquadFilterNode;
+  }
+
+  createOscillator(): OscillatorNode {
+    return new FakeOscillatorNode() as unknown as OscillatorNode;
+  }
+
+  createWaveShaper(): WaveShaperNode {
+    return new FakeWaveShaperNode() as unknown as WaveShaperNode;
   }
 
   createAnalyser(): AnalyserNode {
@@ -163,6 +194,78 @@ describe("audio engine state application", () => {
     expect(runtimes.get("bass")?.pan.pan.value).toBe(0.65);
     expect(runtimes.get("bass")?.gain.gain.value).toBe(0);
     expect(runtimes.get("drums")?.gain.gain.value).toBe(0);
+  });
+
+  it("builds a two-stage mastering chain with glue compression and a peak limiter", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    await engine.initialize();
+    const internals = engine as unknown as {
+      compressor: FakeCompressorNode;
+      masterLimiter: FakeCompressorNode;
+    };
+    expect(internals.compressor.ratio.value).toBeLessThan(4);
+    expect(internals.compressor.knee.value).toBeGreaterThan(12);
+    expect(internals.masterLimiter.ratio.value).toBeGreaterThanOrEqual(15);
+    expect(internals.masterLimiter.threshold.value).toBeGreaterThan(-6);
+    expect(internals.masterLimiter.attack.value).toBeLessThanOrEqual(0.002);
+  });
+
+  it("drives the master stream FX rack from bounded macro amounts", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    await engine.initialize();
+    const internals = engine as unknown as {
+      flangerWet: FakeGainNode;
+      sweepFilter: FakeBiquadFilterNode;
+      masterReverbSend: FakeGainNode;
+      masterEchoSend: FakeGainNode;
+    };
+
+    expect(internals.flangerWet.gain.value).toBe(0);
+    expect(internals.sweepFilter.frequency.value).toBe(18_500);
+
+    engine.setMasterEffect("flanger", 0.8);
+    engine.setMasterEffect("sweep", 1);
+    engine.setMasterEffect("reverb", 0.5);
+    engine.setMasterEffect("echo", 2);
+
+    expect(internals.flangerWet.gain.value).toBeCloseTo(0.68, 8);
+    expect(internals.sweepFilter.frequency.value).toBe(1_700);
+    expect(internals.sweepFilter.Q.value).toBeCloseTo(0.9 + (0.5 + 0.55 * 7), 8);
+    expect(internals.masterReverbSend.gain.value).toBeCloseTo(1.1, 8);
+    expect(internals.masterEchoSend.gain.value).toBeCloseTo(1.8, 8);
+    expect(engine.getMasterEffects()).toEqual({ flanger: 0.8, sweep: 1, reverb: 0.5, echo: 1, drive: 0, crush: 0, phaser: 0 });
+  });
+
+  it("exposes editable per-effect parameters that reshape the rack", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const engine = new AudioEngine();
+    await engine.initialize();
+    const internals = engine as unknown as {
+      sweepLfo: FakeOscillatorNode;
+      driveShaper: FakeWaveShaperNode;
+      crushShaper: FakeWaveShaperNode;
+      drivePre: FakeGainNode;
+      crushWet: FakeGainNode;
+    };
+
+    engine.setMasterEffectParam("sweepRate", 1);
+    expect(internals.sweepLfo.frequency.value).toBeCloseTo(1, 8);
+
+    const flatCurve = internals.crushShaper.curve;
+    engine.setMasterEffectParam("crushBits", 0);
+    expect(internals.crushShaper.curve).not.toBe(flatCurve);
+
+    const softCurve = internals.driveShaper.curve;
+    engine.setMasterEffectParam("driveEdge", 1);
+    expect(internals.driveShaper.curve).not.toBe(softCurve);
+
+    engine.setMasterEffect("drive", 1);
+    expect(internals.drivePre.gain.value).toBeCloseTo(15, 8);
+    engine.setMasterEffect("crush", 1);
+    expect(internals.crushWet.gain.value).toBeCloseTo(0.9, 8);
+    expect(engine.getMasterEffectParams().sweepRate).toBe(1);
   });
 
   it("starts one-shot imports immediately while preserving bar quantization for loops", () => {
