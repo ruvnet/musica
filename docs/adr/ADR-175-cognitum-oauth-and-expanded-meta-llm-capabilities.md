@@ -1,7 +1,7 @@
 # ADR-175: Cognitum One OAuth and expanded Meta-LLM capabilities
 
-- Status: Proposed
-- Date: 2026-07-19
+- Status: Accepted (phases 1-2 implemented; phase 3 pending)
+- Date: 2026-07-19 (updated 2026-07-20)
 
 ## Context
 
@@ -71,3 +71,23 @@ All commands inherit the existing envelope: bounded input sizes, bounded respons
 - ADR-170 (Lyria RealTime provider governance), ADR-171 (Auto DJ sequencing), ADR-174 (Restream native live output)
 - `apps/musica-vj/src-tauri/src/meta_llm_provider.rs` — current Cognitum boundary
 - RFC 7636 (PKCE), RFC 8252 (OAuth 2.0 for Native Apps)
+
+## Implementation notes (2026-07-20)
+
+Phase 1 shipped with deliberate deviations from the proposal:
+
+- **Session tokens, not keychain**: tokens are held only in Rust process memory (`cognitum_provider.rs`), cleared on sign-out or exit. The keychain upgrade remains open.
+- **Shared client id interim**: `auth.cognitum.one` has no dynamic registration; the app uses the registered `meta-proxy` client (identity seed 0014) until dashboard PR #90 deploys `musica-vj-desktop` (`MUSICA_COGNITUM_CLIENT_ID` overrides).
+- **Server contract corrections**: scope is `inference` (the only supported scope), the loopback redirect must be exactly `/oauth/callback`, and refresh tokens rotate with reuse detection (consume-once, then replace or end the session).
+- **OOB paste-code fallback** (`urn:ietf:wg:oauth:2.0:oob` → `POST /v1/oauth/code-exchange`) is implemented for headless/SSH sign-in.
+
+Phase 2 shipped as four Tauri commands, all schema-validated in Rust with local fallbacks in the UI:
+
+| Command | Surface |
+|---|---|
+| `cognitum_style_pack` | AI STYLE GENERATOR → editable custom style |
+| `cognitum_set_arc` | SET ARC AUTOPILOT (30-90 min timeline; local energy-curve fallback) |
+| `cognitum_autodj_brief` | Auto DJ per-phrase briefs with previous-phrase memory; mood tag nudges visuals |
+| `cognitum_fx_direction` / `cognitum_visual_direction` | AI MOOD (lock-aware FX automation) and AI LOOK (scene/palette/motion) |
+
+The LEARNING chip is backed by local performance memory (ADR-176). Phase 3 (Restream OAuth) remains unimplemented.
