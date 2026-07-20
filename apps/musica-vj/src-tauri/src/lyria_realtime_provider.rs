@@ -8,14 +8,17 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::process::Command;
 use tokio::sync::mpsc;
+
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{client::IntoClientRequest, Message},
+    tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
 };
 
 const ENABLE_ENV: &str = "MUSICA_LYRIA_REALTIME_ENABLED";
 const API_KEY_ENV: &str = "GEMINI_API_KEY";
+const GCP_AUTH_ENV: &str = "MUSICA_GCP_AUTH";
 const MODEL: &str = "models/lyria-realtime-exp";
 const WS_ENDPOINT: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateMusic";
 const SAMPLE_RATE_HZ: u32 = 48_000;
@@ -166,22 +169,41 @@ enum RealtimeCommand {
     Close,
 }
 
-#[derive(Default)]
+/// How the RealTime WebSocket authenticates to `generativelanguage.googleapis.com`.
+#[derive(Clone)]
+enum RealtimeAuth {
+    /// `?key=<GEMINI_API_KEY>` query parameter.
+    ApiKey(String),
+    /// `Authorization: Bearer <token>` minted from gcloud application-default
+    /// credentials — lets the operator's GCP login drive Lyria with no key.
+    Gcloud,
+}
+
 pub(crate) struct LyriaRealtimeProvider {
     enabled: bool,
-    api_key: Option<String>,
+    auth: Option<RealtimeAuth>,
     active: Mutex<HashMap<LyriaRealtimeDeck, ActiveSession>>,
 }
 
 impl LyriaRealtimeProvider {
     pub(crate) fn from_env() -> Self {
+        let api_key = env::var(API_KEY_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let gcloud = env::var(GCP_AUTH_ENV)
+            .ok()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("gcloud"));
+        // An explicit API key wins; otherwise fall back to gcloud ADC.
+        let auth = match (api_key, gcloud) {
+            (Some(key), _) => Some(RealtimeAuth::ApiKey(key)),
+            (None, true) => Some(RealtimeAuth::Gcloud),
+            (None, false) => None,
+        };
         Self {
             enabled: env::var(ENABLE_ENV)
                 .map(|value| matches!(value.as_str(), "true" | "1" | "yes"))
                 .unwrap_or(false),
-            api_key: env::var(API_KEY_ENV)
-                .ok()
-                .filter(|value| !value.trim().is_empty()),
+            auth,
             active: Mutex::new(HashMap::new()),
         }
     }
@@ -198,14 +220,16 @@ impl LyriaRealtimeProvider {
             .unwrap_or_default();
         let reason = if !self.enabled {
             Some(format!("{ENABLE_ENV}=true is required"))
-        } else if self.api_key.is_none() {
-            Some(format!("{API_KEY_ENV} is required"))
+        } else if self.auth.is_none() {
+            Some(format!(
+                "{API_KEY_ENV} or {GCP_AUTH_ENV}=gcloud is required"
+            ))
         } else {
             None
         };
         LyriaRealtimeStatus {
             deck,
-            available: self.enabled && self.api_key.is_some(),
+            available: self.enabled && self.auth.is_some(),
             provider: "lyria_realtime".into(),
             model: MODEL.into(),
             sample_rate_hz: SAMPLE_RATE_HZ,
@@ -228,10 +252,10 @@ impl LyriaRealtimeProvider {
         if !self.enabled {
             return Err(format!("{ENABLE_ENV}=true is required"));
         }
-        let api_key = self
-            .api_key
+        let auth = self
+            .auth
             .clone()
-            .ok_or_else(|| format!("{API_KEY_ENV} is required"))?;
+            .ok_or_else(|| format!("{API_KEY_ENV} or {GCP_AUTH_ENV}=gcloud is required"))?;
         validate_request(&request)?;
         self.stop(deck)?;
         let session = LyriaRealtimeSession {
@@ -250,7 +274,7 @@ impl LyriaRealtimeProvider {
         let (commands, receiver) = mpsc::unbounded_channel();
         tokio::spawn(run_stream(
             deck,
-            api_key,
+            auth,
             request,
             receiver,
             Arc::clone(&shared),
@@ -414,26 +438,69 @@ impl RealtimeShared {
 
 async fn run_stream(
     deck: LyriaRealtimeDeck,
-    api_key: String,
+    auth: RealtimeAuth,
     initial: LyriaRealtimeStartRequest,
     mut commands: mpsc::UnboundedReceiver<RealtimeCommand>,
     shared: Arc<RealtimeShared>,
 ) {
-    if let Err(error) = run_stream_inner(api_key, initial, &mut commands, &shared).await {
+    if let Err(error) = run_stream_inner(auth, initial, &mut commands, &shared).await {
         eprintln!("Lyria RealTime {} deck stopped: {error}", deck.label());
         shared.set_warning(error);
     }
 }
 
+/// Mints a gcloud application-default access token off the async runtime.
+async fn gcloud_realtime_token() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = Command::new("gcloud")
+            .args(["auth", "application-default", "print-access-token"])
+            .output()
+            .map_err(|_| "gcloud is not available on PATH".to_string())?;
+        if !output.status.success() {
+            return Err("gcloud application-default credentials are not set up".to_string());
+        }
+        let token = String::from_utf8(output.stdout)
+            .map_err(|_| "gcloud returned an invalid token".to_string())?;
+        let token = token.trim().to_string();
+        if token.len() < 20
+            || token.len() > 4096
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err("gcloud returned an invalid token".to_string());
+        }
+        Ok(token)
+    })
+    .await
+    .map_err(|_| "gcloud token task failed".to_string())?
+}
+
 async fn run_stream_inner(
-    api_key: String,
+    auth: RealtimeAuth,
     initial: LyriaRealtimeStartRequest,
     commands: &mut mpsc::UnboundedReceiver<RealtimeCommand>,
     shared: &RealtimeShared,
 ) -> Result<(), String> {
-    let request = format!("{WS_ENDPOINT}?key={api_key}")
-        .into_client_request()
-        .map_err(|_| "Lyria RealTime WebSocket request could not be built")?;
+    // API key rides the query string; gcloud rides an Authorization header on
+    // the handshake, matching how the batch provider authenticates to the same
+    // generativelanguage.googleapis.com host.
+    let request = match &auth {
+        RealtimeAuth::ApiKey(key) => format!("{WS_ENDPOINT}?key={key}")
+            .into_client_request()
+            .map_err(|_| "Lyria RealTime WebSocket request could not be built")?,
+        RealtimeAuth::Gcloud => {
+            let token = gcloud_realtime_token().await?;
+            let mut request = WS_ENDPOINT
+                .into_client_request()
+                .map_err(|_| "Lyria RealTime WebSocket request could not be built")?;
+            let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| "Lyria RealTime authorization header is invalid")?;
+            value.set_sensitive(true);
+            request.headers_mut().insert("authorization", value);
+            request
+        }
+    };
     let (mut socket, _) = connect_async(request)
         .await
         .map_err(|_| "Lyria RealTime WebSocket connection failed")?;
