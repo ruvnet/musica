@@ -268,7 +268,7 @@ export const PERFORMANCE_TEMPLATES: PerformanceTemplate[] = [
     description: "Forward-leaning live rock, wide guitars, acoustic drum impact, cinematic payoff",
     bpm: 126,
     prompt: "forward-leaning 2026 instrumental rock, tight live band, expressive wide electric guitars, acoustic drums, bold anthemic hook, cinematic dynamics",
-    scene: "terrain",
+    scene: "oscilloscope",
     intensity: 0.82,
     artDirection: { sculpture: 0.72, motion: 0.78, atmosphere: 0.54, ribbon: 0.68 },
     temporal: { speed: 0.7, strobe: 0.06, trail: 0.48, morph: 0.66, camera: 0.72, phase: 0.2 },

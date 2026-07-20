@@ -222,7 +222,7 @@ describe("workspace settings", () => {
     expect(normalized!.fxLocks.reverb).toBe(false);
     expect(normalized!.sfxLevel).toBe(0);
     expect(normalized!.onboarding.styleId).toBe("lofi");
-    expect(normalized!.onboarding.visualScene).toBe("terrain");
+    expect(normalized!.onboarding.visualScene).toBe("oscilloscope");
 
     const roundTripped = normalizeWorkspaceSettings(JSON.parse(serializeWorkspaceSettings(normalized!)));
     expect(roundTripped!.masterEffects).toEqual(normalized!.masterEffects);

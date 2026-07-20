@@ -40,7 +40,7 @@ export const DEFAULT_ONBOARDING_PREFERENCES: OnboardingPreferences = {
   vocalRole: "sparse",
   experimental: false,
   direction: "Tight live-band energy, memorable guitar hook, strong dynamics, and a clean modern mix.",
-  visualScene: "terrain",
+  visualScene: "oscilloscope",
   visualPalette: "ember",
   visualAnimation: "scan",
   visualIntensity: 0.72,
@@ -50,7 +50,7 @@ const FORMATS: MusicFormat[] = ["instrumental", "hybrid", "vocal-led"];
 const PACES: MusicPace[] = ["slow", "mid", "fast"];
 const VOCAL_STYLES: VocalStyle[] = ["none", "male", "female", "other"];
 const VOCAL_ROLES: VocalRole[] = ["sparse", "chorus", "experimental"];
-const VISUAL_SCENES: VisualSceneId[] = ["tunnel", "bloom", "terrain", "lasergrid", "aurora", "monolith", "pulsefield", "chromawave"];
+const VISUAL_SCENES: VisualSceneId[] = ["tunnel", "bloom", "terrain", "lasergrid", "aurora", "monolith", "pulsefield", "chromawave", "oscilloscope"];
 const VISUAL_PALETTES: VisualPaletteId[] = ["scene", "neon", "ember", "ice", "prism", "mono"];
 const VISUAL_ANIMATIONS: VisualAnimationStyle[] = ["flow", "orbit", "warp", "shards", "scan", "minimal"];
 
