@@ -9,6 +9,11 @@
     "dialog:allow-save",
     "fs:allow-write-file",
     "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister-all"
+    "global-shortcut:allow-unregister-all",
+    "updater:allow-check",
+    "updater:allow-download",
+    "updater:allow-install",
+    "updater:allow-download-and-install",
+    "process:allow-restart"
   ]
 }

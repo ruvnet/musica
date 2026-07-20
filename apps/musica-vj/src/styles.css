@@ -801,6 +801,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .workspace-settings-actions button, .workspace-settings-actions label { height: 30px; display: grid; place-items: center; border: 1px solid rgba(53,220,255,.24); border-radius: 6px; background: rgba(53,220,255,.04); color: #9debf6; font: 700 7px "DM Mono", monospace; cursor: pointer; }
 .workspace-settings-actions label input { display: none; }
 .workspace-settings-actions button:hover, .workspace-settings-actions label:hover { border-color: rgba(53,220,255,.5); }
+.updater-panel > header b.update-ready { color: #86f4cb; }
+.update-install-button { height: 32px; border: 1px solid rgba(117,244,197,.5); border-radius: 6px; background: linear-gradient(120deg, rgba(117,244,197,.16), rgba(53,220,255,.12)); color: #b6ffe6; font: 700 8px "DM Mono", monospace; letter-spacing: .04em; cursor: pointer; }
+.update-install-button:hover:not(:disabled) { border-color: rgba(117,244,197,.8); }
+.update-install-button:disabled { opacity: .7; cursor: wait; }
+.update-notes { color: #8a91a0; font: 500 8px/1.4 "DM Mono", monospace; }
 .restream-control > header { display: flex; align-items: center; justify-content: space-between; }
 .restream-control > header span { display: flex; align-items: center; gap: 6px; color: #c4c8d2; font: 700 8px "DM Mono"; }
 .restream-control > header i { width: 6px; height: 6px; border-radius: 50%; background: #5a5e68; }

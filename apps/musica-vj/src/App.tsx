@@ -14,6 +14,7 @@ import {
 } from "./audio/AudioEngine";
 import { OnboardingWizard, type OnboardingView } from "./OnboardingWizard";
 import { CognitumGate, type CognitumGateLogEntry } from "./CognitumGate";
+import { checkForUpdate, downloadAndInstallUpdate, type UpdateInfo } from "./core/updater";
 import { isTauri } from "@tauri-apps/api/core";
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
@@ -1290,6 +1291,52 @@ export function App() {
   const [cognitumBusy, setCognitumBusy] = useState(false);
   const [aiStyleDescription, setAiStyleDescription] = useState("");
   const [aiStyleBusy, setAiStyleBusy] = useState(false);
+
+  // In-app updater: check on launch and expose a manual check + one-click
+  // install so the desktop app self-updates (no uninstall/reinstall).
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo>({ available: false });
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateChecked, setUpdateChecked] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    void import("@tauri-apps/api/app").then(({ getVersion }) => getVersion().then(setAppVersion).catch(() => undefined));
+  }, []);
+
+  useEffect(() => {
+    void checkForUpdate().then((info) => {
+      setUpdateInfo(info);
+      setUpdateChecked(true);
+      if (info.available) setNotice(`Update available: v${info.version}. Open WORKSPACE settings to install.`);
+    });
+  }, []);
+
+  const handleCheckUpdate = useCallback(async () => {
+    setUpdateBusy(true);
+    try {
+      const info = await checkForUpdate();
+      setUpdateInfo(info);
+      setUpdateChecked(true);
+      setNotice(info.available ? `Update available: v${info.version}.` : info.reason ? `Update check: ${info.reason}` : "You're on the latest version.");
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, []);
+
+  const handleInstallUpdate = useCallback(async () => {
+    setUpdateBusy(true);
+    setUpdateProgress(0);
+    setNotice(`Downloading v${updateInfo.version}…`);
+    try {
+      await downloadAndInstallUpdate((percent) => setUpdateProgress(percent));
+      setNotice("Update installed. Restarting…");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Update failed");
+      setUpdateBusy(false);
+    }
+  }, [updateInfo.version]);
 
   // Cognitum sign-in gate: the required first step, shown until the user is
   // signed in (skipped entirely when already signed in), with a running log.
@@ -3974,6 +4021,27 @@ export function App() {
                     <input type="file" accept=".json,application/json" onChange={(event) => { void importWorkspaceSettings(event.target.files?.[0]); event.target.value = ""; }} />
                   </label>
                 </div>
+              </section>
+              <section className="workspace-settings updater-panel" aria-label="Software updates">
+                <header>
+                  <span>UPDATES</span>
+                  <b className={updateInfo.available ? "update-ready" : ""}>{updateInfo.available ? `v${updateInfo.version} READY` : appVersion ? `v${appVersion}` : "CURRENT"}</b>
+                </header>
+                {updateInfo.available ? (
+                  <>
+                    <button type="button" className="update-install-button" onClick={() => void handleInstallUpdate()} disabled={updateBusy}>
+                      {updateBusy ? `INSTALLING ${updateProgress}%` : `INSTALL v${updateInfo.version} + RESTART`}
+                    </button>
+                    {updateInfo.notes && <small className="update-notes">{updateInfo.notes}</small>}
+                  </>
+                ) : (
+                  <div className="workspace-settings-actions">
+                    <button type="button" onClick={() => void handleCheckUpdate()} disabled={updateBusy}>
+                      {updateBusy ? "CHECKING…" : "CHECK FOR UPDATES"}
+                    </button>
+                    {updateChecked && !updateInfo.reason && <small className="update-notes">Up to date.</small>}
+                  </div>
+                )}
               </section>
             </section>
           ))}
