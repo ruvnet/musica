@@ -699,6 +699,96 @@ pub(crate) async fn cognitum_set_arc(
     Ok(arc)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AutoDjBrief {
+    brief: String,
+    mood: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_autodj_brief(
+    provider: State<'_, CognitumProvider>,
+    style_label: String,
+    bpm: u16,
+    phrase: u32,
+    personalization: String,
+    previous_brief: String,
+) -> Result<AutoDjBrief, String> {
+    if !(60..=200).contains(&bpm) {
+        return Err("BPM is out of range".into());
+    }
+    if personalization.len() > 400 || previous_brief.len() > 500 || style_label.len() > 40 {
+        return Err("Auto DJ brief inputs are too long".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You direct one continuous Lyria RealTime main stereo stream, one 32-bar phrase at a time. Return only JSON with keys brief (max 400 chars: a dense production direction covering groove, instrumentation, motif development, energy arc, transition into the phrase, mix character, and exclusions — never change tempo, never multiple songs or streams, no vocals) and mood (max 24 chars: two or three words describing the phrase's emotional color, e.g. 'dark rising tension'). Each phrase must audibly evolve from the previous one while keeping the set coherent.".to_string();
+    let user = format!(
+        "Style: {style_label}. Master tempo: {bpm} BPM. Phrase number: {phrase}. Set personalization: {personalization}. Previous phrase direction: {previous}.",
+        previous = if previous_brief.trim().is_empty() {
+            "none — this is the opening phrase"
+        } else {
+            previous_brief.trim()
+        },
+    );
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.75,
+        max_tokens: 400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum brief request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum brief was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty brief".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid brief".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid brief".to_string())?;
+    #[derive(Deserialize)]
+    struct RawBrief {
+        brief: String,
+        #[serde(default)]
+        mood: String,
+    }
+    let raw: RawBrief = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid brief".to_string())?;
+    let brief = raw.brief.trim();
+    if brief.is_empty() {
+        return Err("Cognitum returned an empty brief".into());
+    }
+    Ok(AutoDjBrief {
+        brief: brief.chars().take(400).collect(),
+        mood: raw.mood.trim().chars().take(24).collect(),
+    })
+}
+
 fn validate_set_arc(
     arc: &SetArc,
     duration_minutes: u16,

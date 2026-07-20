@@ -86,6 +86,22 @@ export interface SetArc {
   steps: SetArcStep[];
 }
 
+export interface AutoDjBrief {
+  brief: string;
+  mood: string;
+}
+
+export async function generateCognitumAutoDjBrief(
+  styleLabel: string,
+  bpm: number,
+  phrase: number,
+  personalization: string,
+  previousBrief: string,
+): Promise<AutoDjBrief> {
+  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  return invoke<AutoDjBrief>("cognitum_autodj_brief", { styleLabel, bpm, phrase, personalization, previousBrief });
+}
+
 export async function generateCognitumSetArc(
   durationMinutes: number,
   direction: string,

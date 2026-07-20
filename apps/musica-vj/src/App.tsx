@@ -95,6 +95,7 @@ import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatu
 import {
   COGNITUM_CAPABILITY_LABELS,
   completeCognitumManualSignIn,
+  generateCognitumAutoDjBrief,
   generateCognitumSetArc,
   generateCognitumStylePack,
   getCognitumStatus,
@@ -1165,6 +1166,11 @@ export function App() {
   }, [applyWorkspaceSettings]);
 
   const [cognitumStatus, setCognitumStatus] = useState<CognitumStatus>({ signedIn: false, pending: false, capabilities: [], authHost: "cognitum.one" });
+  const cognitumStatusRef = useRef(cognitumStatus);
+  useEffect(() => {
+    cognitumStatusRef.current = cognitumStatus;
+  }, [cognitumStatus]);
+  const autoDjBriefRef = useRef("");
   const [cognitumBusy, setCognitumBusy] = useState(false);
   const [aiStyleDescription, setAiStyleDescription] = useState("");
   const [aiStyleBusy, setAiStyleBusy] = useState(false);
@@ -2034,7 +2040,29 @@ export function App() {
           bars: AUTO_DJ_PHRASE_BARS,
         });
         let generatedBrief: string | undefined;
-        if (metaLlmAvailable) {
+        let phraseMood = "";
+        const cognitum = cognitumStatusRef.current;
+        if (cognitum.signedIn && cognitum.capabilities.includes("autopilot")) {
+          try {
+            const briefTimeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Cognitum brief timeout")), 10_000));
+            const result = await Promise.race([
+              generateCognitumAutoDjBrief(
+                style.label,
+                snapshotRef.current.bpm,
+                step,
+                autoDjPersonalizationRef.current,
+                autoDjBriefRef.current,
+              ),
+              briefTimeout,
+            ]);
+            generatedBrief = `${result.brief}. ${autoDjPersonalizationRef.current}`;
+            phraseMood = result.mood;
+            autoDjBriefRef.current = result.brief;
+          } catch {
+            generatedBrief = undefined;
+          }
+        }
+        if (!generatedBrief && metaLlmAvailable) {
           const goal = [
             `Write the next ${AUTO_DJ_PHRASE_BARS}-bar direction for one continuous Lyria RealTime main stereo stream.`,
             `Style: ${style.label}. ${style.description}`,
@@ -2079,7 +2107,17 @@ export function App() {
           lyriaSessionRef.current = session;
           setLyriaSession(session);
           liveUpdateSignatureRef.current.main = JSON.stringify(request);
-          setNotice(`Auto DJ phrase ${step + 1} · ${style.label} · ${AUTO_DJ_PHRASE_BARS} bars · ${generatedBrief ? "Meta-LLM directed" : "local detailed direction"} · single main stream.`);
+          if (phraseMood) {
+            const mood = phraseMood.toLowerCase();
+            const hue = /dark|tension|night|shadow/.test(mood) ? 0.78
+              : /warm|golden|soul|dusty/.test(mood) ? 0.12
+              : /euphoric|bright|lift|rising|peak/.test(mood) ? 0.5
+              : undefined;
+            if (hue !== undefined) changeVisualColor({ hue });
+            if (/peak|rising|drive|surge/.test(mood)) changeIntensity(Math.min(1, intensityRef.current + 0.08));
+            if (/breathe|calm|soft|resolve|gentle/.test(mood)) changeIntensity(Math.max(0.2, intensityRef.current - 0.1));
+          }
+          setNotice(`Auto DJ phrase ${step + 1} · ${style.label} · ${AUTO_DJ_PHRASE_BARS} bars · ${phraseMood ? `Cognitum: ${phraseMood}` : generatedBrief ? "Meta-LLM directed" : "local detailed direction"} · single main stream.`);
         }
       } catch (error) {
         if (!cancelled) setNotice(error instanceof Error ? error.message : "Auto DJ Lyria update failed");
@@ -2094,7 +2132,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [autoDjMode, lyriaStyleGuidance, metaLlmAvailable, snapshot.bpm]);
+  }, [autoDjMode, changeIntensity, changeVisualColor, lyriaStyleGuidance, metaLlmAvailable, snapshot.bpm]);
 
   useEffect(() => {
     if (!demoMode) return;
