@@ -891,6 +891,7 @@ export function App() {
       setNotice("Auto DJ stopped. The current main-stream direction remains loaded.");
       return;
     }
+    stopSetArcRef.current(false);
     autoDjStepRef.current = 0;
     setAutoDjStep(0);
     setAutoDjMode(true);
@@ -1282,6 +1283,7 @@ export function App() {
     cognitumStatusRef.current = cognitumStatus;
   }, [cognitumStatus]);
   const autoDjBriefRef = useRef("");
+  const stopSetArcRef = useRef<(announce?: boolean) => void>(() => undefined);
   const [cognitumBusy, setCognitumBusy] = useState(false);
   const [aiStyleDescription, setAiStyleDescription] = useState("");
   const [aiStyleBusy, setAiStyleBusy] = useState(false);
@@ -1862,9 +1864,14 @@ export function App() {
     if (announce) setNotice("Set arc stopped. Manual control restored.");
   }, []);
 
+  useEffect(() => {
+    stopSetArcRef.current = stopSetArc;
+  }, [stopSetArc]);
+
   const runSetArc = useCallback(() => {
     if (!setArc) return;
     stopSetArc(false);
+    setAutoDjMode(false);
     setSetArcRunning(true);
     const offset = setArc.steps[0]?.atMinute ?? 0;
     applySetArcStep(setArc, 0);
