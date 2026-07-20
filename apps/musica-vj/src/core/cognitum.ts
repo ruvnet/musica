@@ -65,15 +65,23 @@ export async function completeCognitumManualSignIn(code: string): Promise<void> 
 /// user gets live audio with no bring-your-own key (ADR-179). Silently a no-op
 /// when no broker is configured or the user is not signed in; returns whether a
 /// key was injected so callers can refresh provider status.
-export async function activateCognitumLyria(): Promise<boolean> {
-  if (!isTauri()) return false;
+export interface CognitumLyriaActivation {
+  ok: boolean;
+  reason?: string;
+}
+
+export async function activateCognitumLyria(): Promise<CognitumLyriaActivation> {
+  if (!isTauri()) return { ok: false, reason: "desktop app required" };
   try {
     const key = await invoke<string>("cognitum_lyria_credential");
-    if (!key) return false;
+    if (!key) return { ok: false, reason: "broker returned no key" };
     await invoke("lyria_realtime_configure_key", { key });
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (error) {
+    // The Rust command returns a specific message (no broker configured, broker
+    // rejected the request, broker request failed, no usable key) — surface it
+    // so the gate log shows exactly where the chain broke.
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
