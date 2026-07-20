@@ -166,6 +166,8 @@ jobs:
           GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
           VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
           MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Verify provider canaries are absent from the packaged app
         env:
           GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
@@ -215,6 +217,13 @@ jobs:
         with:
           name: musica-vj-macos-dmg
           path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-updater-macos
+          path: |
+            target/release/bundle/macos/*.app.tar.gz
+            target/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
   linux-app:
@@ -272,6 +281,8 @@ jobs:
           VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
           MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
           MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Verify provider canaries are absent from Linux bundles
         env:
           GEMINI_API_KEY: AIzaRustBackendSecretCanary111111111111
@@ -305,6 +316,11 @@ jobs:
         with:
           name: musica-vj-linux-appimage
           path: target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-updater-linux
+          path: target/release/bundle/appimage/*.AppImage.sig
           if-no-files-found: error
 
   windows-app:
@@ -347,6 +363,8 @@ jobs:
           VITE_GEMINI_API_KEY: AIzaViteFrontendSecretCanary22222222222
           MUSICA_CREATIVE_API_TOKEN: musica-partner-token-canary-333333
           MUSICA_META_LLM_API_TOKEN: cog_1111111111111111111111111111111111111111111111111111111111111111
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Verify provider canaries are absent from Windows bundles
         shell: bash
         env:
@@ -377,6 +395,11 @@ jobs:
           name: musica-vj-windows-nsis
           path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: musica-vj-updater-windows
+          path: target/release/bundle/nsis/*-setup.exe.sig
+          if-no-files-found: error
 
   ci-guard:
     runs-on: ubuntu-24.04
@@ -399,11 +422,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
       - name: List release artifacts
         run: find release-artifacts -type f -maxdepth 3 -print
+      - name: Build updater manifest (latest.json)
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
+          VERSION="${TAG#musica-vj-v}"
+          node apps/musica-vj/scripts/build-updater-manifest.mjs \
+            --dir release-artifacts \
+            --repo "${{ github.repository }}" \
+            --tag "$TAG" \
+            --version "$VERSION" \
+            --notes "Musica VJ $VERSION" \
+            --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --out release-artifacts/latest.json
+          echo "--- latest.json ---"
+          cat release-artifacts/latest.json
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -417,3 +458,6 @@ jobs:
             release-artifacts/**/*.deb
             release-artifacts/**/*.AppImage
             release-artifacts/**/*.exe
+            release-artifacts/**/*.app.tar.gz
+            release-artifacts/**/*.sig
+            release-artifacts/latest.json
