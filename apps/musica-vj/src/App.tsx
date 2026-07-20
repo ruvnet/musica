@@ -58,6 +58,7 @@ import {
   createLyriaVocalPrompts,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
+  nextAutoDjStyleId,
   getLyriaRealtimeStatus,
   lyriaRealtimeStyleById,
   lyriaRealtimeStyleForTemplate,
@@ -95,13 +96,26 @@ import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatu
 import {
   COGNITUM_CAPABILITY_LABELS,
   completeCognitumManualSignIn,
+  generateCognitumAutoDjBrief,
+  generateCognitumFxDirection,
+  generateCognitumSetArc,
+  generateCognitumVisualDirection,
+  generateCognitumVisualPlugin,
+  generateCognitumVocalGuidance,
+  localVocalGuidance,
+  localFxDirection,
+  localVisualDirection,
   generateCognitumStylePack,
   getCognitumStatus,
+  localSetArc,
   signOutCognitum,
   startCognitumManualSignIn,
   startCognitumSignIn,
   type CognitumStatus,
+  type SetArc,
 } from "./core/cognitum";
+import { memoryCount, recallDirection, recordDirection } from "./core/performanceMemory";
+import { localVisualPluginSpec, normalizeVisualPluginList, type VisualPluginSpec } from "./core/visualPlugins";
 import {
   loadWorkspaceSettings,
   normalizeWorkspaceSettings,
@@ -112,11 +126,13 @@ import {
 import { SocialRecorder, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
 import { RestreamBroadcaster, getRestreamStatus, type RestreamSource, type RestreamStatus } from "./export/RestreamBroadcaster";
 import {
+  DEFAULT_BLOOM_SETTINGS,
   DEFAULT_VISUAL_COLOR_CONTROLS,
   VISUAL_ANIMATION_STYLES,
   VISUAL_COLOR_PALETTES,
   VisualEngine,
   normalizeAnimationStyle,
+  type BloomSettings,
   normalizeVisualColorControls,
   type RenderStats,
   type VisualAnimationStyle,
@@ -195,6 +211,7 @@ type StudioPanelId =
   | "visual-reactivity"
   | "visual-macros"
   | "visual-temporal"
+  | "visual-advanced"
   | "audio-lyria"
   | "audio-fx"
   | "cognitum-ai"
@@ -546,6 +563,49 @@ export function App() {
     changeMasterEffect(effect, 0.25 + Math.random() * 0.6);
     setNotice(`${effect.toUpperCase()} settings generated. Lock it to keep them across style changes.`);
   }, [changeMasterEffect, changeMasterEffectParam]);
+
+  const [fxMood, setFxMood] = useState("");
+  const [fxMoodBusy, setFxMoodBusy] = useState(false);
+  const [fxMoodActive, setFxMoodActive] = useState("");
+  const fxMoodTimersRef = useRef<number[]>([]);
+
+  const stopFxMood = useCallback((announce = true) => {
+    for (const timer of fxMoodTimersRef.current) window.clearTimeout(timer);
+    fxMoodTimersRef.current = [];
+    setFxMoodActive("");
+    if (announce) setNotice("FX mood automation cancelled.");
+  }, []);
+
+  const runFxMood = useCallback(async () => {
+    const mood = fxMood.trim();
+    if (!mood || fxMoodBusy) return;
+    setFxMoodBusy(true);
+    stopFxMood(false);
+    const bars = 16;
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const rememberedFx = cognitumReady ? undefined : await recallDirection("fx-mood", mood);
+      const direction = rememberedFx
+        ? rememberedFx.payload as ReturnType<typeof localFxDirection>
+        : cognitumReady
+          ? await generateCognitumFxDirection(mood, bars).catch(() => localFxDirection(mood, bars))
+          : localFxDirection(mood, bars);
+      if (!rememberedFx) void recordDirection("fx-mood", mood, direction, direction.summary);
+      const barMs = (60_000 / Math.max(60, snapshotRef.current.bpm)) * 4;
+      for (const move of direction.moves) {
+        if (fxLocks[move.effect]) continue;
+        const timer = window.setTimeout(() => changeMasterEffect(move.effect, move.target), move.atBar * barMs);
+        fxMoodTimersRef.current.push(timer);
+      }
+      setFxMoodActive(direction.summary);
+      window.setTimeout(() => setFxMoodActive(""), bars * barMs + 1_000);
+      setNotice(`FX mood: ${direction.summary} · ${direction.moves.length} moves over ${bars} bars.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "FX mood direction failed");
+    } finally {
+      setFxMoodBusy(false);
+    }
+  }, [changeMasterEffect, fxLocks, fxMood, fxMoodBusy, stopFxMood]);
 
   const [padLoops, setPadLoops] = useState(() => engineRef.current.getPadLoops());
   const [sfxLevel, setSfxLevel] = useState(() => engineRef.current.getSfxLevel());
@@ -1094,6 +1154,54 @@ export function App() {
     setNotice("Custom style removed.");
   }, [customLyriaStyles, lyriaStyleId, persistCustomStyles]);
 
+  const [visualPlugins, setVisualPlugins] = useState<VisualPluginSpec[]>([]);
+  const [activePluginId, setActivePluginId] = useState<string>();
+  const [pluginPrompt, setPluginPrompt] = useState("");
+  const [pluginBusy, setPluginBusy] = useState(false);
+
+  const activatePlugin = useCallback((spec?: VisualPluginSpec) => {
+    visualRef.current?.setActivePlugin(spec);
+    setActivePluginId(spec?.id);
+    if (spec) setNotice(`${spec.name} plugin scene active · pick any scene tile to return to built-ins.`);
+  }, []);
+
+  const generateVisualPlugin = useCallback(async () => {
+    const description = pluginPrompt.trim();
+    if (!description || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const spec = cognitumReady
+        ? await generateCognitumVisualPlugin(description).catch(() => localVisualPluginSpec(description))
+        : localVisualPluginSpec(description);
+      setVisualPlugins((current) => [...current, spec].slice(-12));
+      setPluginPrompt("");
+      activatePlugin(spec);
+      setNotice(`${spec.name} generated (${spec.base}, ${spec.count} elements) and activated.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Plugin generation failed");
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [activatePlugin, pluginBusy, pluginPrompt]);
+
+  const deletePlugin = useCallback((id: string) => {
+    setVisualPlugins((current) => current.filter((spec) => spec.id !== id));
+    if (activePluginId === id) activatePlugin(undefined);
+    setNotice("Plugin scene removed.");
+  }, [activatePlugin, activePluginId]);
+
+  const [setArc, setSetArc] = useState<SetArc>();
+  const [setArcSource, setSetArcSource] = useState<"cognitum" | "local">("local");
+  const [setArcDuration, setSetArcDuration] = useState(60);
+  const [setArcDirection, setSetArcDirection] = useState("");
+  const [setArcBusy, setSetArcBusy] = useState(false);
+  const [setArcRunning, setSetArcRunning] = useState(false);
+  const [setArcStepIndex, setSetArcStepIndex] = useState(-1);
+  const setArcTimersRef = useRef<number[]>([]);
+
+
+
   const collectWorkspaceSettings = useCallback((): WorkspaceSettings => ({
     version: 1,
     onboarding: onboardingPreferences,
@@ -1103,7 +1211,9 @@ export function App() {
     masterEffectParams,
     fxLocks,
     sfxLevel,
-  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, sfxLevel]);
+    plugins: visualPlugins,
+    setArc,
+  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, setArc, sfxLevel, visualPlugins]);
 
   const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
     setOnboardingPreferences(settings.onboarding);
@@ -1115,6 +1225,11 @@ export function App() {
     }
     setFxLocks((current) => ({ ...current, ...settings.fxLocks }));
     changeSfxLevel(settings.sfxLevel);
+    setVisualPlugins(normalizeVisualPluginList(settings.plugins));
+    if (settings.setArc) {
+      setSetArc(settings.setArc);
+      setSetArcSource("local");
+    }
   }, [changeMasterEffect, changeMasterEffectParam, changeSfxLevel, persistCustomStyles]);
 
   const workspaceLoadedRef = useRef(false);
@@ -1162,6 +1277,11 @@ export function App() {
   }, [applyWorkspaceSettings]);
 
   const [cognitumStatus, setCognitumStatus] = useState<CognitumStatus>({ signedIn: false, pending: false, capabilities: [], authHost: "cognitum.one" });
+  const cognitumStatusRef = useRef(cognitumStatus);
+  useEffect(() => {
+    cognitumStatusRef.current = cognitumStatus;
+  }, [cognitumStatus]);
+  const autoDjBriefRef = useRef("");
   const [cognitumBusy, setCognitumBusy] = useState(false);
   const [aiStyleDescription, setAiStyleDescription] = useState("");
   const [aiStyleBusy, setAiStyleBusy] = useState(false);
@@ -1296,6 +1416,25 @@ export function App() {
       setNotice(`${style.label} primary guidance saved for the next switch.`);
     }
   }, [applyRealtimeRequest, customLyriaStyles, lyriaGuidanceDialog, lyriaStyleId, persistCustomStyles]);
+
+  const [vocalAiBusy, setVocalAiBusy] = useState(false);
+
+  const writeVocalGuidanceWithAi = useCallback(async () => {
+    if (vocalAiBusy) return;
+    setVocalAiBusy(true);
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("realtime-vocals");
+      const hint = lyriaCompanionDialog?.text.trim() ?? "";
+      const result = cognitumReady
+        ? await generateCognitumVocalGuidance(activeLyriaStyle.label, hint).catch(() => localVocalGuidance(activeLyriaStyle.label))
+        : localVocalGuidance(activeLyriaStyle.label);
+      const combined = result.hook ? `${result.guidance}. Hook: ${result.hook}` : result.guidance;
+      setLyriaCompanionDialog((current) => current ? { ...current, text: combined.slice(0, 240) } : current);
+      setNotice(cognitumReady ? "Cognitum wrote fresh vocal guidance — review and apply." : "Local vocal guidance written — review and apply.");
+    } finally {
+      setVocalAiBusy(false);
+    }
+  }, [activeLyriaStyle.label, lyriaCompanionDialog, vocalAiBusy]);
 
   const applyLyriaCompanionDialog = useCallback(() => {
     if (!lyriaCompanionDialog) return;
@@ -1534,6 +1673,7 @@ export function App() {
   }, []);
 
   const changeScene = useCallback((scene: VisualSceneId) => {
+    setActivePluginId(undefined);
     setSelectedScene(scene);
     selectedSceneRef.current = scene;
     visualRef.current?.setScene(scene);
@@ -1630,6 +1770,140 @@ export function App() {
     const sceneName = VISUAL_SCENES.find((candidate) => candidate.id === scene)?.name ?? scene;
     setNotice(`Shuffled look: ${sceneName} · ${settings.animationStyle.toUpperCase()} · ${settings.color.palette.toUpperCase()}.`);
   }, [applySceneSettings, changeScene, saveSceneSettings]);
+
+
+
+
+  const [visualMood, setVisualMood] = useState("");
+  const [visualMoodBusy, setVisualMoodBusy] = useState(false);
+  const [memoryEntries, setMemoryEntries] = useState(0);
+
+  const [bloomSettings, setBloomSettings] = useState<BloomSettings>({ ...DEFAULT_BLOOM_SETTINGS });
+  const [feedbackBoost, setFeedbackBoost] = useState(0);
+
+  const changeBloomSetting = useCallback((key: keyof BloomSettings, value: number) => {
+    setBloomSettings((current) => {
+      const next = { ...current, [key]: value };
+      visualRef.current?.setBloomSettings(next);
+      return next;
+    });
+  }, []);
+
+  const changeFeedbackBoost = useCallback((value: number) => {
+    setFeedbackBoost(value);
+    visualRef.current?.setFeedbackBoost(value);
+  }, []);
+
+
+
+  useEffect(() => {
+    void memoryCount().then(setMemoryEntries);
+  }, [visualMoodBusy, fxMoodBusy]);
+
+  const directVisuals = useCallback(async () => {
+    const mood = visualMood.trim();
+    if (!mood || visualMoodBusy) return;
+    setVisualMoodBusy(true);
+    try {
+      const cognitumReady = cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("advanced-prompting");
+      const remembered = cognitumReady ? undefined : await recallDirection("ai-look", mood);
+      const direction = remembered
+        ? remembered.payload as ReturnType<typeof localVisualDirection>
+        : cognitumReady
+          ? await generateCognitumVisualDirection(
+              mood,
+              VISUAL_SCENES.map((scene) => scene.id),
+              VISUAL_COLOR_PALETTES.map((palette) => palette.id),
+            ).catch(() => localVisualDirection(mood))
+          : localVisualDirection(mood);
+      changeScene(direction.scene as VisualSceneId);
+      changeVisualColor({ palette: direction.palette as VisualColorControls["palette"], hue: direction.hue });
+      changeIntensity(direction.intensity);
+      changeTemporalControl("speed", direction.speed);
+      changeTemporalControl("trail", direction.trail);
+      changeTemporalControl("morph", direction.morph);
+      changeTemporalControl("camera", direction.camera);
+      if (!remembered) void recordDirection("ai-look", mood, direction, direction.note);
+      setNotice(remembered ? `Recalled look from your set history: ${direction.note}` : `AI look: ${direction.note}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI visual direction failed");
+    } finally {
+      setVisualMoodBusy(false);
+    }
+  }, [changeIntensity, changeScene, changeTemporalControl, changeVisualColor, visualMood, visualMoodBusy]);
+
+  const applySetArcStep = useCallback((arc: SetArc, index: number) => {
+    const step = arc.steps[index];
+    if (!step) return;
+    setSetArcStepIndex(index);
+    engineRef.current.setBpm(step.bpm);
+    const matchingDeckScene = lyriaDeckScenes.find((scene) => scene.styleId === step.styleId);
+    if (matchingDeckScene) {
+      // A saved deck scene for this style carries the full three-deck
+      // configuration; prefer it so arcs can bring companion decks in and out.
+      void applyLyriaDeckScene({ ...cloneLyriaDeckScene(matchingDeckScene), bpm: step.bpm });
+    } else {
+      void applyRealtimeStyle(step.styleId);
+    }
+    changeScene(step.visualScene as VisualSceneId);
+    if (step.fx) {
+      for (const effect of ["sweep", "reverb", "echo", "flanger"] as const) {
+        if (!fxLocks[effect] && step.fx[effect] !== undefined) changeMasterEffect(effect, step.fx[effect]!);
+      }
+    }
+    setNotice(`Set arc ${index + 1}/${arc.steps.length}: ${step.note}`);
+  }, [applyLyriaDeckScene, applyRealtimeStyle, changeMasterEffect, changeScene, fxLocks, lyriaDeckScenes]);
+
+  const stopSetArc = useCallback((announce = true) => {
+    for (const timer of setArcTimersRef.current) window.clearTimeout(timer);
+    setArcTimersRef.current = [];
+    setSetArcRunning(false);
+    setSetArcStepIndex(-1);
+    if (announce) setNotice("Set arc stopped. Manual control restored.");
+  }, []);
+
+  const runSetArc = useCallback(() => {
+    if (!setArc) return;
+    stopSetArc(false);
+    setSetArcRunning(true);
+    const offset = setArc.steps[0]?.atMinute ?? 0;
+    applySetArcStep(setArc, 0);
+    for (let index = 1; index < setArc.steps.length; index += 1) {
+      const delayMs = Math.max(0, (setArc.steps[index]!.atMinute - offset) * 60_000);
+      setArcTimersRef.current.push(window.setTimeout(() => applySetArcStep(setArc, index), delayMs));
+    }
+    setNotice(`${setArc.title} running · ${setArc.steps.length} steps over ${setArc.durationMinutes} minutes.`);
+  }, [applySetArcStep, setArc, stopSetArc]);
+
+  useEffect(() => () => stopSetArc(false), [stopSetArc]);
+
+  const generateSetArc = useCallback(async () => {
+    if (setArcBusy) return;
+    setSetArcBusy(true);
+    stopSetArc(false);
+    const styleIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
+    const sceneIds = VISUAL_SCENES.map((scene) => scene.id);
+    try {
+      if (cognitumStatusRef.current.signedIn && cognitumStatusRef.current.capabilities.includes("autopilot")) {
+        const arc = await generateCognitumSetArc(setArcDuration, setArcDirection.trim(), styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("cognitum");
+        setNotice(`${arc.title} planned by Cognitum · ${arc.steps.length} steps. Review, then RUN ARC.`);
+      } else {
+        const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+        setSetArc(arc);
+        setSetArcSource("local");
+        setNotice(`${arc.title} planned locally · sign in to Cognitum for AI-directed arcs.`);
+      }
+    } catch (error) {
+      const arc = localSetArc(setArcDuration, styleIds, sceneIds);
+      setSetArc(arc);
+      setSetArcSource("local");
+      setNotice(`${error instanceof Error ? error.message : "Cognitum planning failed"} — local arc planned instead.`);
+    } finally {
+      setSetArcBusy(false);
+    }
+  }, [customLyriaStyles, setArcBusy, setArcDirection, setArcDuration, stopSetArc]);
 
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
@@ -1944,9 +2218,10 @@ export function App() {
       if (autoDjTransitionRef.current || cancelled) return;
       autoDjTransitionRef.current = true;
       try {
-        const currentIndex = Math.max(0, LYRIA_REALTIME_STYLE_PRESETS.findIndex((style) => style.id === autoDjStyleRef.current));
         const step = advance ? autoDjStepRef.current + 1 : autoDjStepRef.current;
-        const baseStyle = LYRIA_REALTIME_STYLE_PRESETS[(currentIndex + (advance ? 1 : 0)) % LYRIA_REALTIME_STYLE_PRESETS.length];
+        const nextStyleId = advance ? nextAutoDjStyleId(autoDjStyleRef.current, step) : autoDjStyleRef.current;
+        const baseStyle = LYRIA_REALTIME_STYLE_PRESETS.find((style) => style.id === nextStyleId)
+          ?? LYRIA_REALTIME_STYLE_PRESETS[0];
         const style = applyPrimaryGuidance(baseStyle, lyriaStyleGuidance[baseStyle.id]);
         const localRequest = createAutoDjRealtimeRequest(style, {
           personalization: autoDjPersonalizationRef.current,
@@ -1955,7 +2230,29 @@ export function App() {
           bars: AUTO_DJ_PHRASE_BARS,
         });
         let generatedBrief: string | undefined;
-        if (metaLlmAvailable) {
+        let phraseMood = "";
+        const cognitum = cognitumStatusRef.current;
+        if (cognitum.signedIn && cognitum.capabilities.includes("autopilot")) {
+          try {
+            const briefTimeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Cognitum brief timeout")), 10_000));
+            const result = await Promise.race([
+              generateCognitumAutoDjBrief(
+                style.label,
+                snapshotRef.current.bpm,
+                step,
+                autoDjPersonalizationRef.current,
+                autoDjBriefRef.current,
+              ),
+              briefTimeout,
+            ]);
+            generatedBrief = `${result.brief}. ${autoDjPersonalizationRef.current}`;
+            phraseMood = result.mood;
+            autoDjBriefRef.current = result.brief;
+          } catch {
+            generatedBrief = undefined;
+          }
+        }
+        if (!generatedBrief && metaLlmAvailable) {
           const goal = [
             `Write the next ${AUTO_DJ_PHRASE_BARS}-bar direction for one continuous Lyria RealTime main stereo stream.`,
             `Style: ${style.label}. ${style.description}`,
@@ -2000,7 +2297,17 @@ export function App() {
           lyriaSessionRef.current = session;
           setLyriaSession(session);
           liveUpdateSignatureRef.current.main = JSON.stringify(request);
-          setNotice(`Auto DJ phrase ${step + 1} · ${style.label} · ${AUTO_DJ_PHRASE_BARS} bars · ${generatedBrief ? "Meta-LLM directed" : "local detailed direction"} · single main stream.`);
+          if (phraseMood) {
+            const mood = phraseMood.toLowerCase();
+            const hue = /dark|tension|night|shadow/.test(mood) ? 0.78
+              : /warm|golden|soul|dusty/.test(mood) ? 0.12
+              : /euphoric|bright|lift|rising|peak/.test(mood) ? 0.5
+              : undefined;
+            if (hue !== undefined) changeVisualColor({ hue });
+            if (/peak|rising|drive|surge/.test(mood)) changeIntensity(Math.min(1, intensityRef.current + 0.08));
+            if (/breathe|calm|soft|resolve|gentle/.test(mood)) changeIntensity(Math.max(0.2, intensityRef.current - 0.1));
+          }
+          setNotice(`Auto DJ phrase ${step + 1} · ${style.label} · ${AUTO_DJ_PHRASE_BARS} bars · ${phraseMood ? `Cognitum: ${phraseMood}` : generatedBrief ? "Meta-LLM directed" : "local detailed direction"} · single main stream.`);
         }
       } catch (error) {
         if (!cancelled) setNotice(error instanceof Error ? error.message : "Auto DJ Lyria update failed");
@@ -2015,7 +2322,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [autoDjMode, lyriaStyleGuidance, metaLlmAvailable, snapshot.bpm]);
+  }, [autoDjMode, changeIntensity, changeVisualColor, lyriaStyleGuidance, metaLlmAvailable, snapshot.bpm]);
 
   useEffect(() => {
     if (!demoMode) return;
@@ -2509,6 +2816,11 @@ export function App() {
             <div className="guidance-scope">
               <span>{lyriaCompanionDialog.deck === "sequence" ? "MAIN SCALE · ROOT MOTION · 8-BAR PHRASES" : "MAIN SCALE · 32-BAR VOCAL FORM · VOICE ONLY"}</span>
             </div>
+            {lyriaCompanionDialog.deck === "vocal" && (
+              <button type="button" className="vocal-ai-write" onClick={() => void writeVocalGuidanceWithAi()} disabled={vocalAiBusy}>
+                {vocalAiBusy ? "WRITING…" : "✦ AI WRITE VOCAL DIRECTION"}
+              </button>
+            )}
             <footer>
               <button
                 type="button"
@@ -2674,6 +2986,42 @@ export function App() {
                   <span>random scene + motion + color</span>
                 </button>
               </div>
+              <div className="ai-look" title="Describe a mood; the visuals pick a scene, palette, and motion to match">
+                <input
+                  value={visualMood}
+                  maxLength={300}
+                  placeholder="AI look: stark noir tension… golden sunset drift…"
+                  onChange={(event) => setVisualMood(event.target.value)}
+                  aria-label="AI visual mood"
+                />
+                <button type="button" onClick={() => void directVisuals()} disabled={visualMoodBusy || !visualMood.trim()}>
+                  {visualMoodBusy ? "…" : "DIRECT"}
+                </button>
+              </div>
+              <div className="ai-look plugin-generator" title="Generate a brand-new parametric plugin scene from a description (ADR-177)">
+                <input
+                  value={pluginPrompt}
+                  maxLength={400}
+                  placeholder="AI scene: slow silver starfield… molten ember storm…"
+                  onChange={(event) => setPluginPrompt(event.target.value)}
+                  aria-label="AI plugin scene description"
+                />
+                <button type="button" onClick={() => void generateVisualPlugin()} disabled={pluginBusy || !pluginPrompt.trim()}>
+                  {pluginBusy ? "…" : "CREATE"}
+                </button>
+              </div>
+              {visualPlugins.length > 0 && (
+                <div className="plugin-grid" role="group" aria-label="AI plugin scenes">
+                  {visualPlugins.map((spec) => (
+                    <span key={spec.id} className={`plugin-tile ${spec.id === activePluginId ? "active" : ""}`}>
+                      <button type="button" onClick={() => activatePlugin(spec.id === activePluginId ? undefined : spec)} title={`${spec.base} · ${spec.count} elements`}>
+                        {spec.name}
+                      </button>
+                      <button type="button" className="plugin-delete" onClick={() => deletePlugin(spec.id)} aria-label={`Delete ${spec.name}`}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </section>
           ))}
 
@@ -2765,11 +3113,31 @@ export function App() {
                     step="0.01"
                     value={temporalControls[key]}
                     onChange={(event) => changeTemporalControl(key, Number(event.target.value))}
+
                   />
                 </label>
               ))}
             </section>
           ))}
+          {renderStudioPanel("visual-advanced", "ADVANCED VISUALS", `${Math.round(bloomSettings.strength * 100)} GLOW`, (
+            <section className="advanced-visuals" aria-label="Advanced visual controls">
+              {([
+                ["strength", "GLOW", 2.5],
+                ["radius", "RADIUS", 1.5],
+                ["threshold", "THRESH", 1],
+              ] as const).map(([key, label, max]) => (
+                <label key={key} className="control-block">
+                  <span><b>{label}</b><em>{Math.round(bloomSettings[key] * 100)}</em></span>
+                  <input type="range" min="0" max={max} step="0.01" value={bloomSettings[key]} onChange={(event) => changeBloomSetting(key, Number(event.target.value))} />
+                </label>
+              ))}
+              <label className="control-block" title="Frame-feedback echo floor, independent of the TRAIL knob">
+                <span><b>ECHO</b><em>{Math.round(feedbackBoost * 100)}</em></span>
+                <input type="range" min="0" max="1" step="0.01" value={feedbackBoost} onChange={(event) => changeFeedbackBoost(Number(event.target.value))} />
+              </label>
+            </section>
+          ))}
+
         </aside>
 
         <section className="performance-column">
@@ -3164,6 +3532,23 @@ export function App() {
                   )}
                 </div>
               ))}
+              <div className="fx-mood" title="Describe a feeling; the rack automates itself over the next 16 bars, respecting locks">
+                <input
+                  value={fxMood}
+                  maxLength={300}
+                  placeholder="AI mood: make it feel underwater, then lift…"
+                  onChange={(event) => setFxMood(event.target.value)}
+                  aria-label="FX mood direction"
+                />
+                {fxMoodActive ? (
+                  <button type="button" className="danger" onClick={() => stopFxMood()}>STOP</button>
+                ) : (
+                  <button type="button" onClick={() => void runFxMood()} disabled={fxMoodBusy || !fxMood.trim()}>
+                    {fxMoodBusy ? "…" : "DIRECT"}
+                  </button>
+                )}
+              </div>
+              {fxMoodActive && <small className="fx-mood-active">▶ {fxMoodActive}</small>}
               <button type="button" className="fx-kill" onClick={() => MASTER_EFFECT_IDS.forEach((key) => { if (!fxLocks[key]) changeMasterEffect(key, 0); })} title="Zero all unlocked effects">
                 KILL FX
               </button>
@@ -3179,7 +3564,7 @@ export function App() {
                     {(Object.keys(COGNITUM_CAPABILITY_LABELS) as Array<keyof typeof COGNITUM_CAPABILITY_LABELS>).map((capability) => (
                       <div key={capability} className="capability locked">
                         <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
-                        <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                        <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}{capability === "learning" && memoryEntries > 0 ? ` · ${memoryEntries} remembered locally` : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -3215,7 +3600,7 @@ export function App() {
                       return (
                         <div key={capability} className={`capability ${enabled ? "enabled" : "locked"}`}>
                           <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
-                          <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                          <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}{capability === "learning" && memoryEntries > 0 ? ` · ${memoryEntries} remembered` : ""}</span>
                         </div>
                       );
                     })}
@@ -3243,6 +3628,43 @@ export function App() {
                   </div>
                 </>
               )}
+              <section className="set-arc" aria-label="Set arc autopilot">
+                <header>
+                  <span>SET ARC AUTOPILOT</span>
+                  <b>{setArcRunning ? "RUNNING" : setArc ? setArcSource.toUpperCase() : "IDLE"}</b>
+                </header>
+                <div className="set-arc-controls">
+                  <select value={setArcDuration} onChange={(event) => setSetArcDuration(Number(event.target.value))} disabled={setArcRunning} aria-label="Set length in minutes">
+                    {[30, 45, 60, 75, 90].map((minutes) => <option key={minutes} value={minutes}>{minutes} MIN</option>)}
+                  </select>
+                  <input
+                    value={setArcDirection}
+                    maxLength={600}
+                    placeholder="Optional direction: warehouse night, one ambient valley…"
+                    onChange={(event) => setSetArcDirection(event.target.value)}
+                    disabled={setArcRunning}
+                    aria-label="Set arc direction"
+                  />
+                </div>
+                <div className="set-arc-actions">
+                  <button type="button" onClick={() => void generateSetArc()} disabled={setArcBusy || setArcRunning}>
+                    {setArcBusy ? "PLANNING…" : "PLAN ARC"}
+                  </button>
+                  {setArc && !setArcRunning && <button type="button" className="primary" onClick={runSetArc}>RUN ARC</button>}
+                  {setArcRunning && <button type="button" className="danger" onClick={() => stopSetArc()}>STOP ARC</button>}
+                </div>
+                {setArc && (
+                  <ol className="set-arc-timeline">
+                    {setArc.steps.map((step, index) => (
+                      <li key={index} className={index === setArcStepIndex ? "active" : ""}>
+                        <b>{Math.round(step.atMinute)}′</b>
+                        <span>{lyriaRealtimeStyleById(step.styleId).label} · {VISUAL_SCENES.find((scene) => scene.id === step.visualScene)?.name ?? step.visualScene} · {step.bpm} BPM</span>
+                        <em>{step.note}</em>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
             </section>
           ))}
 

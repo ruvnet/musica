@@ -229,3 +229,37 @@ describe("workspace settings", () => {
     expect(roundTripped!.savedAt).toBeTruthy();
   });
 });
+
+describe("performance memory", () => {
+  it("scores mood similarity by bounded token overlap", async () => {
+    const { similarity, tokenize } = await import("../src/core/performanceMemory");
+    expect(tokenize("Dark, RISING tension!")).toEqual(["dark", "rising", "tension"]);
+    expect(similarity("dark rising tension", "dark rising tension")).toBe(1);
+    expect(similarity("dark rising tension", "dark tension at night")).toBeGreaterThan(0.4);
+    expect(similarity("dark rising tension", "golden sunset drift")).toBe(0);
+    expect(similarity("", "anything")).toBe(0);
+    expect(similarity("a b", "a b")).toBe(0);
+  });
+});
+
+describe("auto dj style walks", () => {
+  it("keeps every neighbor inside the preset vocabulary and walks deterministically", async () => {
+    const { AUTO_DJ_STYLE_NEIGHBORS, nextAutoDjStyleId } = await import("../src/core/lyriaRealtime");
+    const known = new Set(LYRIA_REALTIME_STYLE_PRESETS.map((style) => style.id));
+    for (const [style, neighbors] of Object.entries(AUTO_DJ_STYLE_NEIGHBORS)) {
+      expect(known.has(style)).toBe(true);
+      expect(neighbors.length).toBeGreaterThanOrEqual(3);
+      for (const neighbor of neighbors) {
+        expect(known.has(neighbor)).toBe(true);
+        expect(neighbor).not.toBe(style);
+      }
+    }
+    for (const style of known) {
+      expect(AUTO_DJ_STYLE_NEIGHBORS[style]).toBeDefined();
+    }
+    expect(nextAutoDjStyleId("rock", 0)).toBe("blues");
+    expect(nextAutoDjStyleId("rock", 1)).toBe("dubstep");
+    expect(nextAutoDjStyleId("custom-unknown", 0)).toBe("blues");
+    expect(known.has(nextAutoDjStyleId("ambient", 7))).toBe(true);
+  });
+});

@@ -590,6 +590,690 @@ pub(crate) async fn cognitum_style_pack(
     Ok(pack)
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArcStep {
+    at_minute: f32,
+    style_id: String,
+    visual_scene: String,
+    bpm: u16,
+    #[serde(default)]
+    fx: Option<SetArcFx>,
+    note: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArcFx {
+    #[serde(default)]
+    sweep: Option<f32>,
+    #[serde(default)]
+    reverb: Option<f32>,
+    #[serde(default)]
+    echo: Option<f32>,
+    #[serde(default)]
+    flanger: Option<f32>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetArc {
+    title: String,
+    duration_minutes: u16,
+    steps: Vec<SetArcStep>,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_set_arc(
+    provider: State<'_, CognitumProvider>,
+    duration_minutes: u16,
+    direction: String,
+    style_ids: Vec<String>,
+    scene_ids: Vec<String>,
+) -> Result<SetArc, String> {
+    if !(30..=90).contains(&duration_minutes) {
+        return Err("Set length must be between 30 and 90 minutes".into());
+    }
+    let trimmed = direction.trim();
+    if trimmed.len() > 600 {
+        return Err("Describe the set in at most 600 characters".into());
+    }
+    if style_ids.is_empty() || scene_ids.is_empty() || style_ids.len() > 64 || scene_ids.len() > 32
+    {
+        return Err("Style and scene lists are required".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You plan complete live AI music performances. Return only JSON with keys title (max 40 chars), durationMinutes (echo the requested length), and steps: 6 to 14 objects, each with atMinute (number, 0 = opening, strictly increasing, all below durationMinutes), styleId (one of: {styles}), visualScene (one of: {scenes}), bpm (60-200), fx (optional object with sweep/reverb/echo/flanger each 0-1, omit for dry), and note (max 90 chars stage direction). Design a professional energy arc: establish, build, peak, breathe, second peak, resolve. Adjacent steps should differ meaningfully.",
+        styles = style_ids.join(", "),
+        scenes = scene_ids.join(", "),
+    );
+    let user = if trimmed.is_empty() {
+        format!("Plan a {duration_minutes} minute live set.")
+    } else {
+        format!("Plan a {duration_minutes} minute live set. Direction: {trimmed}")
+    };
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 1_400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum set-arc request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum set-arc planning was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty plan".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid plan".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid plan".to_string())?;
+    let arc: SetArc = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid plan".to_string())?;
+    validate_set_arc(&arc, duration_minutes, &style_ids, &scene_ids)?;
+    Ok(arc)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AutoDjBrief {
+    brief: String,
+    mood: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_autodj_brief(
+    provider: State<'_, CognitumProvider>,
+    style_label: String,
+    bpm: u16,
+    phrase: u32,
+    personalization: String,
+    previous_brief: String,
+) -> Result<AutoDjBrief, String> {
+    if !(60..=200).contains(&bpm) {
+        return Err("BPM is out of range".into());
+    }
+    if personalization.len() > 400 || previous_brief.len() > 500 || style_label.len() > 40 {
+        return Err("Auto DJ brief inputs are too long".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You direct one continuous Lyria RealTime main stereo stream, one 32-bar phrase at a time. Return only JSON with keys brief (max 400 chars: a dense production direction covering groove, instrumentation, motif development, energy arc, transition into the phrase, mix character, and exclusions — never change tempo, never multiple songs or streams, no vocals) and mood (max 24 chars: two or three words describing the phrase's emotional color, e.g. 'dark rising tension'). Each phrase must audibly evolve from the previous one while keeping the set coherent.".to_string();
+    let user = format!(
+        "Style: {style_label}. Master tempo: {bpm} BPM. Phrase number: {phrase}. Set personalization: {personalization}. Previous phrase direction: {previous}.",
+        previous = if previous_brief.trim().is_empty() {
+            "none — this is the opening phrase"
+        } else {
+            previous_brief.trim()
+        },
+    );
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.75,
+        max_tokens: 400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum brief request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum brief was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty brief".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid brief".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid brief".to_string())?;
+    #[derive(Deserialize)]
+    struct RawBrief {
+        brief: String,
+        #[serde(default)]
+        mood: String,
+    }
+    let raw: RawBrief = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid brief".to_string())?;
+    let brief = raw.brief.trim();
+    if brief.is_empty() {
+        return Err("Cognitum returned an empty brief".into());
+    }
+    Ok(AutoDjBrief {
+        brief: brief.chars().take(400).collect(),
+        mood: raw.mood.trim().chars().take(24).collect(),
+    })
+}
+
+const FX_EFFECTS: [&str; 7] = [
+    "flanger", "phaser", "drive", "crush", "sweep", "reverb", "echo",
+];
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FxMove {
+    effect: String,
+    target: f32,
+    at_bar: u16,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FxDirection {
+    summary: String,
+    moves: Vec<FxMove>,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_fx_direction(
+    provider: State<'_, CognitumProvider>,
+    mood: String,
+    bars: u16,
+) -> Result<FxDirection, String> {
+    let trimmed = mood.trim();
+    if trimmed.is_empty() || trimmed.len() > 300 {
+        return Err("Describe the mood in 1 to 300 characters".into());
+    }
+    if !(4..=128).contains(&bars) {
+        return Err("FX direction length must be 4 to 128 bars".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You automate a live master effects rack over a fixed number of bars. Return only JSON with keys summary (max 90 chars) and moves: 2 to 12 objects with effect (one of: {effects}), target (0-1, the effect amount to reach), and atBar (integer 0 to the bar budget minus one; 0 means immediately). Design a musical journey: introduce effects gradually, resolve back toward dry (targets at or near 0) by the final bars unless the mood demands otherwise. Never exceed 0.85 for drive or crush.",
+        effects = FX_EFFECTS.join(", "),
+    );
+    let user = format!("Bar budget: {bars}. Mood: {trimmed}");
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.65,
+        max_tokens: 500,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum FX direction request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum FX direction was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty FX direction".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid FX direction".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid FX direction".to_string())?;
+    let direction: FxDirection = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid FX direction".to_string())?;
+    validate_fx_direction(&direction, bars)?;
+    Ok(direction)
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VisualDirection {
+    scene: String,
+    palette: String,
+    hue: f32,
+    intensity: f32,
+    speed: f32,
+    trail: f32,
+    morph: f32,
+    camera: f32,
+    note: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_visual_direction(
+    provider: State<'_, CognitumProvider>,
+    mood: String,
+    scene_ids: Vec<String>,
+    palette_ids: Vec<String>,
+) -> Result<VisualDirection, String> {
+    let trimmed = mood.trim();
+    if trimmed.is_empty() || trimmed.len() > 300 {
+        return Err("Describe the visual mood in 1 to 300 characters".into());
+    }
+    if scene_ids.is_empty()
+        || palette_ids.is_empty()
+        || scene_ids.len() > 32
+        || palette_ids.len() > 16
+    {
+        return Err("Scene and palette lists are required".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = format!(
+        "You art-direct a live generative visual system. Return only JSON with keys scene (one of: {scenes}), palette (one of: {palettes}), hue (0-1 color wheel position), intensity (0.2-1), speed (0-1), trail (0-1, motion persistence/echo), morph (0-1, shape evolution), camera (0-1, camera movement), and note (max 80 chars describing the look). Choose a coherent look that embodies the mood; prefer restraint over spectacle.",
+        scenes = scene_ids.join(", "),
+        palettes = palette_ids.join(", "),
+    );
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: trimmed.to_string(),
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 300,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum visual direction request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum visual direction was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty visual direction".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid visual direction".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid visual direction".to_string())?;
+    let direction: VisualDirection = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid visual direction".to_string())?;
+    validate_visual_direction(&direction, &scene_ids, &palette_ids)?;
+    Ok(direction)
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginMotion {
+    orbit: f32,
+    pulse: f32,
+    drift: f32,
+    twist: f32,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginAudio {
+    bass_to: String,
+    high_to: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginColors {
+    primary: String,
+    accent: String,
+    background: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VisualPluginSpec {
+    name: String,
+    base: String,
+    count: u16,
+    size: f32,
+    spread: f32,
+    motion: PluginMotion,
+    audio: PluginAudio,
+    colors: PluginColors,
+    fog: f32,
+    exposure: f32,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_visual_plugin(
+    provider: State<'_, CognitumProvider>,
+    description: String,
+) -> Result<VisualPluginSpec, String> {
+    let trimmed = description.trim();
+    if trimmed.is_empty() || trimmed.len() > 400 {
+        return Err("Describe the plugin scene in 1 to 400 characters".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You design parametric visual plugin scenes for a live music visualizer (ADR-177 tier 1: pure data, no code). Return only JSON with keys name (max 24 chars), base (particles | ribbons | rings), count (50-4000), size (0-1), spread (0-1), motion {orbit, pulse, drift, twist each 0-1}, audio {bassTo: scale|speed|none, highTo: brightness|jitter|none}, colors {primary, accent, background — each a #rrggbb hex, background very dark}, fog (0-1), exposure (0-1). Choose parameters that embody the described look; particles suit fields and storms, ribbons suit flowing silk and waves, rings suit portals and orbits.".to_string();
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: trimmed.to_string(),
+            },
+        ],
+        temperature: 0.7,
+        max_tokens: 400,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum plugin request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum plugin generation was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned an empty plugin".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned an invalid plugin".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned an invalid plugin".to_string())?;
+    let spec: VisualPluginSpec = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned an invalid plugin".to_string())?;
+    validate_visual_plugin(&spec)?;
+    Ok(spec)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VocalGuidance {
+    guidance: String,
+    hook: String,
+}
+
+#[tauri::command]
+pub(crate) async fn cognitum_vocal_guidance(
+    provider: State<'_, CognitumProvider>,
+    style_label: String,
+    hint: String,
+) -> Result<VocalGuidance, String> {
+    if style_label.len() > 40 || hint.len() > 300 {
+        return Err("Vocal guidance inputs are too long".into());
+    }
+    let token = fresh_access_token(&provider).await?;
+
+    let system = "You direct a wordless AI vocal companion deck synced to a live instrumental stream. Return only JSON with keys guidance (max 240 chars: the vocal character and behavior — register, vowel colors, phrasing, where to answer the main motif, where to rest; wordless voice only, no lyrics) and hook (max 120 chars: one concrete singable chorus contour described in note-direction language, e.g. 'rise a fifth, hold, fall stepwise home'). Match the named style's energy.".to_string();
+    let user = if hint.trim().is_empty() {
+        format!("Style: {style_label}. Write fresh vocal deck guidance.")
+    } else {
+        format!("Style: {style_label}. Operator hint: {}", hint.trim())
+    };
+
+    let client = http_client()?;
+    let request = ChatRequest {
+        model: "meta-llm",
+        messages: [
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
+        ],
+        temperature: 0.8,
+        max_tokens: 300,
+    };
+    let response = client
+        .post(format!("{}/v1/chat/completions", api_base()))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| "Cognitum vocal guidance request failed".to_string())?;
+    if !response.status().is_success() {
+        return Err("Cognitum vocal guidance was rejected".into());
+    }
+    let chat: ChatResponse = read_bounded_json(response).await?;
+    let content = chat
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim())
+        .ok_or_else(|| "Cognitum returned empty vocal guidance".to_string())?;
+    let json_start = content
+        .find('{')
+        .ok_or_else(|| "Cognitum returned invalid vocal guidance".to_string())?;
+    let json_end = content
+        .rfind('}')
+        .ok_or_else(|| "Cognitum returned invalid vocal guidance".to_string())?;
+    #[derive(Deserialize)]
+    struct RawGuidance {
+        guidance: String,
+        #[serde(default)]
+        hook: String,
+    }
+    let raw: RawGuidance = serde_json::from_str(&content[json_start..=json_end])
+        .map_err(|_| "Cognitum returned invalid vocal guidance".to_string())?;
+    let guidance = raw.guidance.trim();
+    if guidance.is_empty() {
+        return Err("Cognitum returned empty vocal guidance".into());
+    }
+    Ok(VocalGuidance {
+        guidance: guidance.chars().take(240).collect(),
+        hook: raw.hook.trim().chars().take(120).collect(),
+    })
+}
+
+fn is_hex_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
+fn validate_visual_plugin(spec: &VisualPluginSpec) -> Result<(), String> {
+    if spec.name.trim().is_empty() || spec.name.len() > 24 {
+        return Err("Plugin name is invalid".into());
+    }
+    if !["particles", "ribbons", "rings"].contains(&spec.base.as_str()) {
+        return Err("Plugin base is unknown".into());
+    }
+    if !(50..=4_000).contains(&spec.count) {
+        return Err("Plugin count is out of range".into());
+    }
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    if !unit(spec.size)
+        || !unit(spec.spread)
+        || !unit(spec.motion.orbit)
+        || !unit(spec.motion.pulse)
+        || !unit(spec.motion.drift)
+        || !unit(spec.motion.twist)
+        || !unit(spec.fog)
+        || !unit(spec.exposure)
+    {
+        return Err("Plugin values are out of range".into());
+    }
+    if !["scale", "speed", "none"].contains(&spec.audio.bass_to.as_str())
+        || !["brightness", "jitter", "none"].contains(&spec.audio.high_to.as_str())
+    {
+        return Err("Plugin audio mapping is unknown".into());
+    }
+    if !is_hex_color(&spec.colors.primary)
+        || !is_hex_color(&spec.colors.accent)
+        || !is_hex_color(&spec.colors.background)
+    {
+        return Err("Plugin colors must be #rrggbb hex".into());
+    }
+    Ok(())
+}
+
+fn validate_visual_direction(
+    direction: &VisualDirection,
+    scene_ids: &[String],
+    palette_ids: &[String],
+) -> Result<(), String> {
+    if !scene_ids.contains(&direction.scene) {
+        return Err("Visual direction references an unknown scene".into());
+    }
+    if !palette_ids.contains(&direction.palette) {
+        return Err("Visual direction references an unknown palette".into());
+    }
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    if !unit(direction.hue)
+        || !unit(direction.speed)
+        || !unit(direction.trail)
+        || !unit(direction.morph)
+        || !unit(direction.camera)
+        || !(0.2..=1.0).contains(&direction.intensity)
+        || direction.note.len() > 80
+    {
+        return Err("Visual direction values are out of range".into());
+    }
+    Ok(())
+}
+
+fn validate_fx_direction(direction: &FxDirection, bars: u16) -> Result<(), String> {
+    if direction.summary.len() > 90 {
+        return Err("FX direction summary is too long".into());
+    }
+    if !(2..=12).contains(&direction.moves.len()) {
+        return Err("FX direction must have 2 to 12 moves".into());
+    }
+    for fx_move in &direction.moves {
+        if !FX_EFFECTS.contains(&fx_move.effect.as_str()) {
+            return Err("FX direction references an unknown effect".into());
+        }
+        if !(0.0..=1.0).contains(&fx_move.target) {
+            return Err("FX direction target is out of range".into());
+        }
+        if fx_move.at_bar >= bars {
+            return Err("FX direction move is beyond the bar budget".into());
+        }
+        if matches!(fx_move.effect.as_str(), "drive" | "crush") && fx_move.target > 0.85 {
+            return Err("FX direction pushes distortion beyond the safe ceiling".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_set_arc(
+    arc: &SetArc,
+    duration_minutes: u16,
+    style_ids: &[String],
+    scene_ids: &[String],
+) -> Result<(), String> {
+    if arc.title.trim().is_empty() || arc.title.len() > 40 {
+        return Err("Generated plan title is invalid".into());
+    }
+    if !(6..=14).contains(&arc.steps.len()) {
+        return Err("Generated plan must have 6 to 14 steps".into());
+    }
+    let mut previous = -1.0_f32;
+    for step in &arc.steps {
+        if !step.at_minute.is_finite() || step.at_minute < 0.0 {
+            return Err("Generated plan step time is invalid".into());
+        }
+        if step.at_minute <= previous || step.at_minute >= f32::from(duration_minutes) {
+            return Err("Generated plan step times must strictly increase within the set".into());
+        }
+        previous = step.at_minute;
+        if !style_ids.contains(&step.style_id) {
+            return Err("Generated plan references an unknown style".into());
+        }
+        if !scene_ids.contains(&step.visual_scene) {
+            return Err("Generated plan references an unknown scene".into());
+        }
+        if !(60..=200).contains(&step.bpm) {
+            return Err("Generated plan BPM is out of range".into());
+        }
+        if step.note.len() > 90 {
+            return Err("Generated plan note is too long".into());
+        }
+        if let Some(fx) = &step.fx {
+            for value in [fx.sweep, fx.reverb, fx.echo, fx.flanger]
+                .into_iter()
+                .flatten()
+            {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err("Generated plan FX values are out of range".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_style_pack(pack: &StylePack) -> Result<(), String> {
     if pack.label.trim().is_empty() || pack.label.len() > 24 {
         return Err("Generated style label is invalid".into());
@@ -695,6 +1379,45 @@ mod tests {
         let mut bad_bpm = valid.clone();
         bad_bpm.config.bpm = 20;
         assert!(validate_style_pack(&bad_bpm).is_err());
+    }
+
+    #[test]
+    fn set_arc_validation_enforces_timeline_and_vocabulary() {
+        let styles = vec!["rock".to_string(), "techno".to_string()];
+        let scenes = vec!["oscilloscope".to_string(), "terrain".to_string()];
+        let step = |minute: f32, style: &str| SetArcStep {
+            at_minute: minute,
+            style_id: style.into(),
+            visual_scene: "terrain".into(),
+            bpm: 126,
+            fx: Some(SetArcFx {
+                sweep: Some(0.2),
+                ..SetArcFx::default()
+            }),
+            note: "build".into(),
+        };
+        let valid = SetArc {
+            title: "Night Arc".into(),
+            duration_minutes: 60,
+            steps: (0..6).map(|i| step(i as f32 * 9.0, "rock")).collect(),
+        };
+        assert!(validate_set_arc(&valid, 60, &styles, &scenes).is_ok());
+
+        let mut unknown_style = valid.clone();
+        unknown_style.steps[2].style_id = "polka".into();
+        assert!(validate_set_arc(&unknown_style, 60, &styles, &scenes).is_err());
+
+        let mut out_of_order = valid.clone();
+        out_of_order.steps[3].at_minute = 1.0;
+        assert!(validate_set_arc(&out_of_order, 60, &styles, &scenes).is_err());
+
+        let mut beyond_end = valid.clone();
+        beyond_end.steps[5].at_minute = 75.0;
+        assert!(validate_set_arc(&beyond_end, 60, &styles, &scenes).is_err());
+
+        let mut too_few = valid.clone();
+        too_few.steps.truncate(3);
+        assert!(validate_set_arc(&too_few, 60, &styles, &scenes).is_err());
     }
 
     #[test]

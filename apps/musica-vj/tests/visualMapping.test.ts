@@ -169,3 +169,43 @@ describe("measured section scene mapping", () => {
     expect(normalizeAnimationStyle(undefined)).toBe("flow");
   });
 });
+
+describe("visual plugin specs", () => {
+  it("normalizes AI plugin specs with hard bounds and rejects garbage", async () => {
+    const { normalizeVisualPluginSpec, normalizeVisualPluginList, localVisualPluginSpec } = await import("../src/core/visualPlugins");
+    expect(normalizeVisualPluginSpec(undefined)).toBeUndefined();
+    expect(normalizeVisualPluginSpec({ name: "" })).toBeUndefined();
+
+    const wild = normalizeVisualPluginSpec({
+      name: "  Storm  ",
+      base: "voxels",
+      count: 99_999,
+      size: 4,
+      motion: { orbit: -2, pulse: 0.5 },
+      audio: { bassTo: "explode", highTo: "jitter" },
+      colors: { primary: "red", accent: "#B06BF2", background: "#030107" },
+      fog: 2,
+    });
+    expect(wild).toBeDefined();
+    expect(wild!.name).toBe("Storm");
+    expect(wild!.base).toBe("particles");
+    expect(wild!.count).toBe(4_000);
+    expect(wild!.size).toBe(1);
+    expect(wild!.motion.orbit).toBe(0);
+    expect(wild!.motion.pulse).toBe(0.5);
+    expect(wild!.audio.bassTo).toBe("scale");
+    expect(wild!.audio.highTo).toBe("jitter");
+    expect(wild!.colors.primary).toBe("#35dcff");
+    expect(wild!.colors.accent).toBe("#B06BF2");
+    expect(wild!.fog).toBe(1);
+    expect(wild!.id.startsWith("plugin-")).toBe(true);
+
+    expect(normalizeVisualPluginList("junk")).toEqual([]);
+    expect(normalizeVisualPluginList([{ name: "A" }, null, { name: "B" }])).toHaveLength(2);
+
+    const starfield = localVisualPluginSpec("slow silver starfield");
+    expect(starfield.name).toBe("Starfield");
+    expect(starfield.base).toBe("particles");
+    expect(starfield.count).toBeLessThanOrEqual(4_000);
+  });
+});

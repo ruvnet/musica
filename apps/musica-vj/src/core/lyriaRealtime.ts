@@ -165,6 +165,41 @@ const AUTO_DJ_SOUND_DIRECTIONS: Record<string, string> = {
   ambient: "slow analog pads, tape echo, felt piano fragments, low sine foundation, granular field texture, spacious high-frequency detail",
 };
 
+/// Musical adjacency for Auto DJ style walks: each style lists genres it can
+/// transition into without whiplash. Walks stay smooth (tempo/energy-adjacent)
+/// instead of following raw preset order.
+export const AUTO_DJ_STYLE_NEIGHBORS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  rock: ["blues", "dubstep", "edm", "8bit"],
+  blues: ["rock", "jazz", "funk", "lofi"],
+  "8bit": ["edm", "rock", "neuroflux", "techno"],
+  lofi: ["hiphop", "rnb", "jazz", "ambient"],
+  dubstep: ["drum-bass", "edm", "techno", "rock"],
+  neuroflux: ["experimental", "techno", "ambient", "8bit"],
+  house: ["techno", "edm", "funk", "samba"],
+  techno: ["house", "dubstep", "neuroflux", "edm"],
+  cinematic: ["classical", "ambient", "neuroflux", "edm"],
+  "drum-bass": ["dubstep", "techno", "hiphop", "edm"],
+  hiphop: ["rnb", "lofi", "funk", "drum-bass"],
+  funk: ["house", "hiphop", "blues", "samba"],
+  samba: ["funk", "house", "jazz", "edm"],
+  country: ["blues", "rock", "funk", "jazz"],
+  edm: ["house", "dubstep", "8bit", "techno"],
+  rnb: ["hiphop", "lofi", "jazz", "funk"],
+  experimental: ["neuroflux", "techno", "ambient", "jazz"],
+  jazz: ["blues", "rnb", "samba", "lofi"],
+  classical: ["cinematic", "ambient", "jazz", "experimental"],
+  ambient: ["cinematic", "lofi", "neuroflux", "classical"],
+});
+
+/// Deterministic neighbor walk: phrase N leaves a style through its Nth
+/// neighbor, so journeys vary by position in the set but never jump to a
+/// musically unrelated genre. Unknown styles (customs) fall back to rock's
+/// neighborhood.
+export function nextAutoDjStyleId(currentId: string, step: number): string {
+  const neighbors = AUTO_DJ_STYLE_NEIGHBORS[currentId] ?? AUTO_DJ_STYLE_NEIGHBORS.rock;
+  return neighbors[Math.abs(step) % neighbors.length] ?? "rock";
+}
+
 export function autoDjPhraseDurationMs(bpm: number, bars = AUTO_DJ_PHRASE_BARS): number {
   const boundedBpm = Math.max(60, Math.min(200, bpm));
   const boundedBars = Math.max(8, Math.min(64, Math.round(bars)));
