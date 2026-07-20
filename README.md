@@ -5,11 +5,11 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db)](apps/musica-vj/src-tauri/tauri.conf.json)
 [![Three.js](https://img.shields.io/badge/Three.js-WebGL2-111111)](apps/musica-vj/src/visual/VisualEngine.ts)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](Cargo.toml)
-[![Release](https://img.shields.io/badge/release-v0.3.0-b06bf2)](https://github.com/ruvnet/musica/releases/tag/musica-vj-v0.3.0)
+[![Release](https://img.shields.io/badge/release-v0.4.0-b06bf2)](https://github.com/ruvnet/musica/releases/tag/musica-vj-v0.4.0)
 
-![Musica VJ welcome screen with the gradient wordmark, node-link and waveform background, session card, and optional Cognitum sign-in](apps/musica-vj/assets/screenshots/musica-vj-welcome.png)
+![Musica VJ Cognitum One sign-in gate: oversized gradient wordmark over an animated wave field, a card with a live wave ribbon, sign-in button, and a running sign-in log](apps/musica-vj/assets/screenshots/musica-vj-signin.png)
 
-_The redesigned first-run welcome: oversized gradient wordmark, animated node-link and waveform field, live session card, and the optional Cognitum One sign-in that unlocks AI set direction. See the [Neon Fold performance view](apps/musica-vj/assets/screenshots/musica-vj-neon-fold.png) for the live studio._
+_The required first step: sign in with Cognitum One and Lyria audio just works — no bring-your-own key. An animated wave field and live sign-in log sit under the oversized gradient wordmark; the gate is skipped once you're signed in. See the [welcome/session screen](apps/musica-vj/assets/screenshots/musica-vj-welcome.png) and the [Neon Fold performance view](apps/musica-vj/assets/screenshots/musica-vj-neon-fold.png) for the live studio._
 
 Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
 
