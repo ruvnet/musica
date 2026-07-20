@@ -178,9 +178,15 @@ fn open_in_system_browser(url: &str) -> Result<(), String> {
     let command = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "linux")]
     let command = std::process::Command::new("xdg-open").arg(url).spawn();
+    // `cmd /C start "" <url>` breaks on OAuth URLs: cmd.exe treats the `&`
+    // between query parameters as a command separator, truncating the URL at
+    // the first `&` so client_id (and everything after) never reaches the
+    // browser — the "Missing client_id parameter" failure. rundll32's
+    // FileProtocolHandler receives the URL as a single argument with no shell
+    // parsing, so ampersands survive intact.
     #[cfg(target_os = "windows")]
-    let command = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
+    let command = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
         .spawn();
     command
         .map(|_| ())
