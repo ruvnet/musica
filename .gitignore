@@ -34,3 +34,6 @@ apps/musica-vj/src-tauri/icons/*
 
 # Onboarding preview bank is runtime-required
 !apps/musica-vj/public/previews/lyria/*.mp3
+
+# Agent tooling runtime state must never ship
+**/.claude-flow/
