@@ -9,6 +9,8 @@ export interface CognitumGateLogEntry {
 
 interface CognitumGateProps {
   authHost: string;
+  signedIn: boolean;
+  activating: boolean;
   pending: boolean;
   busy: boolean;
   reason?: string;
@@ -20,6 +22,7 @@ interface CognitumGateProps {
   onManualStart: () => void;
   onManualComplete: () => void;
   onManualCodeChange: (value: string) => void;
+  onRetry: () => void;
   onSkip?: () => void;
 }
 
@@ -175,6 +178,8 @@ function WaveRibbon({ active }: { active: boolean }) {
 
 export function CognitumGate({
   authHost,
+  signedIn,
+  activating,
   pending,
   busy,
   reason,
@@ -186,6 +191,7 @@ export function CognitumGate({
   onManualStart,
   onManualComplete,
   onManualCodeChange,
+  onRetry,
   onSkip,
 }: CognitumGateProps) {
   const logRef = useRef<HTMLDivElement>(null);
@@ -193,7 +199,10 @@ export function CognitumGate({
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [log]);
 
-  const working = busy || pending;
+  const working = busy || pending || activating;
+  // Signed in but the Lyria credential didn't come online — show the failure and
+  // a retry, rather than sending the user to a disabled Start Session.
+  const lyriaFailed = signedIn && !activating;
 
   return (
     <section className="cognitum-gate" role="dialog" aria-modal="true" aria-label="Sign in to Musica">
@@ -211,27 +220,44 @@ export function CognitumGate({
           <div className="cognitum-gate-body">
             <div className="cognitum-gate-mark">
               <ShieldCheck size={14} />
-              <span>STEP 01 · SIGN IN</span>
+              <span>{activating ? "STEP 02 · AUTHORIZING LYRIA" : lyriaFailed ? "SIGNED IN · LYRIA OFFLINE" : "STEP 01 · SIGN IN"}</span>
             </div>
-            <h1>Sign in with Cognitum One</h1>
+            <h1>{activating ? "Authorizing Lyria…" : lyriaFailed ? "Signed in — Lyria didn't come online" : "Sign in with Cognitum One"}</h1>
             <p>
-              One account starts your set — it authorizes Lyria audio and unlocks the
-              state-of-the-art AI enhancements.
+              {activating
+                ? "Redeeming your Cognitum session for a live Lyria audio credential."
+                : lyriaFailed
+                  ? "Your account is connected, but the Lyria credential didn't authorize. You can retry, start without audio, or configure a Gemini API key. The log below shows why."
+                  : "One account starts your set — it authorizes Lyria audio and unlocks the state-of-the-art AI enhancements."}
             </p>
 
-            <button
-              type="button"
-              className="cognitum-gate-primary"
-              onClick={onSignIn}
-              disabled={busy || pending || !signInAvailable}
-            >
-              <span className="cognitum-gate-primary-label">
-                {pending ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
-                {pending ? "WAITING FOR BROWSER…" : "SIGN IN WITH COGNITUM ONE"}
-              </span>
-            </button>
+            {activating ? (
+              <button type="button" className="cognitum-gate-primary" disabled>
+                <span className="cognitum-gate-primary-label">
+                  <Loader2 size={16} className="spin" /> AUTHORIZING LYRIA…
+                </span>
+              </button>
+            ) : lyriaFailed ? (
+              <button type="button" className="cognitum-gate-primary" onClick={onRetry}>
+                <span className="cognitum-gate-primary-label">
+                  <ShieldCheck size={16} /> RETRY LYRIA
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="cognitum-gate-primary"
+                onClick={onSignIn}
+                disabled={busy || pending || !signInAvailable}
+              >
+                <span className="cognitum-gate-primary-label">
+                  {pending ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
+                  {pending ? "WAITING FOR BROWSER…" : "SIGN IN WITH COGNITUM ONE"}
+                </span>
+              </button>
+            )}
 
-            {signInAvailable && (!manualCodeMode ? (
+            {!signedIn && signInAvailable && (!manualCodeMode ? (
               <button type="button" className="cognitum-gate-manual-toggle" onClick={onManualStart} disabled={busy}>
                 <KeyRound size={12} /> PASTE A CODE INSTEAD (HEADLESS / SSH)
               </button>
@@ -254,7 +280,7 @@ export function CognitumGate({
             {!signInAvailable && (
               <small className="cognitum-gate-reason">{reason ?? "Cognitum sign-in requires the desktop app."}</small>
             )}
-            {signInAvailable && reason && <small className="cognitum-gate-reason">{reason}</small>}
+            {signInAvailable && !signedIn && reason && <small className="cognitum-gate-reason">{reason}</small>}
 
             <div className="cognitum-gate-log">
               <div className="cognitum-gate-log-head">
@@ -270,9 +296,9 @@ export function CognitumGate({
               </div>
             </div>
 
-            {onSkip && (
+            {onSkip && !activating && (
               <button type="button" className="cognitum-gate-skip" onClick={onSkip}>
-                Continue without an account
+                {signedIn ? "Continue without live audio" : "Continue without an account"}
               </button>
             )}
           </div>

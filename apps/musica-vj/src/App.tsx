@@ -1295,6 +1295,9 @@ export function App() {
   // signed in (skipped entirely when already signed in), with a running log.
   const cognitumSignInAvailable = isTauri();
   const [cognitumGateSkipped, setCognitumGateSkipped] = useState(false);
+  // Tracks the post-sign-in Lyria credential redemption so the gate can stay up
+  // (and keep logging) until we know whether live audio came online.
+  const [lyriaActivation, setLyriaActivation] = useState<"idle" | "working" | "done">("idle");
   const [cognitumLog, setCognitumLog] = useState<CognitumGateLogEntry[]>([]);
   const appendCognitumLog = useCallback((text: string, tone: CognitumGateLogEntry["tone"] = "info") => {
     const at = new Date().toLocaleTimeString([], { hour12: false });
@@ -1340,23 +1343,35 @@ export function App() {
   // Once signed in, redeem the Cognitum session for a brokered Lyria key so
   // live audio works with no bring-your-own key (ADR-179), then refresh the
   // provider status so the UI reflects the newly-available decks.
+  const runLyriaActivation = useCallback(async () => {
+    setLyriaActivation("working");
+    appendCognitumLog("Redeeming Lyria credential from broker…");
+    // One retry covers a token-not-ready race right after OAuth completes.
+    let result = await activateCognitumLyria();
+    if (!result.ok) {
+      appendCognitumLog(`Retrying (${result.reason ?? "unknown"})…`, "warn");
+      await new Promise((resolve) => window.setTimeout(resolve, 1_200));
+      result = await activateCognitumLyria();
+    }
+    if (result.ok) {
+      const status = await getLyriaRealtimeStatus("main").catch(() => undefined);
+      if (status) setLyriaRealtimeStatus(status);
+      if (status?.available) {
+        appendCognitumLog("Lyria authorized — live audio enabled.", "ok");
+      } else {
+        appendCognitumLog(`Key injected but Lyria still offline${status?.reason ? ` · ${status.reason}` : ""}.`, "warn");
+      }
+    } else {
+      appendCognitumLog(`Lyria not authorized: ${result.reason ?? "unknown error"}.`, "warn");
+      appendCognitumLog("You can still start without audio, or configure a Gemini API key.", "warn");
+    }
+    setLyriaActivation("done");
+  }, [appendCognitumLog]);
+
   useEffect(() => {
     if (!cognitumStatus.signedIn) return;
-    let cancelled = false;
-    appendCognitumLog("Redeeming Lyria credential…");
-    void activateCognitumLyria().then((activated) => {
-      if (cancelled) return;
-      if (activated) {
-        appendCognitumLog("Lyria authorized — live audio enabled.", "ok");
-        void refreshLyriaRealtimeStatus();
-      } else {
-        appendCognitumLog("No brokered Lyria key; using local key if present.", "warn");
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [appendCognitumLog, cognitumStatus.signedIn, refreshLyriaRealtimeStatus]);
+    void runLyriaActivation();
+  }, [cognitumStatus.signedIn, runLyriaActivation]);
 
   const handleCognitumSignIn = useCallback(async () => {
     setCognitumBusy(true);
@@ -2794,13 +2809,23 @@ export function App() {
     );
   };
 
-  const showCognitumGate = !cognitumStatus.signedIn && !cognitumGateSkipped;
+  // The gate stays up until the user is signed in AND we know whether Lyria came
+  // online — so a broker failure is readable rather than dumping the user onto a
+  // disabled Start Session. Success auto-dismisses; failure holds so the log can
+  // be read, then the user continues without audio.
+  const showCognitumGate = !cognitumGateSkipped && (
+    !cognitumStatus.signedIn
+    || lyriaActivation === "working"
+    || (lyriaActivation === "done" && !lyriaRealtimeStatus.available)
+  );
 
   return (
     <main className="app-shell">
       {showCognitumGate && (
         <CognitumGate
           authHost={cognitumStatus.authHost}
+          signedIn={cognitumStatus.signedIn}
+          activating={lyriaActivation === "working"}
           pending={cognitumStatus.pending}
           busy={cognitumBusy}
           reason={cognitumStatus.reason}
@@ -2812,8 +2837,9 @@ export function App() {
           onManualStart={() => void handleManualSignInStart()}
           onManualComplete={() => void handleManualSignInComplete()}
           onManualCodeChange={setManualCode}
+          onRetry={() => void runLyriaActivation()}
           onSkip={() => {
-            appendCognitumLog("Continuing without an account — local planners only.", "warn");
+            appendCognitumLog(cognitumStatus.signedIn ? "Continuing without live audio." : "Continuing without an account — local planners only.", "warn");
             setCognitumGateSkipped(true);
           }}
         />
