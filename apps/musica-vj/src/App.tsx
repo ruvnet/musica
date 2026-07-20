@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AudioEngine, createEngineSnapshotFromTemplate, type EngineSnapshot } from "./audio/AudioEngine";
+import { Settings2 } from "lucide-react";
+import {
+  AudioEngine,
+  createEngineSnapshotFromTemplate,
+  DEFAULT_MASTER_EFFECT_PARAMS,
+  MASTER_EFFECT_IDS,
+  MASTER_EFFECT_PARAM_IDS,
+  SFX_KINDS,
+  type EngineSnapshot,
+  type MasterEffectParams,
+  type MasterEffectsState,
+  type SfxKind,
+} from "./audio/AudioEngine";
+import { OnboardingWizard, type OnboardingView } from "./OnboardingWizard";
 import { ControlRouter, TapTempo, type ControllerStatus } from "./controllers/ControlRouter";
 import { createAgentPlan, getAgentStatus, type AgentPlan, type AgentStatus } from "./core/agentProvider";
 import {
@@ -32,6 +45,10 @@ import {
 import {
   LYRIA_REALTIME_STYLE_PRESETS,
   AUTO_DJ_PHRASE_BARS,
+  CUSTOM_LYRIA_STYLES_STORAGE_KEY,
+  createCustomLyriaStyle,
+  loadCustomLyriaStyles,
+  registerCustomLyriaStyles,
   DEFAULT_LYRIA_REALTIME_STYLE_ID,
   autoDjPhraseDurationMs,
   compensateLyriaBpmForPitch,
@@ -58,6 +75,14 @@ import {
 } from "./core/lyriaRealtime";
 import { importMidiPerformance } from "./core/midiImport";
 import {
+  DEFAULT_ONBOARDING_PREFERENCES,
+  createOnboardingRealtimeRequest,
+  createOnboardingVocalGuidance,
+  loadOnboardingPreferences,
+  saveOnboardingPreferences,
+  type OnboardingPreferences,
+} from "./core/onboarding";
+import {
   DEFAULT_LYRIA_DECK_CONTROLS,
   LYRIA_DECK_SCENE_STORAGE_KEY,
   cloneLyriaDeckScene,
@@ -67,7 +92,25 @@ import {
   type LyriaDeckScene,
 } from "./core/lyriaDeckScenes";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualColorControls, type VisualSceneId, type VisualTemporalControls } from "./core/types";
-import { SocialRecorder, type RecordingResult } from "./export/SocialRecorder";
+import {
+  COGNITUM_CAPABILITY_LABELS,
+  completeCognitumManualSignIn,
+  generateCognitumStylePack,
+  getCognitumStatus,
+  signOutCognitum,
+  startCognitumManualSignIn,
+  startCognitumSignIn,
+  type CognitumStatus,
+} from "./core/cognitum";
+import {
+  loadWorkspaceSettings,
+  normalizeWorkspaceSettings,
+  saveWorkspaceSettings,
+  serializeWorkspaceSettings,
+  type WorkspaceSettings,
+} from "./core/settingsStore";
+import { SocialRecorder, type CaptureMode, type RecordingResult } from "./export/SocialRecorder";
+import { RestreamBroadcaster, getRestreamStatus, type RestreamSource, type RestreamStatus } from "./export/RestreamBroadcaster";
 import {
   DEFAULT_VISUAL_COLOR_CONTROLS,
   VISUAL_ANIMATION_STYLES,
@@ -106,6 +149,7 @@ interface LyriaStyleGuidance {
 
 interface LyriaGuidanceDialogState extends LyriaStyleGuidance {
   styleId: string;
+  label?: string;
 }
 
 type LyriaCompanionDeckId = "sequence" | "vocal";
@@ -152,6 +196,8 @@ type StudioPanelId =
   | "visual-macros"
   | "visual-temporal"
   | "audio-lyria"
+  | "audio-fx"
+  | "cognitum-ai"
   | "audio-templates"
   | "audio-agent"
   | "audio-generation"
@@ -199,6 +245,7 @@ function defaultAnimationStyleForScene(scene: VisualSceneId): VisualAnimationSty
       return "warp";
     case "terrain":
     case "aurora":
+    case "oscilloscope":
       return "scan";
     case "monolith":
       return "minimal";
@@ -274,6 +321,63 @@ function parseStructure(value: string, durationSeconds: number): CompositionSect
   });
 }
 
+function FooterAudioVisualizer({ audio }: { audio: AudioEngine }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    let frame = 0;
+    const draw = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      const width = Math.max(1, Math.round(bounds.width * ratio));
+      const height = Math.max(1, Math.round(bounds.height * ratio));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      context.clearRect(0, 0, width, height);
+      const metrics = audio.getMetrics();
+      const center = height * 0.5;
+      context.strokeStyle = "rgba(53,220,255,.12)";
+      context.beginPath();
+      context.moveTo(0, center);
+      context.lineTo(width, center);
+      context.stroke();
+
+      const bars = 96;
+      const barWidth = width / bars;
+      for (let index = 0; index < bars; index += 1) {
+        const sourceIndex = Math.min(metrics.frequency.length - 1, Math.floor((index / bars) ** 1.65 * metrics.frequency.length * 0.72));
+        const level = metrics.frequency[sourceIndex] / 255;
+        const barHeight = Math.max(1, level * height * 0.44);
+        context.fillStyle = index < bars * 0.4 ? "rgba(53,220,255,.62)" : index < bars * 0.72 ? "rgba(112,169,255,.58)" : "rgba(255,79,210,.52)";
+        context.fillRect(index * barWidth, center - barHeight, Math.max(1, barWidth - ratio), barHeight * 2);
+      }
+
+      const waveform = metrics.waveform;
+      const points = Math.min(180, waveform.length);
+      for (let index = 1; index < points; index += 1) {
+        const previous = (waveform[Math.floor((index - 1) / points * waveform.length)] - 128) / 128;
+        const current = (waveform[Math.floor(index / points * waveform.length)] - 128) / 128;
+        context.strokeStyle = index < points * 0.5 ? "rgba(117,244,197,.82)" : "rgba(183,104,230,.78)";
+        context.beginPath();
+        context.moveTo((index - 1) / (points - 1) * width, center + previous * height * 0.36);
+        context.lineTo(index / (points - 1) * width, center + current * height * 0.36);
+        context.stroke();
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(frame);
+  }, [audio]);
+
+  return <canvas ref={ref} className="footer-visualizer" aria-label="Live master audio spectrum" />;
+}
+
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef(new AudioEngine());
@@ -281,6 +385,7 @@ export function App() {
   const tapTempoRef = useRef(new TapTempo());
   const visualRef = useRef<VisualEngine | null>(null);
   const recorderRef = useRef<SocialRecorder | null>(null);
+  const restreamRef = useRef<RestreamBroadcaster | null>(null);
   const selectedTrackRef = useRef<TrackId>("drums");
   const selectedSceneRef = useRef<VisualSceneId>(DEFAULT_TEMPLATE.scene);
   const intensityRef = useRef(DEFAULT_TEMPLATE.intensity);
@@ -308,6 +413,10 @@ export function App() {
   });
 
   const [snapshot, setSnapshot] = useState(INITIAL_SNAPSHOT);
+  const [savedOnboardingAtLaunch] = useState(() => loadOnboardingPreferences());
+  const [onboardingPreferences, setOnboardingPreferences] = useState<OnboardingPreferences>(() => savedOnboardingAtLaunch ?? DEFAULT_ONBOARDING_PREFERENCES);
+  const [onboardingView, setOnboardingView] = useState<OnboardingView | undefined>(() => savedOnboardingAtLaunch ? "welcome" : "setup");
+  const [onboardingFirstRun, setOnboardingFirstRun] = useState(() => !savedOnboardingAtLaunch);
   const [selectedTrack, setSelectedTrack] = useState<TrackId>("drums");
   const [selectedScene, setSelectedScene] = useState<VisualSceneId>(DEFAULT_TEMPLATE.scene);
   const [intensity, setIntensity] = useState(DEFAULT_TEMPLATE.intensity);
@@ -334,6 +443,15 @@ export function App() {
   const [lyriaRealtimeConfig, setLyriaRealtimeConfig] = useState<LyriaRealtimeConfig>({ ...DEFAULT_REALTIME_REQUEST.config });
   const [lyriaPrompts, setLyriaPrompts] = useState<LyriaWeightedPrompt[]>(DEFAULT_REALTIME_REQUEST.weightedPrompts);
   const [lyriaStyleId, setLyriaStyleId] = useState(DEFAULT_REALTIME_STYLE.id);
+  const [customLyriaStyles, setCustomLyriaStyles] = useState<LyriaRealtimeStylePreset[]>(() => {
+    try {
+      const loaded = loadCustomLyriaStyles(window.localStorage.getItem(CUSTOM_LYRIA_STYLES_STORAGE_KEY));
+      registerCustomLyriaStyles(loaded);
+      return loaded;
+    } catch {
+      return [];
+    }
+  });
   const [lyriaStyleGuidance, setLyriaStyleGuidance] = useState<Record<string, LyriaStyleGuidance>>({});
   const [lyriaGuidanceDialog, setLyriaGuidanceDialog] = useState<LyriaGuidanceDialogState>();
   const [lyriaCompanionGuidance, setLyriaCompanionGuidance] = useState<Record<LyriaCompanionDeckId, string>>({ ...DEFAULT_LYRIA_COMPANION_GUIDANCE });
@@ -389,8 +507,14 @@ export function App() {
   const [generation, setGeneration] = useState<GenerationTask>();
   const [selectedPreset, setSelectedPreset] = useState<SocialPreset>(SOCIAL_PRESETS[2]);
   const [recording, setRecording] = useState(false);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("video-audio");
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastRecording, setLastRecording] = useState<RecordingResult>();
+  const [restreamStatus, setRestreamStatus] = useState<RestreamStatus>({ available: false, active: false, reason: "Checking FFmpeg" });
+  const [restreamSource, setRestreamSource] = useState<RestreamSource>("program");
+  const [restreamIngestUrl, setRestreamIngestUrl] = useState("rtmps://live.restream.io/live");
+  const [restreamKey, setRestreamKey] = useState("");
+  const [restreamBusy, setRestreamBusy] = useState(false);
   const [collapsedPanels, setCollapsedPanels] = useState<Set<StudioPanelId>>(() => new Set([
     "audio-templates",
     "audio-agent",
@@ -398,6 +522,62 @@ export function App() {
     "av-output",
   ]));
   const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
+  const [masterEffects, setMasterEffects] = useState<MasterEffectsState>({ flanger: 0, sweep: 0, reverb: 0, echo: 0, drive: 0, crush: 0, phaser: 0 });
+  const [masterEffectParams, setMasterEffectParams] = useState<MasterEffectParams>({ ...DEFAULT_MASTER_EFFECT_PARAMS });
+  const [fxLocks, setFxLocks] = useState<Record<keyof MasterEffectsState, boolean>>({ flanger: false, sweep: false, reverb: false, echo: false, drive: false, crush: false, phaser: false });
+  const [expandedFx, setExpandedFx] = useState<keyof MasterEffectsState>();
+
+  const changeMasterEffect = useCallback((effect: keyof MasterEffectsState, amount: number) => {
+    engineRef.current.setMasterEffect(effect, amount);
+    setMasterEffects(engineRef.current.getMasterEffects());
+  }, []);
+
+  const changeMasterEffectParam = useCallback((param: keyof MasterEffectParams, value: number) => {
+    engineRef.current.setMasterEffectParam(param, value);
+    setMasterEffectParams(engineRef.current.getMasterEffectParams());
+  }, []);
+
+  const toggleFxLock = useCallback((effect: keyof MasterEffectsState) => {
+    setFxLocks((current) => ({ ...current, [effect]: !current[effect] }));
+  }, []);
+
+  const generateFxSetting = useCallback((effect: keyof MasterEffectsState) => {
+    for (const { id } of MASTER_EFFECT_PARAM_IDS[effect]) changeMasterEffectParam(id, Math.random());
+    changeMasterEffect(effect, 0.25 + Math.random() * 0.6);
+    setNotice(`${effect.toUpperCase()} settings generated. Lock it to keep them across style changes.`);
+  }, [changeMasterEffect, changeMasterEffectParam]);
+
+  const [padLoops, setPadLoops] = useState(() => engineRef.current.getPadLoops());
+  const [sfxLevel, setSfxLevel] = useState(() => engineRef.current.getSfxLevel());
+
+  const changeSfxLevel = useCallback((level: number) => {
+    engineRef.current.setSfxLevel(level);
+    setSfxLevel(engineRef.current.getSfxLevel());
+  }, []);
+
+  const triggerSfx = useCallback((kind: SfxKind) => {
+    void engineRef.current.playSfx(kind).catch(() => setNotice("SFX playback is unavailable before audio starts."));
+  }, []);
+
+  const loadPadLoopFile = useCallback(async (slot: number, file?: File) => {
+    if (!file) return;
+    try {
+      if (!/\.(?:mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name)) throw new Error("Choose an MP3, WAV, M4A, AAC, OGG, or FLAC file");
+      await engineRef.current.loadPadLoop(slot, await file.arrayBuffer(), file.name.replace(/\.[^.]+$/, ""));
+      setPadLoops(engineRef.current.getPadLoops());
+      setNotice(`${file.name} loaded into loop pad ${slot + 1}. Tap the pad to start it on the next bar.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load loop audio");
+    }
+  }, []);
+
+  const togglePadLoop = useCallback((slot: number) => {
+    const playing = engineRef.current.togglePadLoop(slot);
+    setPadLoops(engineRef.current.getPadLoops());
+    const pad = engineRef.current.getPadLoops()[slot];
+    if (pad?.name) setNotice(playing ? `${pad.name} loop starts on the next bar.` : `${pad.name} loop stopped.`);
+  }, []);
+
 
   const selectedSceneMeta = VISUAL_SCENES.find((scene) => scene.id === selectedScene) ?? VISUAL_SCENES[0];
   const metaLlmAvailable = agentStatus.available && agentStatus.provider === "meta_llm";
@@ -527,11 +707,14 @@ export function App() {
     await scheduleRealtimePrebuffer(decks);
   }, [scheduleRealtimePrebuffer]);
 
-  const startRealtimeDeckProviders = useCallback(async (decks: LyriaRealtimeDeckId[]) => {
+  const startRealtimeDeckProviders = useCallback(async (
+    decks: LyriaRealtimeDeckId[],
+    overrides: Partial<Record<LyriaRealtimeDeckId, LyriaRealtimeRequest>> = {},
+  ) => {
     const requests: Record<LyriaRealtimeDeckId, LyriaRealtimeRequest> = {
-      main: realtimeRequest,
-      sequence: sequenceRealtimeRequest,
-      vocal: vocalRealtimeRequest,
+      main: overrides.main ?? realtimeRequest,
+      sequence: overrides.sequence ?? sequenceRealtimeRequest,
+      vocal: overrides.vocal ?? vocalRealtimeRequest,
     };
     const sessions = await Promise.all(decks.map(async (deck) => {
       const session = await startLyriaRealtime(requests[deck], deck);
@@ -541,7 +724,10 @@ export function App() {
     return Object.fromEntries(sessions) as Partial<Record<LyriaRealtimeDeckId, LyriaRealtimeSession>>;
   }, [realtimeRequest, sequenceRealtimeRequest, vocalRealtimeRequest]);
 
-  const handleTransportToggle = useCallback(async (startupDeckOverride?: LyriaRealtimeDeckId[]) => {
+  const handleTransportToggle = useCallback(async (
+    startupDeckOverride?: LyriaRealtimeDeckId[],
+    requestOverrides: Partial<Record<LyriaRealtimeDeckId, LyriaRealtimeRequest>> = {},
+  ) => {
     if (snapshotRef.current.playing) {
       await stopTransportAndRealtime();
       return;
@@ -562,7 +748,7 @@ export function App() {
           setLyriaSession(undefined);
           setSequenceLyriaSession(undefined);
           setVocalLyriaSession(undefined);
-          const sessions = await startRealtimeDeckProviders(startupDecks);
+          const sessions = await startRealtimeDeckProviders(startupDecks, requestOverrides);
           engineRef.current.setRealtimeStreamPrimary(true);
           realtimePrebufferRef.current = createRealtimePrebuffer();
           const buffered = await Promise.all(startupDecks.map(async (deck) => [deck, await waitForRealtimeAudioFrames(deck, false)] as const));
@@ -731,8 +917,95 @@ export function App() {
   const applyRealtimeStyle = useCallback(async (styleId: string) => {
     setActiveLyriaDeckSceneId(undefined);
     const style = applyPrimaryGuidance(lyriaRealtimeStyleById(styleId), lyriaStyleGuidance[styleId]);
+    for (const effect of MASTER_EFFECT_IDS) {
+      if (fxLocks[effect]) continue;
+      changeMasterEffect(effect, style.streamFx?.[effect] ?? 0);
+    }
     await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} style`, style.id);
-  }, [applyRealtimeRequest, lyriaStyleGuidance]);
+  }, [applyRealtimeRequest, changeMasterEffect, fxLocks, lyriaStyleGuidance]);
+
+  const applyOnboardingSetup = useCallback(async (
+    preferences: OnboardingPreferences,
+    includeWelcomeCue: boolean,
+  ) => {
+    const wasFirstRun = onboardingFirstRun;
+    const normalized = saveOnboardingPreferences(preferences);
+    const style = lyriaRealtimeStyleById(normalized.styleId);
+    const request = createOnboardingRealtimeRequest(normalized, includeWelcomeCue);
+    const vocalGuidance = createOnboardingVocalGuidance(normalized);
+    const vocalEnabled = normalized.vocalStyle !== "none" && normalized.format !== "instrumental";
+    const vocalRequest: LyriaRealtimeRequest = {
+      weightedPrompts: createLyriaVocalPrompts(style, {
+        mainPrompts: request.weightedPrompts,
+        scale: request.config.scale,
+        customDirection: vocalGuidance,
+      }),
+      config: {
+        ...request.config,
+        guidance: Math.min(6, request.config.guidance + 0.7),
+        density: Math.max(0.12, Math.min(0.52, request.config.density * 0.62)),
+        brightness: Math.max(0.3, Math.min(0.82, request.config.brightness + 0.1)),
+        muteBass: true,
+        muteDrums: true,
+        onlyBassAndDrums: false,
+        musicGenerationMode: "VOCALIZATION",
+      },
+    };
+
+    setOnboardingPreferences(normalized);
+    setOnboardingFirstRun(false);
+    setLyriaStyleId(style.id);
+    setLyriaPrompts(request.weightedPrompts);
+    setLyriaRealtimeConfig(request.config);
+    setLyriaCompanionGuidance((current) => ({ ...current, vocal: vocalGuidance }));
+    setLyriaDeckEnabled({ main: true, sequence: false, vocal: vocalEnabled });
+    setActiveLyriaDeckSceneId(undefined);
+    setGenerationBpm(normalized.bpm);
+    setInstrumental(!vocalEnabled);
+    setPrompt(request.weightedPrompts.filter((item) => item.weight > 0).map((item) => item.text).join(" ").slice(0, 720));
+    engineRef.current.setBpm(normalized.bpm);
+
+    const baseVisualSettings = sceneVisualSettingsRef.current[normalized.visualScene] ?? DEFAULT_SCENE_VISUAL_SETTINGS;
+    const onboardingVisualSettings = cloneVisualSettings({
+      ...baseVisualSettings,
+      intensity: normalized.visualIntensity,
+      color: normalizeVisualColorControls({ ...baseVisualSettings.color, palette: normalized.visualPalette }),
+      animationStyle: normalized.visualAnimation,
+    });
+    const nextSceneVisualSettings = { ...sceneVisualSettingsRef.current, [normalized.visualScene]: onboardingVisualSettings };
+    sceneVisualSettingsRef.current = nextSceneVisualSettings;
+    setSceneVisualSettings(nextSceneVisualSettings);
+    selectedSceneRef.current = normalized.visualScene;
+    setSelectedScene(normalized.visualScene);
+    setIntensity(onboardingVisualSettings.intensity);
+    intensityRef.current = onboardingVisualSettings.intensity;
+    setArtDirection(onboardingVisualSettings.artDirection);
+    setTemporalControls(onboardingVisualSettings.temporal);
+    setVisualColorControls(onboardingVisualSettings.color);
+    setAnimationStyle(onboardingVisualSettings.animationStyle);
+    visualRef.current?.setScene(normalized.visualScene);
+    visualRef.current?.setIntensity(onboardingVisualSettings.intensity);
+    visualRef.current?.setArtDirection(onboardingVisualSettings.artDirection);
+    visualRef.current?.setTemporalControls(onboardingVisualSettings.temporal);
+    visualRef.current?.setColorControls(onboardingVisualSettings.color);
+    visualRef.current?.setAnimationStyle(onboardingVisualSettings.animationStyle);
+
+    if (includeWelcomeCue && lyriaRealtimeStatus.available) {
+      setOnboardingView("launching");
+      if (snapshotRef.current.playing) await stopTransportAndRealtime();
+      const decks: LyriaRealtimeDeckId[] = vocalEnabled ? ["main", "vocal"] : ["main"];
+      await handleTransportToggle(decks, { main: request, vocal: vocalRequest });
+    } else if (snapshotRef.current.playing) {
+      await applyRealtimeRequest(request, `${style.label} onboarding direction`, style.id);
+      await setRealtimeDeckEnabled("sequence", false);
+      await setRealtimeDeckEnabled("vocal", vocalEnabled);
+    } else if (includeWelcomeCue && !lyriaRealtimeStatus.available) {
+      setNotice("Music setup saved. Lyria RealTime is unavailable, so the welcome cue was skipped.");
+    } else {
+      setNotice(`${style.label} · ${normalized.bpm} BPM music setup saved.`);
+    }
+    setOnboardingView(wasFirstRun && !includeWelcomeCue ? "welcome" : undefined);
+  }, [applyRealtimeRequest, handleTransportToggle, lyriaRealtimeStatus.available, onboardingFirstRun, setRealtimeDeckEnabled, stopTransportAndRealtime]);
 
   const updateLyriaDeckControl = useCallback((deck: LyriaRealtimeDeckId, update: Partial<LyriaDeckControl>) => {
     setActiveLyriaDeckSceneId(undefined);
@@ -787,8 +1060,203 @@ export function App() {
   const openLyriaGuidanceDialog = useCallback((styleId: string) => {
     const style = lyriaRealtimeStyleById(styleId);
     const primary = lyriaStyleGuidance[styleId] ?? style.prompts[0];
-    setLyriaGuidanceDialog({ styleId, text: primary.text, weight: primary.weight });
+    setLyriaGuidanceDialog({
+      styleId,
+      text: primary.text,
+      weight: primary.weight,
+      label: styleId.startsWith("custom-") ? style.label : undefined,
+    });
   }, [lyriaStyleGuidance]);
+
+  const persistCustomStyles = useCallback((styles: LyriaRealtimeStylePreset[]) => {
+    setCustomLyriaStyles(styles);
+    registerCustomLyriaStyles(styles);
+    try {
+      window.localStorage.setItem(CUSTOM_LYRIA_STYLES_STORAGE_KEY, JSON.stringify(styles));
+    } catch {
+      // Persisting custom styles is best-effort; the in-memory registry still works.
+    }
+  }, []);
+
+  const addCustomStyle = useCallback(() => {
+    const existingIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
+    const style = createCustomLyriaStyle(`My Style ${customLyriaStyles.length + 1}`, activeLyriaStyle, existingIds);
+    persistCustomStyles([...customLyriaStyles, style]);
+    setLyriaStyleId(style.id);
+    setLyriaGuidanceDialog({ styleId: style.id, text: style.prompts[0]?.text ?? "", weight: style.prompts[0]?.weight ?? 1.3, label: style.label });
+    setNotice(`${style.label} created from ${activeLyriaStyle.label}. Edit its prompt, then apply.`);
+  }, [activeLyriaStyle, customLyriaStyles, persistCustomStyles]);
+
+  const deleteCustomStyle = useCallback((styleId: string) => {
+    persistCustomStyles(customLyriaStyles.filter((style) => style.id !== styleId));
+    setLyriaGuidanceDialog(undefined);
+    if (lyriaStyleId === styleId) setLyriaStyleId(DEFAULT_LYRIA_REALTIME_STYLE_ID);
+    setNotice("Custom style removed.");
+  }, [customLyriaStyles, lyriaStyleId, persistCustomStyles]);
+
+  const collectWorkspaceSettings = useCallback((): WorkspaceSettings => ({
+    version: 1,
+    onboarding: onboardingPreferences,
+    customStyles: customLyriaStyles,
+    deckScenes: lyriaDeckScenes,
+    masterEffects,
+    masterEffectParams,
+    fxLocks,
+    sfxLevel,
+  }), [customLyriaStyles, fxLocks, lyriaDeckScenes, masterEffects, masterEffectParams, onboardingPreferences, sfxLevel]);
+
+  const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
+    setOnboardingPreferences(settings.onboarding);
+    persistCustomStyles(settings.customStyles);
+    setLyriaDeckScenes(settings.deckScenes);
+    for (const effect of MASTER_EFFECT_IDS) changeMasterEffect(effect, settings.masterEffects[effect]);
+    for (const param of Object.keys(settings.masterEffectParams) as Array<keyof MasterEffectParams>) {
+      changeMasterEffectParam(param, settings.masterEffectParams[param]);
+    }
+    setFxLocks((current) => ({ ...current, ...settings.fxLocks }));
+    changeSfxLevel(settings.sfxLevel);
+  }, [changeMasterEffect, changeMasterEffectParam, changeSfxLevel, persistCustomStyles]);
+
+  const workspaceLoadedRef = useRef(false);
+  useEffect(() => {
+    if (workspaceLoadedRef.current) return;
+    workspaceLoadedRef.current = true;
+    void loadWorkspaceSettings()
+      .then((settings) => {
+        if (settings) applyWorkspaceSettings(settings);
+      })
+      .catch(() => undefined);
+  }, [applyWorkspaceSettings]);
+
+  useEffect(() => {
+    if (!workspaceLoadedRef.current) return;
+    const timer = window.setTimeout(() => {
+      void saveWorkspaceSettings(collectWorkspaceSettings()).catch(() => undefined);
+    }, 1_200);
+    return () => window.clearTimeout(timer);
+  }, [collectWorkspaceSettings]);
+
+  const exportWorkspaceSettings = useCallback(() => {
+    const payload = serializeWorkspaceSettings(collectWorkspaceSettings());
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `musica-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Workspace settings exported as JSON.");
+  }, [collectWorkspaceSettings]);
+
+  const importWorkspaceSettings = useCallback(async (file?: File) => {
+    if (!file) return;
+    try {
+      const settings = normalizeWorkspaceSettings(JSON.parse(await file.text()));
+      if (!settings) throw new Error("This file is not a Musica settings export");
+      applyWorkspaceSettings(settings);
+      await saveWorkspaceSettings(settings).catch(() => undefined);
+      setNotice(`Workspace settings imported from ${file.name}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not import settings");
+    }
+  }, [applyWorkspaceSettings]);
+
+  const [cognitumStatus, setCognitumStatus] = useState<CognitumStatus>({ signedIn: false, pending: false, capabilities: [], authHost: "cognitum.one" });
+  const [cognitumBusy, setCognitumBusy] = useState(false);
+  const [aiStyleDescription, setAiStyleDescription] = useState("");
+  const [aiStyleBusy, setAiStyleBusy] = useState(false);
+
+  useEffect(() => {
+    void getCognitumStatus().then(setCognitumStatus).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!cognitumStatus.pending) return;
+    const timer = window.setInterval(() => {
+      void getCognitumStatus()
+        .then((status) => {
+          setCognitumStatus(status);
+          if (status.signedIn) setNotice(`Cognitum One connected${status.account ? ` as ${status.account}` : ""} · SOTA capabilities unlocked.`);
+        })
+        .catch(() => undefined);
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [cognitumStatus.pending]);
+
+  const handleCognitumSignIn = useCallback(async () => {
+    setCognitumBusy(true);
+    try {
+      await startCognitumSignIn();
+      setNotice("Complete the Cognitum One sign-in in your browser.");
+      setCognitumStatus((current) => ({ ...current, pending: true, reason: undefined }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Cognitum sign-in could not start");
+    } finally {
+      setCognitumBusy(false);
+    }
+  }, []);
+
+  const handleCognitumSignOut = useCallback(async () => {
+    await signOutCognitum().catch(() => undefined);
+    setCognitumStatus((current) => ({ ...current, signedIn: false, pending: false, account: undefined, capabilities: [] }));
+    setNotice("Signed out of Cognitum One. Local planners remain active.");
+  }, []);
+
+  const [manualCodeMode, setManualCodeMode] = useState(false);
+  const [manualCode, setManualCode] = useState("");
+
+  const handleManualSignInStart = useCallback(async () => {
+    setCognitumBusy(true);
+    try {
+      await startCognitumManualSignIn();
+      setManualCodeMode(true);
+      setNotice("Approve access in the browser, then paste the CGN- code here.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Cognitum sign-in could not start");
+    } finally {
+      setCognitumBusy(false);
+    }
+  }, []);
+
+  const handleManualSignInComplete = useCallback(async () => {
+    const code = manualCode.trim();
+    if (!code) return;
+    setCognitumBusy(true);
+    try {
+      await completeCognitumManualSignIn(code);
+      setManualCode("");
+      setManualCodeMode(false);
+      const status = await getCognitumStatus();
+      setCognitumStatus(status);
+      setNotice(`Cognitum One connected${status.account ? ` as ${status.account}` : ""} · SOTA capabilities unlocked.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Cognitum code exchange failed");
+    } finally {
+      setCognitumBusy(false);
+    }
+  }, [manualCode]);
+
+  const handleGenerateAiStyle = useCallback(async () => {
+    const description = aiStyleDescription.trim();
+    if (!description || aiStyleBusy) return;
+    setAiStyleBusy(true);
+    try {
+      const pack = await generateCognitumStylePack(description);
+      const existingIds = [...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => style.id);
+      const style = {
+        ...createCustomLyriaStyle(pack.label, { id: "generated", label: pack.label, description: pack.description, prompts: pack.prompts, config: pack.config }, existingIds),
+        description: pack.description,
+      };
+      persistCustomStyles([...customLyriaStyles, style]);
+      setAiStyleDescription("");
+      await applyRealtimeStyle(style.id);
+      setNotice(`${style.label} generated by Cognitum and applied. Right-click its tile to refine.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI style generation failed");
+    } finally {
+      setAiStyleBusy(false);
+    }
+  }, [aiStyleBusy, aiStyleDescription, applyRealtimeStyle, customLyriaStyles, persistCustomStyles]);
 
   const applyLyriaGuidanceDialog = useCallback(async () => {
     if (!lyriaGuidanceDialog) return;
@@ -798,6 +1266,27 @@ export function App() {
       return;
     }
     const guidance = { text: text.slice(0, 240), weight: lyriaGuidanceDialog.weight };
+    if (lyriaGuidanceDialog.styleId.startsWith("custom-")) {
+      const label = (lyriaGuidanceDialog.label ?? "").trim().slice(0, 24);
+      const nextStyles = customLyriaStyles.map((style) => (
+        style.id === lyriaGuidanceDialog.styleId
+          ? {
+              ...style,
+              label: label || style.label,
+              prompts: style.prompts.map((prompt, index) => (index === 0 ? { ...prompt, ...guidance } : { ...prompt })),
+            }
+          : style
+      ));
+      persistCustomStyles(nextStyles);
+      const style = nextStyles.find((candidate) => candidate.id === lyriaGuidanceDialog.styleId);
+      setLyriaGuidanceDialog(undefined);
+      if (style && style.id === lyriaStyleId) {
+        await applyRealtimeRequest(createLyriaRealtimeRequestFromStyle(style), `${style.label} custom style`, style.id);
+      } else if (style) {
+        setNotice(`${style.label} custom style saved.`);
+      }
+      return;
+    }
     const style = applyPrimaryGuidance(lyriaRealtimeStyleById(lyriaGuidanceDialog.styleId), guidance);
     setLyriaStyleGuidance((current) => ({ ...current, [style.id]: guidance }));
     setLyriaGuidanceDialog(undefined);
@@ -806,7 +1295,7 @@ export function App() {
     } else {
       setNotice(`${style.label} primary guidance saved for the next switch.`);
     }
-  }, [applyRealtimeRequest, lyriaGuidanceDialog, lyriaStyleId]);
+  }, [applyRealtimeRequest, customLyriaStyles, lyriaGuidanceDialog, lyriaStyleId, persistCustomStyles]);
 
   const applyLyriaCompanionDialog = useCallback(() => {
     if (!lyriaCompanionDialog) return;
@@ -960,7 +1449,9 @@ export function App() {
     visual.setColorControls(DEFAULT_VISUAL_COLOR_CONTROLS);
     visual.setAnimationStyle(defaultAnimationStyleForScene(DEFAULT_TEMPLATE.scene));
     const recorder = new SocialRecorder(canvas, engineRef.current, visual);
+    const restream = new RestreamBroadcaster(canvas, engineRef.current, visual);
     recorderRef.current = recorder;
+    restreamRef.current = restream;
     const unlistenStats = visual.subscribeStats(setRenderStats);
     const unlistenScene = visual.subscribeScene((scene) => {
       selectedSceneRef.current = scene;
@@ -982,20 +1473,32 @@ export function App() {
       setRecording(false);
       setRecordProgress(1);
       setLastRecording(result);
-      setNotice(`Captured ${(result.bytes / 1_000_000).toFixed(1)} MB. Ready to save.`);
+      setNotice(`${result.mode === "audio-only" ? "Audio" : "Video + audio"} captured · ${(result.bytes / 1_000_000).toFixed(1)} MB · ready to save.`);
     });
     const unlistenErrors = recorder.subscribeErrors((error) => {
       setRecording(false);
       setNotice(error.message);
     });
+    const unlistenRestreamErrors = restream.subscribeErrors((error) => {
+      setNotice(`Restream: ${error.message}`);
+      void getRestreamStatus().then(setRestreamStatus).catch(() => undefined);
+    });
+    void getRestreamStatus().then(setRestreamStatus).catch((error) => setRestreamStatus({
+      available: false,
+      active: false,
+      reason: error instanceof Error ? error.message : "Restream status unavailable",
+    }));
     return () => {
       unlistenStats();
       unlistenScene();
       unlistenResults();
       unlistenErrors();
+      unlistenRestreamErrors();
+      void restream.dispose();
       visual.dispose();
       visualRef.current = null;
       recorderRef.current = null;
+      restreamRef.current = null;
     };
   }, []);
 
@@ -1097,6 +1600,37 @@ export function App() {
     setNotice(`${preset.name} visual preset applied.`);
   }, [applySceneSettings, changeScene, saveSceneSettings, sceneVisualSettings]);
 
+  const shuffleLook = useCallback(() => {
+    const pick = <T,>(options: readonly T[]): T => options[Math.floor(Math.random() * options.length)]!;
+    const spread = (base: number, range: number) => Math.max(0, Math.min(1, base + (Math.random() - 0.5) * range));
+    const scene = pick(VISUAL_SCENES).id;
+    const settings = {
+      intensity: 0.45 + Math.random() * 0.5,
+      artDirection: { sculpture: spread(0.7, 0.6), motion: spread(0.55, 0.8), atmosphere: spread(0.6, 0.7), ribbon: spread(0.7, 0.5) },
+      temporal: {
+        speed: spread(0.5, 0.7),
+        strobe: Math.random() < 0.72 ? 0 : Math.random() * 0.35,
+        trail: spread(0.5, 0.85),
+        morph: spread(0.6, 0.7),
+        camera: spread(0.5, 0.8),
+        phase: Math.random(),
+      },
+      color: normalizeVisualColorControls({
+        palette: pick(VISUAL_COLOR_PALETTES).id,
+        hue: Math.random(),
+        saturation: spread(0.64, 0.5),
+        contrast: spread(0.5, 0.5),
+        diversity: spread(0.58, 0.6),
+      }),
+      animationStyle: pick(VISUAL_ANIMATION_STYLES).id,
+    };
+    saveSceneSettings(scene, settings);
+    changeScene(scene);
+    applySceneSettings(settings);
+    const sceneName = VISUAL_SCENES.find((candidate) => candidate.id === scene)?.name ?? scene;
+    setNotice(`Shuffled look: ${sceneName} · ${settings.animationStyle.toUpperCase()} · ${settings.color.palette.toUpperCase()}.`);
+  }, [applySceneSettings, changeScene, saveSceneSettings]);
+
   const applyTemplate = useCallback((templateId: string) => {
     const template = performanceTemplateById(templateId);
     const baseStyle = lyriaRealtimeStyleForTemplate(template);
@@ -1140,14 +1674,14 @@ export function App() {
   const stopRecording = useCallback(async () => {
     const recorder = recorderRef.current;
     if (!recorder || recorder.getState() !== "recording") return;
-    setNotice("Finalizing audio and video…");
+    setNotice(`Finalizing ${captureMode === "audio-only" ? "audio" : "video and audio"}…`);
     try {
       await recorder.stop();
     } catch (error) {
       setRecording(false);
       setNotice(error instanceof Error ? error.message : "Recording failed");
     }
-  }, []);
+  }, [captureMode]);
 
   const startRecording = useCallback(async () => {
     const recorder = recorderRef.current;
@@ -1165,13 +1699,15 @@ export function App() {
       }
       setLastRecording(undefined);
       setRecordProgress(0);
-      await recorder.start(selectedPresetRef.current);
+      await recorder.start(selectedPresetRef.current, captureMode);
       setRecording(true);
-      setNotice(`Recording ${selectedPresetRef.current.label} at ${selectedPresetRef.current.width} × ${selectedPresetRef.current.height}.`);
+      setNotice(captureMode === "audio-only"
+        ? `Recording master audio · ${selectedPresetRef.current.durationSeconds}s · AAC/M4A preferred.`
+        : `Recording ${selectedPresetRef.current.label} at ${selectedPresetRef.current.width} × ${selectedPresetRef.current.height} with master audio.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Recording is unavailable");
     }
-  }, [stopRecording]);
+  }, [captureMode, stopRecording]);
 
   useEffect(() => {
     if (!recording) return;
@@ -1791,6 +2327,40 @@ export function App() {
     }
   };
 
+  const toggleRestreamBroadcast = async () => {
+    const broadcaster = restreamRef.current;
+    if (!broadcaster) {
+      setNotice("Restream encoder is still initializing.");
+      return;
+    }
+    setRestreamBusy(true);
+    try {
+      if (restreamStatus.active) {
+        const status = await broadcaster.stop();
+        setRestreamStatus(status);
+        setNotice("Restream broadcast stopped.");
+        return;
+      }
+      if (!snapshotRef.current.playing) throw new Error("Start the Lyria transport before going live");
+      if (restreamKey.trim().length < 8) throw new Error("Paste the stream key from Restream RTMP Setup");
+      const status = await broadcaster.start({
+        ingestUrl: restreamIngestUrl,
+        streamKey: restreamKey,
+        source: restreamSource,
+        videoBitrateKbps: 4_500,
+        fps: 30,
+      });
+      setRestreamStatus(status);
+      setRestreamKey("");
+      setNotice(`Restream is live · ${restreamSource === "program" ? "clean visual + master audio" : "entire UI + master audio"}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not change Restream broadcast state");
+      void getRestreamStatus().then(setRestreamStatus).catch(() => undefined);
+    } finally {
+      setRestreamBusy(false);
+    }
+  };
+
   const openDjWindow = async (profile: DjControlProfileId) => {
     try {
       await openDjControlWindow(profile);
@@ -1830,6 +2400,21 @@ export function App() {
 
   return (
     <main className="app-shell">
+      {onboardingView && (
+        <OnboardingWizard
+          view={onboardingView}
+          firstRun={onboardingFirstRun}
+          preferences={onboardingPreferences}
+          lyriaAvailable={lyriaRealtimeStatus.available}
+          lyriaStatusLabel={lyriaRealtimeStatus.available ? "LYRIA REALTIME READY" : lyriaRealtimeStatus.provider === "checking" ? "CHECKING LYRIA" : "LYRIA OFFLINE"}
+          onChange={setOnboardingPreferences}
+          cognitum={{ signedIn: cognitumStatus.signedIn, pending: cognitumStatus.pending, account: cognitumStatus.account }}
+          onCognitumSignIn={() => void handleCognitumSignIn()}
+          onEdit={() => setOnboardingView("setup")}
+          onLaunch={applyOnboardingSetup}
+          onClose={() => setOnboardingView(undefined)}
+        />
+      )}
       {lyriaGuidanceDialog && (
         <div
           className="lyria-guidance-overlay"
@@ -1844,6 +2429,17 @@ export function App() {
               <button type="button" onClick={() => setLyriaGuidanceDialog(undefined)} aria-label="Close guidance dialog">X</button>
             </header>
             <h2 id="lyria-guidance-title">{lyriaRealtimeStyleById(lyriaGuidanceDialog.styleId).label}</h2>
+            {lyriaGuidanceDialog.styleId.startsWith("custom-") && (
+              <label className="guidance-copy">
+                <span>NAME</span>
+                <input
+                  maxLength={24}
+                  value={lyriaGuidanceDialog.label ?? ""}
+                  onChange={(event) => setLyriaGuidanceDialog((current) => current ? { ...current, label: event.target.value } : current)}
+                  aria-label="Custom style name"
+                />
+              </label>
+            )}
             <label className="guidance-copy">
               <span>DIRECTION</span>
               <textarea
@@ -1877,6 +2473,9 @@ export function App() {
                   setLyriaGuidanceDialog({ ...lyriaGuidanceDialog, text: primary.text, weight: primary.weight });
                 }}
               >RESET</button>
+              {lyriaGuidanceDialog.styleId.startsWith("custom-") && (
+                <button type="button" className="danger" onClick={() => deleteCustomStyle(lyriaGuidanceDialog.styleId)}>DELETE</button>
+              )}
               <button type="button" onClick={() => setLyriaGuidanceDialog(undefined)}>CANCEL</button>
               <button type="button" className="primary" onClick={() => void applyLyriaGuidanceDialog()} disabled={!lyriaGuidanceDialog.text.trim()}>APPLY</button>
             </footer>
@@ -2025,6 +2624,18 @@ export function App() {
         </div>
 
         <div className="top-actions">
+          <button
+            className="top-settings-button"
+            type="button"
+            onClick={() => {
+              setOnboardingFirstRun(false);
+              setOnboardingView("setup");
+            }}
+            aria-label="Open music setup"
+            title="Music setup"
+          >
+            <Settings2 size={16} />
+          </button>
           <span className={`device-pill ${controllerStatus.midi ? "online" : ""}`} title={controllerStatus.midiInputs.join(", ") || "No MIDI input detected"}>
             <i /> MIDI {controllerStatus.midi ? `${controllerStatus.midiInputs.length} IN` : "READY"}
           </span>
@@ -2058,6 +2669,10 @@ export function App() {
                     <span>{VISUAL_SCENES.find((scene) => scene.id === preset.scene)?.name ?? preset.scene}</span>
                   </button>
                 ))}
+                <button className="shuffle-look" onClick={shuffleLook} title="Randomize scene, motion, palette, and temporal controls — like cycling Winamp presets">
+                  <strong>SHUFFLE LOOK</strong>
+                  <span>random scene + motion + color</span>
+                </button>
               </div>
             </section>
           ))}
@@ -2242,6 +2857,40 @@ export function App() {
                 </div>
               ))}
             </div>
+            <div className="performance-pads" aria-label="Performance pads">
+              <div className="sfx-pads" role="group" aria-label="One-shot sound effects">
+                <span className="pads-label">SFX</span>
+                {SFX_KINDS.map((sfx) => (
+                  <button key={sfx.id} type="button" onClick={() => triggerSfx(sfx.id)} title={`Play ${sfx.label.toLowerCase()} one-shot through the stream FX and master chain`}>
+                    {sfx.label}
+                  </button>
+                ))}
+                <label className="sfx-level" title="SFX volume relative to the music">
+                  <em>VOL</em>
+                  <input type="range" min="0" max="1" step="0.01" value={sfxLevel} onChange={(event) => changeSfxLevel(Number(event.target.value))} aria-label="SFX volume" />
+                  <b>{Math.round(sfxLevel * 100)}</b>
+                </label>
+              </div>
+              <div className="loop-pads" role="group" aria-label="Audio loop pads">
+                <span className="pads-label">LOOPS</span>
+                {padLoops.map((pad) => (
+                  <span key={pad.slot} className={`loop-pad ${pad.playing ? "playing" : ""} ${pad.name ? "loaded" : ""}`}>
+                    <button
+                      type="button"
+                      onClick={() => togglePadLoop(pad.slot)}
+                      disabled={!pad.name}
+                      title={pad.name ? `${pad.playing ? "Stop" : "Start"} ${pad.name} (bar-synced)` : "Load an audio file first"}
+                    >
+                      {pad.name ? (pad.playing ? `■ ${pad.name}` : `▶ ${pad.name}`) : `PAD ${pad.slot + 1}`}
+                    </button>
+                    <label title="Load MP3/WAV/M4A loop into this pad" aria-label={`Load audio into pad ${pad.slot + 1}`}>
+                      +
+                      <input type="file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*" onChange={(event) => { void loadPadLoopFile(pad.slot, event.target.files?.[0]); event.target.value = ""; }} />
+                    </label>
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -2326,17 +2975,17 @@ export function App() {
               <label className="realtime-style-select">
                 <span>STYLE</span>
                 <select value={lyriaStyleId} onChange={(event) => void applyRealtimeStyle(event.target.value)}>
-                  {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                  {[...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => (
                     <option key={style.id} value={style.id}>{style.label}</option>
                   ))}
                 </select>
               </label>
               <small className="realtime-style-description">{activeLyriaStyle.description}</small>
               <div className="realtime-style-buttons">
-                {LYRIA_REALTIME_STYLE_PRESETS.map((style) => (
+                {[...LYRIA_REALTIME_STYLE_PRESETS, ...customLyriaStyles].map((style) => (
                   <button
                     key={style.id}
-                    className={style.id === lyriaStyleId ? "active" : ""}
+                    className={`${style.id === lyriaStyleId ? "active" : ""} ${style.id.startsWith("custom-") ? "custom-style" : ""}`}
                     onClick={() => void applyRealtimeStyle(style.id)}
                     onContextMenu={(event) => {
                       event.preventDefault();
@@ -2349,7 +2998,11 @@ export function App() {
                     {style.label}
                   </button>
                 ))}
+                <button className="add-style" onClick={addCustomStyle} disabled={lyriaRealtimeBusy} title="Create a custom style from the current style's prompts">
+                  + STYLE
+                </button>
               </div>
+              <small className="style-grid-hint">Right-click any style to edit its primary prompt. Custom styles start from the selected style.</small>
               <div className="realtime-grid">
                 <label>
                   <span>BPM</span>
@@ -2378,8 +3031,26 @@ export function App() {
                   <span>GUIDE</span>
                   <input type="range" min="0" max="6" step="0.05" value={lyriaRealtimeConfig.guidance} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, guidance: Number(event.target.value) }))} />
                 </label>
+                <label>
+                  <span>TEMP</span>
+                  <input type="range" min="0.1" max="2" step="0.02" value={lyriaRealtimeConfig.temperature} title={`Temperature ${lyriaRealtimeConfig.temperature.toFixed(2)} — higher is more adventurous`} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, temperature: Number(event.target.value) }))} />
+                </label>
+                <label>
+                  <span>TOP-K</span>
+                  <input type="range" min="1" max="100" step="1" value={lyriaRealtimeConfig.topK} title={`Top-K ${lyriaRealtimeConfig.topK} — lower is tighter, higher is looser`} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, topK: Number(event.target.value) }))} />
+                </label>
               </div>
               <div className="realtime-toggles">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={lyriaRealtimeConfig.musicGenerationMode === "DIVERSITY"}
+                    onChange={(event) => setLyriaRealtimeConfig((current) => ({
+                      ...current,
+                      musicGenerationMode: event.target.checked ? "DIVERSITY" : "QUALITY",
+                    }))}
+                  /> DIVERSITY MODE
+                </label>
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.muteBass} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteBass: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> BASS MUTE</label>
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.muteDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, muteDrums: event.target.checked, onlyBassAndDrums: event.target.checked ? false : current.onlyBassAndDrums }))} /> DRUM MUTE</label>
                 <label><input type="checkbox" checked={lyriaRealtimeConfig.onlyBassAndDrums} onChange={(event) => setLyriaRealtimeConfig((current) => ({ ...current, onlyBassAndDrums: event.target.checked, muteBass: event.target.checked ? false : current.muteBass, muteDrums: event.target.checked ? false : current.muteDrums }))} /> BASS+DRUMS</label>
@@ -2423,6 +3094,7 @@ export function App() {
                   {demoMode ? "EXIT DEMO" : "DEMO"}
                 </button>
                 <button onClick={() => void openDjWindow("mixer")}>POP OUT MIXER</button>
+                <button onClick={() => void openDjWindow("styles")}>POP OUT STYLES</button>
                 {lyriaSession && <button onClick={() => void stopRealtimeSession()} disabled={lyriaRealtimeBusy}>STOP</button>}
               </div>
               <details className="auto-dj-direction">
@@ -2438,6 +3110,141 @@ export function App() {
               {!lyriaRealtimeStatus.available && <small>{lyriaRealtimeStatus.reason ?? "Desktop Lyria RealTime bridge is not configured"}</small>}
             </section>
           ), "primary-panel")}
+
+          {renderStudioPanel("audio-fx", "STREAM FX", Object.values(masterEffects).some((amount) => amount > 0.01) ? "ACTIVE" : "DRY", (
+            <section className="master-fx" aria-label="Master stream effects">
+              {([
+                ["flanger", "FLANGE", "LFO-modulated short delay with feedback"],
+                ["phaser", "PHASER", "four-stage allpass sweep with LFO"],
+                ["drive", "DRIVE", "warm overdrive saturation on the stream"],
+                ["crush", "CRUSH", "bit-crush quantization grit"],
+                ["sweep", "SWEEP", "auto resonant lowpass filter sweep"],
+                ["reverb", "VERB", "hall reverb send on the whole stream"],
+                ["echo", "ECHO", "tempo-synced delay send"],
+              ] as const).map(([key, label, hint]) => (
+                <div key={key} className={`fx-row ${fxLocks[key] ? "locked" : ""}`}>
+                  <div className="fx-row-main" title={hint}>
+                    <button
+                      type="button"
+                      className={`fx-lock ${fxLocks[key] ? "on" : ""}`}
+                      onClick={() => toggleFxLock(key)}
+                      title={fxLocks[key] ? "Unlock: styles may change this effect" : "Lock: styles and presets will not change this effect"}
+                      aria-label={`${fxLocks[key] ? "Unlock" : "Lock"} ${label}`}
+                    >
+                      {fxLocks[key] ? "🔒" : "🔓"}
+                    </button>
+                    <label className="control-block">
+                      <span><b>{label}</b><em>{Math.round(masterEffects[key] * 100)}</em></span>
+                      <input type="range" min="0" max="1" step="0.01" value={masterEffects[key]} onChange={(event) => changeMasterEffect(key, Number(event.target.value))} />
+                    </label>
+                    {MASTER_EFFECT_PARAM_IDS[key].length > 0 && (
+                      <button
+                        type="button"
+                        className={`fx-edit ${expandedFx === key ? "on" : ""}`}
+                        onClick={() => setExpandedFx((current) => current === key ? undefined : key)}
+                        aria-expanded={expandedFx === key}
+                        aria-label={`Edit ${label} parameters`}
+                      >
+                        EDIT
+                      </button>
+                    )}
+                    <button type="button" className="fx-generate" onClick={() => generateFxSetting(key)} title={`Generate random ${label} settings`} aria-label={`Generate ${label} settings`}>
+                      GEN
+                    </button>
+                  </div>
+                  {expandedFx === key && MASTER_EFFECT_PARAM_IDS[key].length > 0 && (
+                    <div className="fx-row-params">
+                      {MASTER_EFFECT_PARAM_IDS[key].map(({ id, label: paramLabel }) => (
+                        <label key={id} className="control-block">
+                          <span><b>{paramLabel}</b><em>{Math.round(masterEffectParams[id] * 100)}</em></span>
+                          <input type="range" min="0" max="1" step="0.01" value={masterEffectParams[id]} onChange={(event) => changeMasterEffectParam(id, Number(event.target.value))} />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <button type="button" className="fx-kill" onClick={() => MASTER_EFFECT_IDS.forEach((key) => { if (!fxLocks[key]) changeMasterEffect(key, 0); })} title="Zero all unlocked effects">
+                KILL FX
+              </button>
+            </section>
+          ))}
+
+          {renderStudioPanel("cognitum-ai", "COGNITUM AI", cognitumStatus.signedIn ? (cognitumStatus.account ?? "LINKED") : cognitumStatus.pending ? "WAITING" : "OPTIONAL", (
+            <section className="cognitum-panel" aria-label="Cognitum One AI enhancements">
+              {!cognitumStatus.signedIn ? (
+                <>
+                  <p className="cognitum-pitch">Optional {cognitumStatus.authHost} account. Unlocks state-of-the-art enhancements on top of the local planners — nothing here is required to perform.</p>
+                  <div className="cognitum-capability-list">
+                    {(Object.keys(COGNITUM_CAPABILITY_LABELS) as Array<keyof typeof COGNITUM_CAPABILITY_LABELS>).map((capability) => (
+                      <div key={capability} className="capability locked">
+                        <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
+                        <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="cognitum-sign-in" onClick={() => void handleCognitumSignIn()} disabled={cognitumBusy || cognitumStatus.pending}>
+                    {cognitumStatus.pending ? "WAITING FOR BROWSER…" : "SIGN IN WITH COGNITUM ONE"}
+                  </button>
+                  {!manualCodeMode ? (
+                    <button type="button" className="cognitum-manual-toggle" onClick={() => void handleManualSignInStart()} disabled={cognitumBusy}>
+                      PASTE A CODE INSTEAD (HEADLESS / SSH)
+                    </button>
+                  ) : (
+                    <div className="cognitum-manual-code">
+                      <input
+                        value={manualCode}
+                        placeholder="CGN-XXXXXX"
+                        maxLength={64}
+                        spellCheck={false}
+                        onChange={(event) => setManualCode(event.target.value)}
+                        aria-label="Cognitum manual sign-in code"
+                      />
+                      <button type="button" onClick={() => void handleManualSignInComplete()} disabled={cognitumBusy || !manualCode.trim()}>
+                        CONNECT
+                      </button>
+                    </div>
+                  )}
+                  {cognitumStatus.reason && <small className="cognitum-reason">{cognitumStatus.reason}</small>}
+                </>
+              ) : (
+                <>
+                  <div className="cognitum-capability-list">
+                    {(Object.keys(COGNITUM_CAPABILITY_LABELS) as Array<keyof typeof COGNITUM_CAPABILITY_LABELS>).map((capability) => {
+                      const enabled = cognitumStatus.capabilities.includes(capability);
+                      return (
+                        <div key={capability} className={`capability ${enabled ? "enabled" : "locked"}`}>
+                          <strong>{COGNITUM_CAPABILITY_LABELS[capability].label}</strong>
+                          <span>{COGNITUM_CAPABILITY_LABELS[capability].detail}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <label className="ai-style-generator">
+                    <span>AI STYLE GENERATOR</span>
+                    <textarea
+                      maxLength={600}
+                      value={aiStyleDescription}
+                      placeholder="Describe a sound: e.g. rainy midnight garage with detuned tape keys and whispered chops…"
+                      onChange={(event) => setAiStyleDescription(event.target.value)}
+                      disabled={!cognitumStatus.capabilities.includes("advanced-prompting")}
+                    />
+                  </label>
+                  <div className="cognitum-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleGenerateAiStyle()}
+                      disabled={aiStyleBusy || !aiStyleDescription.trim() || !cognitumStatus.capabilities.includes("advanced-prompting")}
+                    >
+                      {aiStyleBusy ? "GENERATING…" : "GENERATE STYLE"}
+                    </button>
+                    <button type="button" onClick={() => void handleCognitumSignOut()}>SIGN OUT</button>
+                  </div>
+                </>
+              )}
+            </section>
+          ))}
 
           {renderStudioPanel("audio-templates", "MUSICAL STYLES", `${PERFORMANCE_TEMPLATES.length} SETS`, (
             <section className="template-bank" aria-label="Performance templates">
@@ -2562,8 +3369,12 @@ export function App() {
             </section>
           ))}
 
-          {renderStudioPanel("av-output", "AV OUTPUT", recording ? "REC" : selectedPreset.label.toUpperCase(), (
+          {renderStudioPanel("av-output", "AV OUTPUT", restreamStatus.active ? "LIVE" : recording ? "REC" : selectedPreset.label.toUpperCase(), (
             <section className="av-output-panel">
+              <div className="capture-mode-control" role="group" aria-label="Capture mode">
+                <button className={captureMode === "video-audio" ? "active" : ""} onClick={() => setCaptureMode("video-audio")} disabled={recording}>VIDEO + AUDIO</button>
+                <button className={captureMode === "audio-only" ? "active" : ""} onClick={() => setCaptureMode("audio-only")} disabled={recording}>AUDIO ONLY</button>
+              </div>
               <div className="av-output-grid">
                 <button className={recording ? "active" : ""} onClick={() => void startRecording()}>
                   {recording ? "STOP CAPTURE" : "START CAPTURE"}
@@ -2576,19 +3387,51 @@ export function App() {
                 <button onClick={() => void openDjWindow("visual")}>VISUAL WINDOW</button>
               </div>
               <label>
-                <span>FORMAT</span>
-                <select value={selectedPreset.id} onChange={(event) => setSelectedPreset(SOCIAL_PRESETS.find((preset) => preset.id === event.target.value) ?? SOCIAL_PRESETS[2])}>
-                  {SOCIAL_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{preset.label} · {preset.width}x{preset.height}</option>)}
+                <span>{captureMode === "audio-only" ? "LENGTH" : "FORMAT"}</span>
+                <select disabled={recording} value={selectedPreset.id} onChange={(event) => setSelectedPreset(SOCIAL_PRESETS.find((preset) => preset.id === event.target.value) ?? SOCIAL_PRESETS[2])}>
+                  {SOCIAL_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{captureMode === "audio-only" ? `${preset.durationSeconds} seconds` : `${preset.label} · ${preset.width}x${preset.height}`}</option>)}
                 </select>
               </label>
-              {lastRecording && <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE LAST CAPTURE</button>}
+              {lastRecording && <button className="save-button av-save-button" onClick={() => void saveLastRecording()}>SAVE {lastRecording.mode === "audio-only" ? "AUDIO" : "VIDEO + AUDIO"}</button>}
+              <section className="restream-control" aria-label="Restream live output">
+                <header><span><i className={restreamStatus.active ? "online" : ""} /> RESTREAM</span><b>{restreamStatus.active ? "LIVE" : restreamStatus.available ? "READY" : "OFFLINE"}</b></header>
+                <div className="capture-mode-control" role="group" aria-label="Restream source">
+                  <button className={restreamSource === "program" ? "active" : ""} onClick={() => setRestreamSource("program")} disabled={restreamStatus.active || restreamBusy}>VISUAL + AUDIO</button>
+                  <button className={restreamSource === "window" ? "active" : ""} onClick={() => setRestreamSource("window")} disabled={restreamStatus.active || restreamBusy}>ENTIRE UI + AUDIO</button>
+                </div>
+                <label><span>SERVER</span><input type="url" value={restreamIngestUrl} onChange={(event) => setRestreamIngestUrl(event.target.value)} disabled={restreamStatus.active} spellCheck={false} /></label>
+                <label><span>KEY</span><input type="password" value={restreamKey} onChange={(event) => setRestreamKey(event.target.value)} disabled={restreamStatus.active} placeholder={restreamStatus.active ? "Held by native encoder" : "Restream stream key"} autoComplete="off" /></label>
+                <button className={`restream-live-button ${restreamStatus.active ? "active" : ""}`} type="button" onClick={() => void toggleRestreamBroadcast()} disabled={restreamBusy || (!restreamStatus.available && !restreamStatus.active)}>
+                  {restreamBusy ? "WORKING..." : restreamStatus.active ? "END STREAM" : "GO LIVE"}
+                </button>
+                {!restreamStatus.available && <small>{restreamStatus.reason}</small>}
+              </section>
+              <section className="workspace-settings" aria-label="Workspace settings">
+                <header><span>WORKSPACE</span><b>AUTO-SAVED</b></header>
+                <div className="workspace-settings-actions">
+                  <button type="button" onClick={exportWorkspaceSettings} title="Download all settings (styles, FX, deck scenes, onboarding) as a JSON file">EXPORT SETTINGS</button>
+                  <label title="Restore settings from a Musica settings JSON export">
+                    IMPORT SETTINGS
+                    <input type="file" accept=".json,application/json" onChange={(event) => { void importWorkspaceSettings(event.target.files?.[0]); event.target.value = ""; }} />
+                  </label>
+                </div>
+              </section>
             </section>
           ))}
         </aside>
       </section>
 
       <footer className="footerbar">
-        <div className="notice"><i /> {notice}</div>
+        <div className="footer-status">
+          <strong>{selectedSceneMeta.name}</strong>
+          <span>{activeLyriaStyle.label} · {snapshot.bpm} BPM · {lyriaSession ? "LYRIA LIVE" : "READY"}</span>
+          <small title={notice}>{notice}</small>
+        </div>
+        <FooterAudioVisualizer audio={engineRef.current} />
+        <div className="footer-output">
+          <div className="output-readout"><span>OUTPUT</span><b>{renderStats.fps || 60} FPS · 16:9</b></div>
+          <div className="master-readout"><span>MASTER</span><i><em style={{ width: `${Math.round(snapshot.masterVolume * 100)}%` }} /></i><b>{Math.round(snapshot.masterVolume * 100)}%</b></div>
+        </div>
         <div className="capture-settings">
           <label>
             FORMAT
@@ -2596,7 +3439,7 @@ export function App() {
               {SOCIAL_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{preset.label} · {preset.width}×{preset.height}</option>)}
             </select>
           </label>
-          {lastRecording && <button className="save-button" onClick={() => void saveLastRecording()}>SAVE LAST CAPTURE</button>}
+          {lastRecording && <button className="save-button" onClick={() => void saveLastRecording()}>SAVE {lastRecording.mode === "audio-only" ? "AUDIO" : "VIDEO"}</button>}
           <span className="shortcut-hint">SPACE/MEDIA PLAY · R RECORD · ARROWS NAVIGATE</span>
         </div>
       </footer>

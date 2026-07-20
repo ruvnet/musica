@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-07-20T03:47:31.769Z",
+  "projectRoot": "/Users/cohen/Projects/musica/apps/musica-vj/public/previews/lyria",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": false,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1784519251769
+}

@@ -4,7 +4,7 @@ import type { ControlAction, VisualColorControls, VisualSceneId } from "./types"
 import type { LyriaRealtimeDeckId } from "./lyriaRealtime";
 import type { LyriaDeckControl, LyriaDeckScene } from "./lyriaDeckScenes";
 
-export type DjControlProfileId = "mixer" | "launcher" | "visual";
+export type DjControlProfileId = "mixer" | "launcher" | "visual" | "styles";
 export type DjControlWidgetId = "transport" | "deck-scenes" | "deck-mixer" | "styles" | "visuals" | "color" | "master";
 
 export interface DjControlWidgetLayout {
@@ -71,6 +71,18 @@ export const DJ_CONTROL_PROFILES: Record<DjControlProfileId, { label: string; wi
       { id: "deck-scenes", visible: true, wide: true },
       { id: "styles", visible: false, wide: true },
       { id: "deck-mixer", visible: false, wide: true },
+    ],
+  },
+  styles: {
+    label: "Styles",
+    widgets: [
+      { id: "transport", visible: true, wide: true },
+      { id: "styles", visible: true, wide: true },
+      { id: "master", visible: true, wide: true },
+      { id: "deck-scenes", visible: false, wide: true },
+      { id: "deck-mixer", visible: false, wide: true },
+      { id: "visuals", visible: false, wide: true },
+      { id: "color", visible: false, wide: true },
     ],
   },
 };

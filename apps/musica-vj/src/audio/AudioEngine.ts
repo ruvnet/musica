@@ -43,6 +43,24 @@ interface ScheduledSourceMetadata {
 
 export type RealtimeDeckId = "main" | "sequence" | "vocal";
 
+export type SfxKind = "siren" | "airhorn" | "riser" | "impact" | "laser";
+
+export const SFX_KINDS: ReadonlyArray<{ id: SfxKind; label: string }> = [
+  { id: "siren", label: "SIREN" },
+  { id: "airhorn", label: "HORN" },
+  { id: "riser", label: "RISER" },
+  { id: "impact", label: "IMPACT" },
+  { id: "laser", label: "LASER" },
+];
+
+interface PadLoopSlot {
+  buffer?: AudioBuffer;
+  name?: string;
+  source?: AudioBufferSourceNode;
+  gain?: GainNode;
+  playing: boolean;
+}
+
 interface RealtimeDeckControl {
   volume: number;
   muted: boolean;
@@ -58,7 +76,7 @@ interface RealtimeDeckRuntime {
 const REALTIME_DECK_DEFAULTS: Record<RealtimeDeckId, RealtimeDeckControl> = {
   main: { volume: 0.72, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
   sequence: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
-  vocal: { volume: 0, muted: true, pitchSemitones: 0, beatNudgeMs: 0 },
+  vocal: { volume: 0.42, muted: false, pitchSemitones: 0, beatNudgeMs: 0 },
 };
 
 export interface AiToneOptions {
@@ -89,6 +107,82 @@ export interface LoadedAudioDetails {
 export interface LoadedAiToneDetails extends LoadedAudioDetails {
   fileName: string;
 }
+
+export function buildSoftClipCurve(edge: number): Float32Array<ArrayBuffer> {
+  const k = 1.5 + Math.max(0, Math.min(1, edge)) * 4.5;
+  const curve = new Float32Array(1_024);
+  for (let index = 0; index < curve.length; index += 1) {
+    const x = (index / (curve.length - 1)) * 2 - 1;
+    curve[index] = Math.tanh(k * x) / Math.tanh(k);
+  }
+  return curve;
+}
+
+export function buildQuantizeCurve(bits: number): Float32Array<ArrayBuffer> {
+  const steps = 2 + Math.round(Math.max(0, Math.min(1, bits)) * 22);
+  const curve = new Float32Array(1_024);
+  for (let index = 0; index < curve.length; index += 1) {
+    const x = (index / (curve.length - 1)) * 2 - 1;
+    curve[index] = Math.round(x * steps) / steps;
+  }
+  return curve;
+}
+
+export interface MasterEffectsState {
+  flanger: number;
+  sweep: number;
+  reverb: number;
+  echo: number;
+  drive: number;
+  crush: number;
+  phaser: number;
+}
+
+export const MASTER_EFFECT_IDS = ["flanger", "phaser", "drive", "crush", "sweep", "reverb", "echo"] as const;
+
+export interface MasterEffectParams {
+  flangerRate: number;
+  flangerDepth: number;
+  flangerFeedback: number;
+  phaserRate: number;
+  phaserDepth: number;
+  driveEdge: number;
+  crushBits: number;
+  sweepRate: number;
+  sweepReso: number;
+}
+
+export const DEFAULT_MASTER_EFFECT_PARAMS: Readonly<MasterEffectParams> = Object.freeze({
+  flangerRate: 0.2,
+  flangerDepth: 0.5,
+  flangerFeedback: 0.6,
+  phaserRate: 0.25,
+  phaserDepth: 0.6,
+  driveEdge: 0.4,
+  crushBits: 0.45,
+  sweepRate: 0.3,
+  sweepReso: 0.55,
+});
+
+export const MASTER_EFFECT_PARAM_IDS: Readonly<Record<(typeof MASTER_EFFECT_IDS)[number], Array<{ id: keyof MasterEffectParams; label: string }>>> = Object.freeze({
+  flanger: [
+    { id: "flangerRate", label: "RATE" },
+    { id: "flangerDepth", label: "DEPTH" },
+    { id: "flangerFeedback", label: "FEEDBACK" },
+  ],
+  phaser: [
+    { id: "phaserRate", label: "RATE" },
+    { id: "phaserDepth", label: "DEPTH" },
+  ],
+  drive: [{ id: "driveEdge", label: "EDGE" }],
+  crush: [{ id: "crushBits", label: "BITS" }],
+  sweep: [
+    { id: "sweepRate", label: "RATE" },
+    { id: "sweepReso", label: "RESO" },
+  ],
+  reverb: [],
+  echo: [],
+});
 
 export interface EngineSnapshot {
   tracks: TrackSnapshot[];
@@ -190,6 +284,32 @@ export class AudioEngine {
   private tracks = new Map<TrackId, TrackRuntime>();
   private masterGain?: GainNode;
   private compressor?: DynamicsCompressorNode;
+  private masterLimiter?: DynamicsCompressorNode;
+  private flangerWet?: GainNode;
+  private flangerFeedback?: GainNode;
+  private flangerDepth?: GainNode;
+  private flangerLfo?: OscillatorNode;
+  private sweepFilter?: BiquadFilterNode;
+  private sweepDepth?: GainNode;
+  private sweepLfo?: OscillatorNode;
+  private masterReverbSend?: GainNode;
+  private masterEchoSend?: GainNode;
+  private phaserWet?: GainNode;
+  private phaserDry?: GainNode;
+  private phaserDepth?: GainNode;
+  private phaserLfo?: OscillatorNode;
+  private phaserStages: BiquadFilterNode[] = [];
+  private driveDry?: GainNode;
+  private driveWet?: GainNode;
+  private drivePre?: GainNode;
+  private crushDry?: GainNode;
+  private crushWet?: GainNode;
+  private driveShaper?: WaveShaperNode;
+  private crushShaper?: WaveShaperNode;
+  private masterEffects: MasterEffectsState = { flanger: 0, sweep: 0, reverb: 0, echo: 0, drive: 0, crush: 0, phaser: 0 };
+  private masterEffectParams: MasterEffectParams = { ...DEFAULT_MASTER_EFFECT_PARAMS };
+  private readonly padLoops = new Map<number, PadLoopSlot>();
+  private sfxLevel = 0.5;
   private fxDelay?: DelayNode;
   private fxFeedback?: GainNode;
   private fxWet?: GainNode;
@@ -244,12 +364,27 @@ export class AudioEngine {
     const masterAnalyser = context.createAnalyser();
     const captureDestination = context.createMediaStreamDestination();
 
+    const rumbleFilter = context.createBiquadFilter();
+    const airShelf = context.createBiquadFilter();
+    const limiter = context.createDynamicsCompressor();
+
     masterGain.gain.value = this.masterVolume * this.masterVolume;
-    compressor.threshold.value = -16;
-    compressor.knee.value = 10;
-    compressor.ratio.value = 5;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.24;
+    rumbleFilter.type = "highpass";
+    rumbleFilter.frequency.value = 28;
+    rumbleFilter.Q.value = 0.71;
+    compressor.threshold.value = -18;
+    compressor.knee.value = 24;
+    compressor.ratio.value = 2.6;
+    compressor.attack.value = 0.008;
+    compressor.release.value = 0.22;
+    airShelf.type = "highshelf";
+    airShelf.frequency.value = 11_500;
+    airShelf.gain.value = 1.1;
+    limiter.threshold.value = -2.5;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.09;
     fxDelay.delayTime.value = secondsPerStep(this.bpm) * 3;
     fxFeedback.gain.value = 0.34;
     fxWet.gain.value = 0.24;
@@ -258,10 +393,101 @@ export class AudioEngine {
     masterAnalyser.fftSize = 2048;
     masterAnalyser.smoothingTimeConstant = 0.76;
 
-    masterGain.connect(compressor);
+    const flangerDry = context.createGain();
+    const flangerDelay = context.createDelay(0.05);
+    const flangerWet = context.createGain();
+    const flangerFeedback = context.createGain();
+    const flangerDepth = context.createGain();
+    const flangerLfo = context.createOscillator();
+    const flangerSum = context.createGain();
+    const sweepFilter = context.createBiquadFilter();
+    const sweepDepth = context.createGain();
+    const sweepLfo = context.createOscillator();
+    const masterReverbSend = context.createGain();
+    const masterEchoSend = context.createGain();
+
+    flangerDelay.delayTime.value = 0.0035;
+    flangerWet.gain.value = 0;
+    flangerFeedback.gain.value = 0;
+    flangerDepth.gain.value = 0;
+    flangerLfo.type = "sine";
+    flangerLfo.frequency.value = 0.23;
+    sweepFilter.type = "lowpass";
+    sweepFilter.frequency.value = 18_500;
+    sweepFilter.Q.value = 0.9;
+    sweepDepth.gain.value = 0;
+    sweepLfo.type = "sine";
+    sweepLfo.frequency.value = 0.16;
+    masterReverbSend.gain.value = 0;
+    masterEchoSend.gain.value = 0;
+
+    const phaserDry = context.createGain();
+    const phaserWet = context.createGain();
+    const phaserSum = context.createGain();
+    const phaserDepth = context.createGain();
+    const phaserLfo = context.createOscillator();
+    const phaserStages = Array.from({ length: 4 }, () => {
+      const stage = context.createBiquadFilter();
+      stage.type = "allpass";
+      stage.frequency.value = 620;
+      stage.Q.value = 0.6;
+      return stage;
+    });
+    phaserWet.gain.value = 0;
+    phaserDepth.gain.value = 0;
+    phaserLfo.type = "sine";
+    phaserLfo.frequency.value = 0.35;
+
+    const driveDry = context.createGain();
+    const drivePre = context.createGain();
+    const driveShaper = context.createWaveShaper();
+    const driveWet = context.createGain();
+    const driveSum = context.createGain();
+    driveShaper.curve = buildSoftClipCurve(this.masterEffectParams.driveEdge);
+    driveShaper.oversample = "4x";
+    drivePre.gain.value = 1;
+    driveWet.gain.value = 0;
+
+    const crushDry = context.createGain();
+    const crushShaper = context.createWaveShaper();
+    const crushWet = context.createGain();
+    const crushSum = context.createGain();
+    crushShaper.curve = buildQuantizeCurve(this.masterEffectParams.crushBits);
+    crushWet.gain.value = 0;
+
+    masterGain.connect(flangerDry).connect(flangerSum);
+    masterGain.connect(flangerDelay);
+    flangerDelay.connect(flangerWet).connect(flangerSum);
+    flangerDelay.connect(flangerFeedback).connect(flangerDelay);
+    flangerLfo.connect(flangerDepth).connect(flangerDelay.delayTime);
+
+    flangerSum.connect(phaserDry).connect(phaserSum);
+    flangerSum.connect(phaserStages[0]!);
+    for (let index = 0; index < phaserStages.length - 1; index += 1) {
+      phaserStages[index]!.connect(phaserStages[index + 1]!);
+    }
+    phaserStages[phaserStages.length - 1]!.connect(phaserWet).connect(phaserSum);
+    for (const stage of phaserStages) phaserLfo.connect(phaserDepth).connect(stage.frequency);
+
+    phaserSum.connect(driveDry).connect(driveSum);
+    phaserSum.connect(drivePre).connect(driveShaper).connect(driveWet).connect(driveSum);
+
+    driveSum.connect(crushDry).connect(crushSum);
+    driveSum.connect(crushShaper).connect(crushWet).connect(crushSum);
+
+    crushSum.connect(sweepFilter);
+    sweepLfo.connect(sweepDepth).connect(sweepFilter.frequency);
+    sweepFilter.connect(rumbleFilter);
+    sweepFilter.connect(masterReverbSend).connect(reverb);
+    sweepFilter.connect(masterEchoSend).connect(fxDelay);
+    flangerLfo.start();
+    sweepLfo.start();
+    phaserLfo.start();
+
+    rumbleFilter.connect(compressor);
     fxDelay.connect(fxFeedback).connect(fxDelay);
-    fxDelay.connect(fxWet).connect(compressor);
-    reverb.connect(reverbWet).connect(compressor);
+    fxDelay.connect(fxWet).connect(rumbleFilter);
+    reverb.connect(reverbWet).connect(rumbleFilter);
     for (const deck of ["main", "sequence", "vocal"] as const) {
       const gain = context.createGain();
       const control = this.realtimeDeckControls[deck];
@@ -269,13 +495,38 @@ export class AudioEngine {
       gain.connect(masterGain);
       this.realtimeDecks.set(deck, { gain, streamTime: 0 });
     }
-    compressor.connect(masterAnalyser);
+    compressor.connect(airShelf);
+    airShelf.connect(limiter);
+    limiter.connect(masterAnalyser);
     masterAnalyser.connect(context.destination);
     masterAnalyser.connect(captureDestination);
 
     this.context = context;
     this.masterGain = masterGain;
     this.compressor = compressor;
+    this.masterLimiter = limiter;
+    this.flangerWet = flangerWet;
+    this.flangerFeedback = flangerFeedback;
+    this.flangerDepth = flangerDepth;
+    this.flangerLfo = flangerLfo;
+    this.driveShaper = driveShaper;
+    this.crushShaper = crushShaper;
+    this.sweepFilter = sweepFilter;
+    this.sweepDepth = sweepDepth;
+    this.sweepLfo = sweepLfo;
+    this.masterReverbSend = masterReverbSend;
+    this.masterEchoSend = masterEchoSend;
+    this.phaserWet = phaserWet;
+    this.phaserDry = phaserDry;
+    this.phaserDepth = phaserDepth;
+    this.phaserLfo = phaserLfo;
+    this.phaserStages = phaserStages;
+    this.driveDry = driveDry;
+    this.driveWet = driveWet;
+    this.drivePre = drivePre;
+    this.crushDry = crushDry;
+    this.crushWet = crushWet;
+    this.applyMasterEffects();
     this.fxDelay = fxDelay;
     this.fxFeedback = fxFeedback;
     this.fxWet = fxWet;
@@ -875,6 +1126,209 @@ export class AudioEngine {
       else track.gain.gain.setTargetAtTime(gain, now, 0.012);
     }
     if (shouldEmit) this.emit();
+  }
+
+  setMasterEffect(effect: keyof MasterEffectsState, amount: number): void {
+    this.masterEffects = { ...this.masterEffects, [effect]: clamp(amount, 0, 1) };
+    this.applyMasterEffects();
+  }
+
+  getMasterEffects(): MasterEffectsState {
+    return { ...this.masterEffects };
+  }
+
+  setMasterEffectParam(param: keyof MasterEffectParams, value: number): void {
+    const bounded = clamp(value, 0, 1);
+    this.masterEffectParams = { ...this.masterEffectParams, [param]: bounded };
+    if (param === "driveEdge" && this.driveShaper) this.driveShaper.curve = buildSoftClipCurve(bounded);
+    if (param === "crushBits" && this.crushShaper) this.crushShaper.curve = buildQuantizeCurve(bounded);
+    this.applyMasterEffects();
+  }
+
+  getMasterEffectParams(): MasterEffectParams {
+    return { ...this.masterEffectParams };
+  }
+
+  setSfxLevel(level: number): void {
+    this.sfxLevel = clamp(level, 0, 1);
+  }
+
+  getSfxLevel(): number {
+    return this.sfxLevel;
+  }
+
+  async playSfx(kind: SfxKind): Promise<void> {
+    await this.initialize();
+    const context = this.requireContext();
+    const master = this.masterGain;
+    if (!master) return;
+    const now = context.currentTime + 0.02;
+    const out = context.createGain();
+    out.connect(master);
+    const envelope = (basePeak: number, attack: number, hold: number, release: number) => {
+      const peak = Math.max(0.0002, basePeak * this.sfxLevel * this.sfxLevel * 1.6);
+      out.gain.setValueAtTime(0.0001, now);
+      out.gain.exponentialRampToValueAtTime(peak, now + Math.max(0.005, attack));
+      out.gain.setValueAtTime(peak, now + attack + hold);
+      out.gain.exponentialRampToValueAtTime(0.0001, now + attack + hold + release);
+    };
+    const noiseSource = (seconds: number) => {
+      const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * seconds), context.sampleRate);
+      const data = buffer.getChannelData(0);
+      let state = 0x9e3779b9 ^ Math.floor(seconds * 1_000);
+      for (let index = 0; index < data.length; index += 1) {
+        state = Math.imul(state ^ (state >>> 15), 1 | state);
+        data[index] = (((state ^ (state >>> 14)) >>> 0) / 4294967296) * 2 - 1;
+      }
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      return source;
+    };
+    const stopAll = (nodes: Array<OscillatorNode | AudioBufferSourceNode>, seconds: number) => {
+      for (const node of nodes) {
+        node.start(now);
+        node.stop(now + seconds);
+      }
+      window.setTimeout(() => out.disconnect(), (seconds + 1.2) * 1_000);
+    };
+
+    if (kind === "siren") {
+      const oscillators = [context.createOscillator(), context.createOscillator()];
+      const lfo = context.createOscillator();
+      const lfoDepth = context.createGain();
+      lfo.type = "triangle";
+      lfo.frequency.value = 3.4;
+      lfoDepth.gain.value = 320;
+      for (const [index, oscillator] of oscillators.entries()) {
+        oscillator.type = "sawtooth";
+        oscillator.frequency.value = 880 + index * 6;
+        lfo.connect(lfoDepth).connect(oscillator.frequency);
+        oscillator.connect(out);
+      }
+      envelope(0.34, 0.03, 1.7, 0.5);
+      stopAll([...oscillators, lfo], 2.4);
+    } else if (kind === "airhorn") {
+      const oscillators = [0, 1, 2].map(() => context.createOscillator());
+      for (const [index, oscillator] of oscillators.entries()) {
+        oscillator.type = "sawtooth";
+        oscillator.frequency.setValueAtTime(508 + index * 5, now);
+        oscillator.frequency.exponentialRampToValueAtTime(415 + index * 4, now + 0.14);
+        oscillator.connect(out);
+      }
+      envelope(0.4, 0.01, 0.75, 0.35);
+      stopAll(oscillators, 1.3);
+    } else if (kind === "riser") {
+      const noise = noiseSource(2.2);
+      const filter = context.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.Q.value = 1.4;
+      filter.frequency.setValueAtTime(220, now);
+      filter.frequency.exponentialRampToValueAtTime(9_500, now + 2.1);
+      noise.connect(filter).connect(out);
+      envelope(0.42, 0.4, 1.5, 0.25);
+      stopAll([noise], 2.25);
+    } else if (kind === "impact") {
+      const sub = context.createOscillator();
+      sub.type = "sine";
+      sub.frequency.setValueAtTime(72, now);
+      sub.frequency.exponentialRampToValueAtTime(28, now + 0.9);
+      sub.connect(out);
+      const burst = noiseSource(0.24);
+      const burstFilter = context.createBiquadFilter();
+      burstFilter.type = "lowpass";
+      burstFilter.frequency.value = 2_400;
+      burst.connect(burstFilter).connect(out);
+      envelope(0.85, 0.005, 0.12, 1);
+      stopAll([sub, burst], 1.25);
+    } else {
+      const oscillator = context.createOscillator();
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(2_400, now);
+      oscillator.frequency.exponentialRampToValueAtTime(160, now + 0.34);
+      oscillator.connect(out);
+      envelope(0.3, 0.005, 0.08, 0.3);
+      stopAll([oscillator], 0.5);
+    }
+  }
+
+  async loadPadLoop(slot: number, data: ArrayBuffer, fileName: string): Promise<void> {
+    await this.initialize();
+    const context = this.requireContext();
+    const buffer = await context.decodeAudioData(data.slice(0));
+    this.stopPadLoop(slot);
+    this.padLoops.set(slot, { buffer, name: fileName, playing: false });
+  }
+
+  togglePadLoop(slot: number): boolean {
+    const pad = this.padLoops.get(slot);
+    const context = this.context;
+    const master = this.masterGain;
+    if (!pad?.buffer || !context || !master) return false;
+    if (pad.playing) {
+      this.stopPadLoop(slot);
+      return false;
+    }
+    const source = context.createBufferSource();
+    source.buffer = pad.buffer;
+    source.loop = true;
+    const gain = context.createGain();
+    gain.gain.value = 0.72;
+    source.connect(gain).connect(master);
+    const startsAt = this.playing ? this.nextBarTime() : context.currentTime + MIN_SCHEDULE_LEAD_SECONDS;
+    source.start(startsAt);
+    pad.source = source;
+    pad.gain = gain;
+    pad.playing = true;
+    return true;
+  }
+
+  stopPadLoop(slot: number): void {
+    const pad = this.padLoops.get(slot);
+    if (!pad) return;
+    try {
+      pad.source?.stop();
+    } catch {
+      // The pad source may already have ended.
+    }
+    pad.gain?.disconnect();
+    pad.source = undefined;
+    pad.gain = undefined;
+    pad.playing = false;
+  }
+
+  getPadLoops(): Array<{ slot: number; name?: string; playing: boolean }> {
+    return [0, 1, 2, 3].map((slot) => {
+      const pad = this.padLoops.get(slot);
+      return { slot, name: pad?.name, playing: pad?.playing ?? false };
+    });
+  }
+
+  private applyMasterEffects(): void {
+    const now = this.context?.currentTime ?? 0;
+    const smooth = (param: AudioParam | undefined, value: number) => param?.setTargetAtTime(value, now, 0.06);
+    const { flanger, sweep, reverb, echo, drive, crush, phaser } = this.masterEffects;
+    const params = this.masterEffectParams;
+    smooth(this.flangerWet?.gain, flanger * 0.85);
+    smooth(this.flangerFeedback?.gain, flanger * (0.15 + params.flangerFeedback * 0.7));
+    smooth(this.flangerDepth?.gain, flanger * (0.0008 + params.flangerDepth * 0.0035));
+    smooth(this.flangerLfo?.frequency, 0.05 + params.flangerRate * 1.15);
+    smooth(this.phaserDry?.gain, 1 - phaser * 0.5);
+    smooth(this.phaserWet?.gain, phaser * 0.95);
+    smooth(this.phaserDepth?.gain, phaser * (120 + params.phaserDepth * 680));
+    smooth(this.phaserLfo?.frequency, 0.05 + params.phaserRate * 1.4);
+    smooth(this.driveDry?.gain, 1 - drive);
+    smooth(this.drivePre?.gain, 1 + drive * 14);
+    smooth(this.driveWet?.gain, drive * (0.9 - drive * 0.35));
+    smooth(this.crushDry?.gain, 1 - crush);
+    smooth(this.crushWet?.gain, crush * 0.9);
+    smooth(this.sweepFilter?.frequency, 18_500 - sweep * 16_800);
+    smooth(this.sweepFilter?.Q, 0.9 + sweep * (0.5 + params.sweepReso * 7));
+    smooth(this.sweepDepth?.gain, sweep * 1_350);
+    smooth(this.sweepLfo?.frequency, 0.05 + params.sweepRate * 0.95);
+    // The shared reverb/echo returns are attenuated (0.18 / 0.24), so the master
+    // sends run hot to land at a clearly audible wet level at full amount.
+    smooth(this.masterReverbSend?.gain, reverb * 2.2);
+    smooth(this.masterEchoSend?.gain, echo * 1.8);
   }
 
   setBpm(value: number): void {

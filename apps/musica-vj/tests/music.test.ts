@@ -81,7 +81,7 @@ describe("music invariants", () => {
   });
 
   it("ships multiple complete performance templates", () => {
-    expect(VISUAL_SCENES).toHaveLength(8);
+    expect(VISUAL_SCENES).toHaveLength(9);
     expect(PERFORMANCE_TEMPLATES.length).toBeGreaterThanOrEqual(10);
     for (const template of PERFORMANCE_TEMPLATES) {
       expect(template.bpm).toBeGreaterThanOrEqual(60);

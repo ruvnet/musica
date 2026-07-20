@@ -11,13 +11,17 @@ import {
   createLyriaSequenceConfig,
   createLyriaSequencePrompts,
   createLyriaVocalPrompts,
+  createCustomLyriaStyle,
   createLyriaRealtimeRequestForTemplate,
   createLyriaRealtimeRequestFromStyle,
+  loadCustomLyriaStyles,
+  lyriaRealtimeStyleById,
   lyriaRealtimeStyleForTemplate,
+  registerCustomLyriaStyles,
   type LyriaRealtimeConfig,
 } from "../src/core/lyriaRealtime";
 import { createEngineSnapshotFromTemplate } from "../src/audio/AudioEngine";
-import { PERFORMANCE_TEMPLATES, performanceTemplateById } from "../src/core/presets";
+import { PERFORMANCE_TEMPLATES, defaultPerformanceTemplate, performanceTemplateById } from "../src/core/presets";
 
 function validConfig(config: LyriaRealtimeConfig): boolean {
   return (
@@ -109,7 +113,7 @@ describe("Lyria RealTime defaults", () => {
   });
 
   it("ships valid style buttons for common musical directions", () => {
-    expect(DEFAULT_LYRIA_REALTIME_STYLE_ID).toBe("house");
+    expect(DEFAULT_LYRIA_REALTIME_STYLE_ID).toBe("rock");
     expect(LYRIA_REALTIME_STYLE_PRESETS.map((preset) => preset.id)).toEqual(
       expect.arrayContaining(["house", "techno", "cinematic", "drum-bass", "hiphop", "funk", "samba", "rock", "jazz", "classical", "ambient"]),
     );
@@ -165,5 +169,63 @@ describe("Lyria RealTime defaults", () => {
       expect(validConfig(request.config)).toBe(true);
     }
     expect(lyriaRealtimeStyleForTemplate(performanceTemplateById("afro-cosmic-house")).id).toBe("house");
+    expect(lyriaRealtimeStyleForTemplate(defaultPerformanceTemplate()).id).toBe("rock");
+  });
+
+  it("creates, registers, and resolves user custom styles", () => {
+    const base = LYRIA_REALTIME_STYLE_PRESETS[0];
+    const custom = createCustomLyriaStyle("  Midnight Chant  ", base, [base.id, "custom-midnight-chant"]);
+    expect(custom.id).toBe("custom-midnight-chant-2");
+    expect(custom.label).toBe("Midnight Chant");
+    expect(custom.prompts).toHaveLength(base.prompts.length);
+    expect(custom.prompts[0]).not.toBe(base.prompts[0]);
+
+    registerCustomLyriaStyles([custom]);
+    expect(lyriaRealtimeStyleById(custom.id).label).toBe("Midnight Chant");
+    registerCustomLyriaStyles([]);
+    expect(lyriaRealtimeStyleById(custom.id).id).toBe(DEFAULT_LYRIA_REALTIME_STYLE_ID);
+  });
+
+  it("round-trips custom styles through serialization and rejects malformed entries", () => {
+    const base = LYRIA_REALTIME_STYLE_PRESETS[0];
+    const custom = createCustomLyriaStyle("Vapor", base, []);
+    const restored = loadCustomLyriaStyles(JSON.stringify([custom]));
+    expect(restored).toHaveLength(1);
+    expect(restored[0].id).toBe(custom.id);
+
+    expect(loadCustomLyriaStyles(undefined)).toEqual([]);
+    expect(loadCustomLyriaStyles("not json")).toEqual([]);
+    expect(loadCustomLyriaStyles(JSON.stringify({ id: "custom-x" }))).toEqual([]);
+    expect(loadCustomLyriaStyles(JSON.stringify([{ id: "rock", label: "spoof", prompts: [], config: {} }]))).toEqual([]);
+    expect(loadCustomLyriaStyles(JSON.stringify([{ id: "custom-bad", label: "x", prompts: [{ text: 1, weight: "y" }], config: {} }]))).toEqual([]);
+  });
+});
+
+describe("workspace settings", () => {
+  it("normalizes, serializes, and round-trips workspace settings", async () => {
+    const { normalizeWorkspaceSettings, serializeWorkspaceSettings } = await import("../src/core/settingsStore");
+    expect(normalizeWorkspaceSettings(undefined)).toBeUndefined();
+    expect(normalizeWorkspaceSettings({ version: 2 })).toBeUndefined();
+
+    const normalized = normalizeWorkspaceSettings({
+      version: 1,
+      masterEffects: { drive: 3, reverb: 0.4 },
+      fxLocks: { drive: true, reverb: "yes" },
+      sfxLevel: -2,
+      onboarding: { styleId: "lofi" },
+    });
+    expect(normalized).toBeDefined();
+    expect(normalized!.masterEffects.drive).toBe(1);
+    expect(normalized!.masterEffects.reverb).toBe(0.4);
+    expect(normalized!.masterEffects.flanger).toBe(0);
+    expect(normalized!.fxLocks.drive).toBe(true);
+    expect(normalized!.fxLocks.reverb).toBe(false);
+    expect(normalized!.sfxLevel).toBe(0);
+    expect(normalized!.onboarding.styleId).toBe("lofi");
+    expect(normalized!.onboarding.visualScene).toBe("oscilloscope");
+
+    const roundTripped = normalizeWorkspaceSettings(JSON.parse(serializeWorkspaceSettings(normalized!)));
+    expect(roundTripped!.masterEffects).toEqual(normalized!.masterEffects);
+    expect(roundTripped!.savedAt).toBeTruthy();
   });
 });

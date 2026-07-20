@@ -47,6 +47,11 @@ describe("social export contracts", () => {
     expect(chooseRecordingMime((mime) => mime === "video/webm;codecs=vp9,opus")).toBe("video/webm;codecs=vp9,opus");
   });
 
+  it("prefers AAC audio-only MP4 and falls back to Opus WebM", () => {
+    expect(chooseRecordingMime((mime) => mime.includes("mp4"), "audio-only")).toBe("audio/mp4;codecs=mp4a.40.2");
+    expect(chooseRecordingMime((mime) => mime === "audio/webm;codecs=opus", "audio-only")).toBe("audio/webm;codecs=opus");
+  });
+
   it("reports unavailable when neither MP4 nor WebM is supported", () => {
     expect(chooseRecordingMime(() => false)).toBe("");
   });
@@ -72,6 +77,15 @@ describe("social export contracts", () => {
     expect(() => inspectRecordingContainer(bytes, "video/mp4")).toThrow(/H\.264 video and AAC audio/);
   });
 
+  it("validates an AAC-only MP4 without requiring a video sample entry", () => {
+    const bytes = mp4Fixture(["mp4a"]);
+    expect(inspectRecordingContainer(bytes, "audio/mp4;codecs=mp4a.40.2", "audio-only")).toEqual({
+      container: "mp4",
+      videoCodec: "none",
+      audioCodec: "aac",
+    });
+  });
+
   it("does not trust codec text outside an stsd sample entry", () => {
     const bytes = mp4Fixture([], isoBox("free", new TextEncoder().encode("avc1 mp4a")));
     expect(() => inspectRecordingContainer(bytes, "video/mp4")).toThrow(/H\.264 video and AAC audio/);
@@ -82,6 +96,15 @@ describe("social export contracts", () => {
     expect(inspectRecordingContainer(bytes, "video/webm;codecs=vp9,opus")).toEqual({
       container: "webm",
       videoCodec: "vp9",
+      audioCodec: "opus",
+    });
+  });
+
+  it("validates an Opus-only WebM without requiring a video codec", () => {
+    const bytes = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...new TextEncoder().encode("A_OPUS")]);
+    expect(inspectRecordingContainer(bytes, "audio/webm;codecs=opus", "audio-only")).toEqual({
+      container: "webm",
+      videoCodec: "none",
       audioCodec: "opus",
     });
   });

@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeSpectralFlux,
+  followEnvelope,
+  mapFeedbackResponse,
   frequencyBandEnergy,
   mapVisualAudioResponse,
   normalizeAnimationStyle,
   normalizeArtDirection,
   normalizeVisualColorControls,
   normalizeTemporalControls,
+  SCENE_CHARACTERS,
+  sceneCharacterById,
   sceneForMeasuredSection,
   VISUAL_ANIMATION_STYLES,
 } from "../src/visual/VisualEngine";
+import { VISUAL_SCENES } from "../src/core/presets";
 
 describe("measured section scene mapping", () => {
   it("maps locally detected sections to deterministic scene transitions", () => {
@@ -98,6 +104,55 @@ describe("measured section scene mapping", () => {
       camera: 0.25,
       phase: 1,
     });
+  });
+
+  it("detects onsets through positive spectral flux only", () => {
+    const previous = new Uint8Array([100, 100, 100, 100]);
+    const rising = new Uint8Array([180, 160, 140, 120]);
+    const falling = new Uint8Array([20, 40, 60, 80]);
+    expect(computeSpectralFlux(previous, previous)).toBe(0);
+    expect(computeSpectralFlux(rising, previous)).toBeGreaterThan(0);
+    expect(computeSpectralFlux(falling, previous)).toBe(0);
+    expect(computeSpectralFlux(new Uint8Array(0), new Uint8Array(0))).toBe(0);
+    expect(computeSpectralFlux(rising, new Uint8Array(2))).toBe(0);
+    expect(computeSpectralFlux(new Uint8Array(64).fill(255), new Uint8Array(64))).toBe(1);
+  });
+
+  it("follows energy with a fast attack and a slower release", () => {
+    const attacked = followEnvelope(0, 1, 0.6, 0.14);
+    expect(attacked).toBeCloseTo(0.6, 8);
+    const released = followEnvelope(attacked, 0, 0.6, 0.14);
+    expect(released).toBeGreaterThan(attacked - attacked * 0.2);
+    expect(released).toBeLessThan(attacked);
+    expect(followEnvelope(0.5, 1, 4, 0.1)).toBe(1);
+    expect(followEnvelope(0.5, 0, 0.6, -3)).toBe(0.5);
+  });
+
+  it("maps trail, motion, and beats into a bounded feedback echo", () => {
+    const off = mapFeedbackResponse(0, 0, 0, 0.5);
+    expect(off.damp).toBe(0);
+    expect(off.zoom).toBeGreaterThan(1);
+    expect(off.zoom).toBeLessThan(1.02);
+    expect(off.rotate).toBe(0);
+    const long = mapFeedbackResponse(1, 1, 1, 1);
+    expect(long.damp).toBeGreaterThan(0.9);
+    expect(long.damp).toBeLessThan(1);
+    expect(long.zoom).toBeGreaterThan(off.zoom);
+    expect(long.rotate).toBeGreaterThan(0);
+    const hostile = mapFeedbackResponse(9, -3, Number.POSITIVE_INFINITY, -1);
+    expect(hostile.damp).toBeLessThan(1);
+    expect(hostile.zoom).toBeLessThan(1.05);
+    expect(Math.abs(hostile.rotate)).toBeLessThan(0.02);
+  });
+
+  it("gives every visual scene a distinct rendering character", () => {
+    for (const scene of VISUAL_SCENES) expect(SCENE_CHARACTERS[scene.id]).toBeDefined();
+    expect(sceneCharacterById("lasergrid").travel).toBeGreaterThan(sceneCharacterById("aurora").travel);
+    expect(sceneCharacterById("aurora").haze).toBeGreaterThan(sceneCharacterById("lasergrid").haze);
+    expect(sceneCharacterById("monolith").terrainAmp).toBeLessThan(sceneCharacterById("terrain").terrainAmp);
+    expect(sceneCharacterById("unknown-scene")).toBe(SCENE_CHARACTERS.bloom);
+    const signatures = new Set(VISUAL_SCENES.map((scene) => JSON.stringify(SCENE_CHARACTERS[scene.id])));
+    expect(signatures.size).toBe(VISUAL_SCENES.length);
   });
 
   it("normalizes visual animation styles to supported options", () => {

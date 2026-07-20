@@ -1,0 +1,19 @@
+# Keep the Tauri dev watcher from restarting the app when agent tooling
+# or generated assets change — only Rust/source changes should trigger it.
+.agents/
+.claude/
+.claude-flow/
+.swarm/
+.git/
+agentdb.rvf
+agentdb.rvf.lock
+ruvector.db
+skills-lock.json
+assets/
+docs/
+*.png
+*.log
+node_modules/
+target/
+apps/musica-vj/public/previews/
+apps/musica-vj/dist/
