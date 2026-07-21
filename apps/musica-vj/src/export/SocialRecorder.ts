@@ -1,5 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { AudioEngine } from "../audio/AudioEngine";
+import { isMacWebview } from "../core/platform";
 import type { SocialPreset } from "../core/types";
 import type { VisualEngine } from "../visual/VisualEngine";
 
@@ -239,8 +240,7 @@ export class SocialRecorder {
     // (WebKitGTK) provide VP8/VP9 WebM via MediaRecorder, which is a fully
     // supported export container here — so accept it rather than blocking
     // capture entirely (the "no Save button" symptom on Windows/Linux).
-    const isMacWebview = typeof navigator !== "undefined" && /Macintosh|Mac OS X/i.test(navigator.userAgent);
-    if (mode === "video-audio" && isTauri() && isMacWebview && !mimeType.startsWith("video/mp4")) {
+    if (mode === "video-audio" && isTauri() && isMacWebview() && !mimeType.startsWith("video/mp4")) {
       throw new Error("This macOS webview cannot provide the required H.264 and AAC MP4 export");
     }
     this.state = "starting";

@@ -196,22 +196,18 @@ fn open_in_system_browser(url: &str) -> Result<(), String> {
     if parsed.scheme() != "https" {
         return Err("Authorization URL must use HTTPS".into());
     }
-    #[cfg(target_os = "macos")]
-    let command = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(target_os = "linux")]
-    let command = std::process::Command::new("xdg-open").arg(url).spawn();
-    // `cmd /C start "" <url>` breaks on OAuth URLs: cmd.exe treats the `&`
-    // between query parameters as a command separator, truncating the URL at
-    // the first `&` so client_id (and everything after) never reaches the
-    // browser — the "Missing client_id parameter" failure. rundll32's
-    // FileProtocolHandler receives the URL as a single argument with no shell
-    // parsing, so ampersands survive intact.
-    #[cfg(target_os = "windows")]
-    let command = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-    command
-        .map(|_| ())
+    // Previously shelled out per platform: `open` on macOS, `xdg-open` on
+    // Linux, and `rundll32 url.dll,FileProtocolHandler` on Windows. (Not
+    // `cmd /C start` — cmd.exe treats the `&` between query parameters as a
+    // command separator and truncates the URL before client_id, which was the
+    // "Missing client_id parameter" failure.)
+    //
+    // The opener plugin does the same job through NSWorkspace / ShellExecute
+    // rather than a child process. That matters on macOS: the App Sandbox
+    // blocks spawning /usr/bin/open outright, while handing a URL to
+    // NSWorkspace is permitted, so this is the only variant that survives a
+    // Mac App Store build. It also keeps the ampersand fix on Windows.
+    tauri_plugin_opener::open_url(url, None::<&str>)
         .map_err(|_| "Could not open the system browser".into())
 }
 

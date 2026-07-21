@@ -5,6 +5,7 @@ mod lyria_provider;
 mod lyria_realtime_provider;
 mod meta_llm_provider;
 mod restream_provider;
+mod sandbox;
 
 use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,
@@ -94,8 +95,12 @@ fn load_provider_config(path: &std::path::Path) -> bool {
 /// configurable without a shell. Precedence (first value for a key wins, and
 /// real process env always beats all of them):
 ///   1. `MUSICA_ENV_FILE` — explicit path override
-///   2. `providers.env` next to the executable — drop-in-beside-the-app
-///   3. `<app config dir>/providers.env` — the canonical writable location
+///   2. `<app config dir>/providers.env` — the canonical writable location
+///
+/// A `providers.env` sitting next to the executable used to be honored too, but
+/// that path is inside the `.app` bundle: it is read-only under the App Sandbox,
+/// and writing there invalidates the code signature. Use `MUSICA_ENV_FILE` for
+/// a drop-in-beside-the-app workflow instead.
 ///
 /// On first run, creates the config dir and writes a self-documenting
 /// `providers.env.example` there so the user can see exactly where and what to
@@ -103,11 +108,6 @@ fn load_provider_config(path: &std::path::Path) -> bool {
 fn load_all_provider_config(config_dir: Option<std::path::PathBuf>) {
     if let Some(path) = std::env::var_os("MUSICA_ENV_FILE") {
         load_provider_config(std::path::Path::new(&path));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            load_provider_config(&dir.join("providers.env"));
-        }
     }
     if let Some(dir) = config_dir {
         let loaded = load_provider_config(&dir.join("providers.env"));

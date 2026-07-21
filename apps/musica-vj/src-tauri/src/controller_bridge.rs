@@ -154,12 +154,11 @@ enum BridgeError {
 mod platform {
     use super::*;
     use std::{
-        env,
         fs::{self, File, OpenOptions},
         io::{Read, Write},
         os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream},
-        path::{Path, PathBuf},
+        path::Path,
         sync::Arc,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -175,19 +174,32 @@ mod platform {
 
     const READ_TIMEOUT: Duration = Duration::from_millis(150);
 
-    pub(super) fn start(app: &AppHandle) -> Result<(), BridgeError> {
-        let user = env::var("USER").map_err(|_| BridgeError::Unavailable("USER is not set"))?;
-        if !valid_user(&user) {
-            return Err(BridgeError::Unavailable("USER is invalid"));
-        }
+    /// `sockaddr_un.sun_path` is `char[104]` on macOS (`sys/un.h`), and the
+    /// stored path is NUL-terminated, so 103 bytes is the real ceiling.
+    const MAX_SOCKET_PATH_BYTES: usize = 103;
 
+    pub(super) fn start(app: &AppHandle) -> Result<(), BridgeError> {
         let app_data_dir = app
             .path()
             .app_data_dir()
             .map_err(|_| BridgeError::Unavailable("application data path is unavailable"))?;
         let token_path = app_data_dir.join("controller.token");
+        // Creates app_data_dir as a side effect, so the bind below has a parent.
         let token = Arc::<[u8]>::from(load_or_create_token(&token_path)?);
-        let socket_path = PathBuf::from(format!("/tmp/musica-vj-{user}.sock"));
+        // Previously /tmp/musica-vj-$USER.sock. /tmp is world-traversable, the
+        // name was guessable, and it sits outside the App Sandbox container.
+        // The data dir is already per-user, so the socket no longer needs to
+        // encode $USER to stay unique.
+        let socket_path = app_data_dir.join("controller.sock");
+        if socket_path.as_os_str().as_encoded_bytes().len() > MAX_SOCKET_PATH_BYTES {
+            // Under the App Sandbox the container inserts
+            // Library/Containers/<bundle-id>/Data/ and this always trips, which
+            // is why the bridge is not shippable to the Mac App Store as-is.
+            // Fail with a legible reason rather than a bare ENAMETOOLONG.
+            return Err(BridgeError::Unavailable(
+                "controller socket path exceeds the 103-byte sun_path limit",
+            ));
+        }
         remove_stale_socket(&socket_path)?;
         let listener = StdUnixListener::bind(&socket_path)?;
         listener.set_nonblocking(true)?;
@@ -254,15 +266,6 @@ mod platform {
         )
         .map_err(|_| BridgeError::Unavailable("event delivery failed"))?;
         Ok(())
-    }
-
-    fn valid_user(user: &str) -> bool {
-        !user.is_empty()
-            && user.len() <= 64
-            && !matches!(user, "." | "..")
-            && user
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
     }
 
     fn load_or_create_token(path: &Path) -> Result<Vec<u8>, BridgeError> {
