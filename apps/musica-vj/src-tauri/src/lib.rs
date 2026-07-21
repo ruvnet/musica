@@ -5,6 +5,7 @@ mod lyria_provider;
 mod lyria_realtime_provider;
 mod meta_llm_provider;
 mod restream_provider;
+mod sandbox;
 
 use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,

@@ -1559,6 +1559,15 @@ fn load_auth_from_env() -> Result<LyriaAuth, ProviderError> {
         .ok()
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("gcloud"))
     {
+        // Fail at configuration time rather than letting the token mint fail
+        // later as a bare ProviderFailure::Authentication, which reads as a
+        // credential problem and sends the user off debugging their gcloud
+        // login instead of the sandbox.
+        if crate::sandbox::is_sandboxed() {
+            return Err(ProviderError::Configuration(
+                "MUSICA_GCP_AUTH=gcloud cannot be used in the sandboxed App Store build; sign in with Cognitum One or set GEMINI_API_KEY",
+            ));
+        }
         return Ok(LyriaAuth::Gcloud);
     }
     Err(ProviderError::Configuration(
