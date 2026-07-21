@@ -1,6 +1,6 @@
 [package]
 name = "musica-vj"
-version = "0.8.0"
+version = "0.8.1"
 description = "Real-time music synthesis and visual performance studio"
 authors = ["Musica contributors"]
 edition = "2021"
