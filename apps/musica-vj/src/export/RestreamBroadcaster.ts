@@ -109,13 +109,22 @@ export class RestreamBroadcaster {
         audioBitsPerSecond: 192_000,
       });
       recorder.ondataavailable = (event) => {
-        if (event.data.size === 0) return;
+        if (event.data.size === 0 || !this.recorder) return;
         this.pushChain = this.pushChain
           .then(async () => {
+            if (!this.recorder) return;
             const chunk = new Uint8Array(await event.data.arrayBuffer());
             await invoke<void>("restream_push_chunk", chunk);
           })
-          .catch((error) => this.emitError(error));
+          .catch((error) => {
+            this.emitError(error);
+            // The native encoder died (e.g. the RTMPS handshake failed) — force
+            // the broadcast down instead of retrying every second forever,
+            // which would just keep re-querying status and never recover.
+            // (Not this.stop(): that awaits pushChain, and we're running
+            // inside pushChain's own handler — awaiting it here would deadlock.)
+            void this.forceStop();
+          });
       };
       recorder.onerror = (event) => this.emitError(event.error ?? new Error("Live encoder capture failed"));
       recorder.start(1_000);
@@ -146,6 +155,12 @@ export class RestreamBroadcaster {
       : { available: false, active: false, reason: "Desktop app required" };
     this.cleanup();
     return status;
+  }
+
+  private async forceStop(): Promise<void> {
+    if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
+    await invoke<RestreamStatus>("restream_stop").catch(() => undefined);
+    this.cleanup();
   }
 
   async dispose(): Promise<void> {

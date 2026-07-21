@@ -7,6 +7,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use keyring::Entry;
 use rand::RngCore;
 use reqwest::{redirect::Policy, Client, Url};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,16 @@ pub(crate) struct CognitumProvider {
     state: Mutex<AuthState>,
 }
 
+impl CognitumProvider {
+    /// Restores a persisted session (if the OS keychain has one) so sign-in
+    /// survives an app restart, instead of always starting signed out.
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Mutex::new(load_session().unwrap_or_default()),
+        }
+    }
+}
+
 #[derive(Default)]
 struct AuthState {
     pending_started_at: Option<Instant>,
@@ -66,6 +77,66 @@ struct AuthState {
     account: Option<String>,
     capabilities: Vec<String>,
     last_error: Option<String>,
+}
+
+const KEYRING_SERVICE: &str = "musica-vj";
+const KEYRING_ACCOUNT: &str = "cognitum-session";
+
+#[derive(Deserialize, Serialize)]
+struct PersistedSession {
+    refresh_token: String,
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
+fn keyring_entry() -> Option<Entry> {
+    Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).ok()
+}
+
+/// Persists (or clears) the refresh token in the OS keychain so sign-in
+/// survives an app restart. Best-effort: a keychain failure must never break
+/// the in-memory session the user already has.
+fn save_session(state: &AuthState) {
+    let Some(entry) = keyring_entry() else {
+        return;
+    };
+    let Some(refresh_token) = state.refresh_token.clone() else {
+        let _ = entry.delete_credential();
+        return;
+    };
+    let persisted = PersistedSession {
+        refresh_token,
+        account: state.account.clone(),
+        capabilities: state.capabilities.clone(),
+    };
+    if let Ok(json) = serde_json::to_string(&persisted) {
+        let _ = entry.set_password(&json);
+    }
+}
+
+fn clear_session() {
+    if let Some(entry) = keyring_entry() {
+        let _ = entry.delete_credential();
+    }
+}
+
+/// Loads a persisted session at startup. The access token is a placeholder
+/// already marked expired, so the first Cognitum call transparently refreshes
+/// it via the stored refresh token rather than trusting a stale value.
+fn load_session() -> Option<AuthState> {
+    let entry = keyring_entry()?;
+    let json = entry.get_password().ok()?;
+    let persisted: PersistedSession = serde_json::from_str(&json).ok()?;
+    Some(AuthState {
+        access_token: Some(String::new()),
+        refresh_token: Some(persisted.refresh_token),
+        expires_at: Some(Instant::now()),
+        account: persisted.account,
+        capabilities: persisted.capabilities,
+        ..AuthState::default()
+    })
 }
 
 #[derive(Serialize)]
@@ -371,6 +442,7 @@ pub(crate) async fn cognitum_lyria_credential(
 pub(crate) fn cognitum_sign_out(provider: State<'_, CognitumProvider>) {
     let mut state = provider.state.lock().expect("cognitum state");
     *state = AuthState::default();
+    clear_session();
 }
 
 #[tauri::command]
@@ -503,6 +575,7 @@ fn store_token_response(
     state.refresh_token = token.refresh_token;
     state.capabilities = capabilities;
     state.last_error = None;
+    save_session(state);
 }
 
 /// Returns a currently valid access token, refreshing when expired. The
@@ -551,6 +624,7 @@ async fn fresh_access_token(provider: &State<'_, CognitumProvider>) -> Result<St
         let mut state = provider.state.lock().expect("cognitum state");
         *state = AuthState::default();
         state.last_error = Some("Cognitum session expired — sign in again".into());
+        clear_session();
         return Err("Cognitum session expired — sign in again".into());
     }
     let token: TokenResponse = read_bounded_json(response).await?;

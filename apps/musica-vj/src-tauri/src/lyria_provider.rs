@@ -1567,8 +1567,10 @@ fn load_auth_from_env() -> Result<LyriaAuth, ProviderError> {
 }
 
 fn gcloud_access_token() -> Result<String, ProviderFailure> {
-    let output = Command::new("gcloud")
-        .args(["auth", "application-default", "print-access-token"])
+    let mut command = Command::new("gcloud");
+    command.args(["auth", "application-default", "print-access-token"]);
+    crate::process_util::hide_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|_| ProviderFailure::Authentication)?;
     if !output.status.success() {

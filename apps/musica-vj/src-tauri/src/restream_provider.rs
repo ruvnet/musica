@@ -1,3 +1,4 @@
+use crate::process_util::hide_console_window;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
@@ -90,10 +91,13 @@ fn validate_stream_key(value: &str) -> Result<String, String> {
 }
 
 fn ffmpeg_version() -> Result<String, String> {
-    let output = Command::new(ffmpeg_binary())
+    let mut command = Command::new(ffmpeg_binary());
+    command
         .arg("-version")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    hide_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|_| "FFmpeg was not found on PATH".to_string())?;
     if !output.status.success() {
@@ -168,7 +172,9 @@ pub(crate) fn restream_start(
     if active.is_some() {
         return Err("A Restream broadcast is already active".to_string());
     }
-    let mut child = Command::new(ffmpeg_binary())
+    let mut command = Command::new(ffmpeg_binary());
+    hide_console_window(&mut command);
+    let mut child = command
         .args([
             "-hide_banner",
             "-loglevel",
@@ -341,7 +347,9 @@ pub(crate) fn transcode_to_mp4(
     let input = std::env::temp_dir().join(format!("musica-transcode-{stamp}.webm"));
     std::fs::write(&input, &bytes).map_err(|error| format!("Could not stage clip: {error}"))?;
 
-    let result = Command::new(ffmpeg_binary())
+    let mut command = Command::new(ffmpeg_binary());
+    hide_console_window(&mut command);
+    let result = command
         .args([
             "-hide_banner",
             "-loglevel",
