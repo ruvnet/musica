@@ -487,8 +487,10 @@ async fn run_stream(
 /// Mints a gcloud application-default access token off the async runtime.
 async fn gcloud_realtime_token() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let output = Command::new("gcloud")
-            .args(["auth", "application-default", "print-access-token"])
+        let mut command = Command::new("gcloud");
+        command.args(["auth", "application-default", "print-access-token"]);
+        crate::process_util::hide_console_window(&mut command);
+        let output = command
             .output()
             .map_err(|_| "gcloud is not available on PATH".to_string())?;
         if !output.status.success() {
