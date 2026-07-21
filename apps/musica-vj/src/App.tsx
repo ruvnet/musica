@@ -95,6 +95,7 @@ import {
   type LyriaDeckControl,
   type LyriaDeckScene,
 } from "./core/lyriaDeckScenes";
+import { supportsDisplayCapture } from "./core/platform";
 import { TRACK_IDS, type ControlMessage, type GenerationTask, type ProviderStatus, type SocialPreset, type TrackId, type VisualColorControls, type VisualSceneId, type VisualTemporalControls } from "./core/types";
 import {
   COGNITUM_CAPABILITY_LABELS,
@@ -547,6 +548,9 @@ export function App() {
   const [captures, setCaptures] = useState<CaptureEntry[]>([]);
   const [restreamStatus, setRestreamStatus] = useState<RestreamStatus>({ available: false, active: false, reason: "Checking FFmpeg" });
   const [restreamSource, setRestreamSource] = useState<RestreamSource>("program");
+  // WKWebView has no getDisplayMedia, so the full-UI source is hidden on macOS
+  // rather than offered and then failing on click. Constant per webview.
+  const displayCaptureAvailable = useMemo(() => supportsDisplayCapture(), []);
   const [restreamIngestUrl, setRestreamIngestUrl] = useState("rtmps://live.restream.io/live");
   const [restreamKey, setRestreamKey] = useState("");
   const [restreamBusy, setRestreamBusy] = useState(false);
@@ -4164,7 +4168,9 @@ export function App() {
                 <header><span><i className={restreamStatus.active ? "online" : ""} /> RESTREAM</span><b>{restreamStatus.active ? "LIVE" : restreamStatus.available ? "READY" : "OFFLINE"}</b></header>
                 <div className="capture-mode-control" role="group" aria-label="Restream source">
                   <button className={restreamSource === "program" ? "active" : ""} onClick={() => setRestreamSource("program")} disabled={restreamStatus.active || restreamBusy}>VISUAL + AUDIO</button>
-                  <button className={restreamSource === "window" ? "active" : ""} onClick={() => setRestreamSource("window")} disabled={restreamStatus.active || restreamBusy}>ENTIRE UI + AUDIO</button>
+                  {displayCaptureAvailable && (
+                    <button className={restreamSource === "window" ? "active" : ""} onClick={() => setRestreamSource("window")} disabled={restreamStatus.active || restreamBusy}>ENTIRE UI + AUDIO</button>
+                  )}
                 </div>
                 <label><span>SERVER</span><input type="url" value={restreamIngestUrl} onChange={(event) => setRestreamIngestUrl(event.target.value)} disabled={restreamStatus.active} spellCheck={false} /></label>
                 <label><span>KEY</span><input type="password" value={restreamKey} onChange={(event) => setRestreamKey(event.target.value)} disabled={restreamStatus.active} placeholder={restreamStatus.active ? "Held by native encoder" : "Restream stream key"} autoComplete="off" /></label>

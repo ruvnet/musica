@@ -1,6 +1,8 @@
 # Musica VJ local controller protocol
 
-The companion opens one fresh Unix stream socket per action, writes one UTF-8 JSON line, and closes the connection. The application listens at `/tmp/musica-vj-${USER}.sock` and owns the socket with mode `0600`.
+The companion opens one fresh Unix stream socket per action, writes one UTF-8 JSON line, and closes the connection. The application listens at `~/Library/Application Support/one.cognitum.musica.vj/controller.sock` and owns the socket with mode `0600`.
+
+The socket sits beside `controller.token` in the application data directory. It previously lived at `/tmp/musica-vj-${USER}.sock`; `/tmp` is world-traversable, the name was guessable, and the path is outside the macOS App Sandbox container. Note that `sockaddr_un.sun_path` is 104 bytes on macOS, so the application refuses to bind a path longer than 103 bytes rather than surfacing a bare `ENAMETOOLONG`.
 
 ```json
 {"v":1,"seq":42,"ts_ms":1721337600123,"action":"visual.intensity.delta","value":-1,"token":"64-lowercase-hex-characters"}

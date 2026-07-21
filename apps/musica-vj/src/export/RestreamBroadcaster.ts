@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AudioEngine } from "../audio/AudioEngine";
+import { supportsDisplayCapture } from "../core/platform";
 import type { VisualEngine } from "../visual/VisualEngine";
 
 export type RestreamSource = "program" | "window";
@@ -78,7 +79,7 @@ export class RestreamBroadcaster {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       sourceStream = this.canvas.captureStream(config.fps);
     } else {
-      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Window capture is unavailable in this webview");
+      if (!supportsDisplayCapture()) throw new Error("Window capture is unavailable in this webview");
       sourceStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: config.fps, max: config.fps } },
         audio: false,

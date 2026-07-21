@@ -1,6 +1,5 @@
 using System.Net.Sockets;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace MusicaVj.Logitech.Core;
@@ -9,10 +8,6 @@ public sealed class UnixSocketDispatcher : IDisposable
 {
     public const int DefaultQueueCapacity = 64;
     public const int DefaultOperationTimeoutMilliseconds = 100;
-
-    private static readonly Regex SafeUserName = new(
-        "^[A-Za-z0-9._-]{1,64}$",
-        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
     private readonly BoundedActionQueue<PendingAction> _queue;
     private readonly TokenFileProvider _tokenProvider;
@@ -108,23 +103,16 @@ public sealed class UnixSocketDispatcher : IDisposable
         }
     }
 
-    public static string GetDefaultSocketPath()
-    {
-        var user = Environment.GetEnvironmentVariable("USER");
-        if (!SafeUserName.IsMatch(user ?? string.Empty))
-        {
-            user = Environment.UserName;
-        }
+    // The socket used to live at /tmp/musica-vj-$USER.sock. /tmp is
+    // world-traversable and the name was guessable, so it now sits beside the
+    // token in the application data directory, which is already per-user.
+    public static string GetDefaultSocketPath() =>
+        Path.Combine(GetApplicationDataDirectory(), "controller.sock");
 
-        if (!SafeUserName.IsMatch(user ?? string.Empty))
-        {
-            throw new InvalidOperationException("Cannot derive a safe user name for the controller socket.");
-        }
+    public static string GetDefaultTokenPath() =>
+        Path.Combine(GetApplicationDataDirectory(), "controller.token");
 
-        return $"/tmp/musica-vj-{user}.sock";
-    }
-
-    public static string GetDefaultTokenPath()
+    private static string GetApplicationDataDirectory()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrWhiteSpace(home))
@@ -136,8 +124,7 @@ public sealed class UnixSocketDispatcher : IDisposable
             home,
             "Library",
             "Application Support",
-            "one.cognitum.musica.vj",
-            "controller.token");
+            "one.cognitum.musica.vj");
     }
 
     private static long CreateSequenceBase()
