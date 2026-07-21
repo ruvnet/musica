@@ -4,6 +4,7 @@ mod creative_provider;
 mod lyria_provider;
 mod lyria_realtime_provider;
 mod meta_llm_provider;
+mod process_util;
 mod restream_provider;
 
 use cognitum_provider::{
@@ -144,7 +145,7 @@ pub fn run() {
                 let _ = window.set_title(&format!("Musica VJ v{}", env!("CARGO_PKG_VERSION")));
             }
             let asset_root = app.path().app_data_dir()?;
-            app.manage(CognitumProvider::default());
+            app.manage(CognitumProvider::new());
             app.manage(CreativeProvider::from_env(asset_root));
             app.manage(LyriaRealtimeProvider::from_env());
             app.manage(MetaLlmProvider::from_env());
