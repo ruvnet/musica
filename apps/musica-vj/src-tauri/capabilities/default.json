@@ -10,6 +10,8 @@
     "fs:allow-write-file",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister-all",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",

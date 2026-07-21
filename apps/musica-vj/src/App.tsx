@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Settings2 } from "lucide-react";
+import { Maximize2, Minimize2, Settings2 } from "lucide-react";
 import {
   AudioEngine,
   createEngineSnapshotFromTemplate,
@@ -166,6 +166,18 @@ interface LyriaBufferingState {
 interface LyriaStyleGuidance {
   text: string;
   weight: number;
+}
+
+type ToastTone = "info" | "ok" | "warn";
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+interface ToastItem {
+  id: number;
+  message: string;
+  tone: ToastTone;
+  action?: ToastAction;
 }
 
 interface LyriaGuidanceDialogState extends LyriaStyleGuidance {
@@ -544,7 +556,33 @@ export function App() {
     "audio-generation",
     "av-output",
   ]));
-  const [notice, setNotice] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
+  const [notice, setNoticeRaw] = useState(`${DEFAULT_TEMPLATE.name} loaded. Press play to buffer Lyria RealTime as the primary output.`);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastSeq = useRef(0);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+  const pushToast = useCallback((message: string, tone: ToastTone = "info", action?: ToastAction) => {
+    const id = (toastSeq.current += 1);
+    setToasts((current) => (
+      current[current.length - 1]?.message === message
+        ? current
+        : [...current, { id, message, tone, action }].slice(-4)
+    ));
+    if (!action) window.setTimeout(() => dismissToast(id), 5200);
+  }, [dismissToast]);
+  // Notices update the footer status line AND surface as a toast. Tone is
+  // inferred from the wording so errors/successes are colored without touching
+  // the ~50 call sites.
+  const setNotice = useCallback((message: string) => {
+    setNoticeRaw(message);
+    const tone: ToastTone = /fail|error|could not|couldn't|unavailable|invalid|denied|rejected|not authorized/i.test(message)
+      ? "warn"
+      : /saved|connected|authorized|live|ready|installed|complete|applied|generated|unlocked/i.test(message)
+        ? "ok"
+        : "info";
+    pushToast(message, tone);
+  }, [pushToast]);
   const [masterEffects, setMasterEffects] = useState<MasterEffectsState>({ flanger: 0, sweep: 0, reverb: 0, echo: 0, drive: 0, crush: 0, phaser: 0 });
   const [masterEffectParams, setMasterEffectParams] = useState<MasterEffectParams>({ ...DEFAULT_MASTER_EFFECT_PARAMS });
   const [fxLocks, setFxLocks] = useState<Record<keyof MasterEffectsState, boolean>>({ flanger: false, sweep: false, reverb: false, echo: false, drive: false, crush: false, phaser: false });
@@ -1025,7 +1063,10 @@ export function App() {
     setLyriaPrompts(request.weightedPrompts);
     setLyriaRealtimeConfig(request.config);
     setLyriaCompanionGuidance((current) => ({ ...current, vocal: vocalGuidance }));
-    setLyriaDeckEnabled({ main: true, sequence: false, vocal: vocalEnabled });
+    // Vocalize is off by default — the deck stays disarmed even when a vocal
+    // style is chosen. Its prompts/guidance are prepared above so the user can
+    // arm the VOCALIZE deck manually whenever they want vocals.
+    setLyriaDeckEnabled({ main: true, sequence: false, vocal: false });
     setActiveLyriaDeckSceneId(undefined);
     setGenerationBpm(normalized.bpm);
     setInstrumental(!vocalEnabled);
@@ -1307,13 +1348,19 @@ export function App() {
     void import("@tauri-apps/api/app").then(({ getVersion }) => getVersion().then(setAppVersion).catch(() => undefined));
   }, []);
 
+  const handleInstallUpdateRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     void checkForUpdate().then((info) => {
       setUpdateInfo(info);
       setUpdateChecked(true);
-      if (info.available) setNotice(`Update available: v${info.version}. Open WORKSPACE settings to install.`);
+      if (info.available) {
+        pushToast(`Update v${info.version} available`, "ok", {
+          label: "INSTALL + RESTART",
+          onClick: () => handleInstallUpdateRef.current(),
+        });
+      }
     });
-  }, []);
+  }, [pushToast]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateBusy(true);
@@ -1339,6 +1386,40 @@ export function App() {
       setUpdateBusy(false);
     }
   }, [updateInfo.version]);
+  handleInstallUpdateRef.current = () => void handleInstallUpdate();
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        const next = !(await win.isFullscreen());
+        await win.setFullscreen(next);
+        setIsFullscreen(next);
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      } else {
+        await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not toggle full screen");
+    }
+  }, []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (!typing && (event.key === "f" || event.key === "F") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        void toggleFullscreen();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleFullscreen]);
 
   // Cognitum sign-in gate: the required first step, shown until the user is
   // signed in (skipped entirely when already signed in), with a running log.
@@ -3163,6 +3244,15 @@ export function App() {
           <button
             className="top-settings-button"
             type="button"
+            onClick={() => void toggleFullscreen()}
+            aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
+            title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+          <button
+            className="top-settings-button"
+            type="button"
             onClick={() => {
               setOnboardingFirstRun(false);
               setOnboardingView("setup");
@@ -4141,6 +4231,20 @@ export function App() {
           <span className="shortcut-hint">SPACE/MEDIA PLAY · R RECORD · ARROWS NAVIGATE</span>
         </div>
       </footer>
+
+      <div className="toast-stack" role="region" aria-label="Notifications" aria-live="polite">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast toast-${toast.tone}`}>
+            <span className="toast-message">{toast.message}</span>
+            {toast.action && (
+              <button type="button" className="toast-action" onClick={() => { toast.action?.onClick(); dismissToast(toast.id); }}>
+                {toast.action.label}
+              </button>
+            )}
+            <button type="button" className="toast-dismiss" onClick={() => dismissToast(toast.id)} aria-label="Dismiss">×</button>
+          </div>
+        ))}
+      </div>
     </main>
   );
 }

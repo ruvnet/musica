@@ -806,6 +806,20 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .update-install-button:hover:not(:disabled) { border-color: rgba(117,244,197,.8); }
 .update-install-button:disabled { opacity: .7; cursor: wait; }
 .update-notes { color: #8a91a0; font: 500 8px/1.4 "DM Mono", monospace; }
+
+/* Toast notifications */
+.toast-stack { position: fixed; right: 16px; bottom: 16px; z-index: 400; display: flex; flex-direction: column; gap: 8px; max-width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 11px 12px 11px 14px; border: 1px solid rgba(255,255,255,.1); border-left: 3px solid #4b8; border-radius: 10px; background: rgba(10,13,19,.96); box-shadow: 0 14px 40px rgba(0,0,0,.5); backdrop-filter: blur(6px); animation: toast-in .28s cubic-bezier(.16,.84,.44,1) both; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.toast-info { border-left-color: #35dcff; }
+.toast-ok { border-left-color: #75f4c5; }
+.toast-warn { border-left-color: #f0c98a; }
+.toast-message { flex: 1; min-width: 0; color: #dfe4ec; font: 500 11.5px/1.4 "Space Grotesk", sans-serif; }
+.toast-action { flex-shrink: 0; height: 28px; padding: 0 12px; border: 1px solid rgba(117,244,197,.5); border-radius: 7px; background: linear-gradient(120deg, rgba(117,244,197,.18), rgba(53,220,255,.12)); color: #b6ffe6; font: 700 8.5px "DM Mono", monospace; letter-spacing: .05em; cursor: pointer; }
+.toast-action:hover { border-color: rgba(117,244,197,.85); }
+.toast-dismiss { flex-shrink: 0; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: #7a8192; font: 400 15px "DM Mono", monospace; cursor: pointer; }
+.toast-dismiss:hover { background: rgba(255,255,255,.07); color: #cfd4dd; }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 .capture-library { display: grid; gap: 6px; margin-top: 3px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.09); }
 .capture-library > header { display: flex; align-items: center; justify-content: space-between; }
 .capture-library > header span { color: #c4c8d2; font: 700 8px "DM Mono", monospace; }
