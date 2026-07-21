@@ -1,9 +1,14 @@
 use crate::process_util::hide_console_window;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+/// How many trailing FFmpeg stderr lines to keep for diagnosing a crash — just
+/// enough to catch the fatal error line without holding a growing log.
+const STDERR_TAIL_LINES: usize = 40;
 
 const DEFAULT_RESTREAM_URL: &str = "rtmps://live.restream.io/live";
 
@@ -50,6 +55,17 @@ struct ActiveBroadcast {
     child: Child,
     stdin: Option<ChildStdin>,
     source: String,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+}
+
+/// Joins the captured FFmpeg stderr tail into one line for an error message,
+/// e.g. "Unknown encoder 'libx264'" instead of a bare, undecodable exit code.
+fn stderr_tail_text(tail: &Mutex<VecDeque<String>>) -> Option<String> {
+    let lines = tail.lock().ok()?;
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.iter().cloned().collect::<Vec<_>>().join(" | "))
 }
 
 #[derive(Default)]
@@ -223,17 +239,32 @@ pub(crate) fn restream_start(
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Could not start FFmpeg: {error}"))?;
     let stdin = child
         .stdin
         .take()
         .ok_or_else(|| "FFmpeg input pipe is unavailable".to_string())?;
+    let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+    if let Some(stderr) = child.stderr.take() {
+        let tail = stderr_tail.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if let Ok(mut lines) = tail.lock() {
+                    if lines.len() >= STDERR_TAIL_LINES {
+                        lines.pop_front();
+                    }
+                    lines.push_back(line);
+                }
+            }
+        });
+    }
     *active = Some(ActiveBroadcast {
         child,
         stdin: Some(stdin),
         source: request.source,
+        stderr_tail,
     });
     drop(active);
     Ok(status_for(&state))
@@ -268,14 +299,20 @@ pub(crate) fn restream_push_chunk(
         .try_wait()
         .map_err(|error| format!("Could not inspect FFmpeg: {error}"))?
     {
-        return Err(format!("FFmpeg stopped unexpectedly with {status}"));
+        return Err(match stderr_tail_text(&broadcast.stderr_tail) {
+            Some(tail) => format!("FFmpeg stopped unexpectedly with {status}: {tail}"),
+            None => format!("FFmpeg stopped unexpectedly with {status}"),
+        });
     }
     broadcast
         .stdin
         .as_mut()
         .ok_or_else(|| "FFmpeg input pipe is closed".to_string())?
         .write_all(chunk)
-        .map_err(|error| format!("Could not send media to FFmpeg: {error}"))
+        .map_err(|error| match stderr_tail_text(&broadcast.stderr_tail) {
+            Some(tail) => format!("Could not send media to FFmpeg: {error}: {tail}"),
+            None => format!("Could not send media to FFmpeg: {error}"),
+        })
 }
 
 #[tauri::command]
