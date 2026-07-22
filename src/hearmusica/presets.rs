@@ -70,6 +70,28 @@ pub fn maximum_clarity(audiogram: &Audiogram, sample_rate: f32, block_size: usiz
     pipeline.add(Box::new(WDRCompressor::new(-35.0, 4.0)));
     pipeline.add(Box::new(GainProcessor::new(mid_gain_db(audiogram) * 1.2)));
     pipeline.add(Box::new(Mixer::unity()));
+    // Clean up residual noise floor left after separation + amplification,
+    // before the final brick-wall limiter.
+    pipeline.add(Box::new(NoiseGate::new(-42.0, -25.0)));
+    pipeline.add(Box::new(Limiter::new(-1.0)));
+    pipeline.prepare();
+    pipeline
+}
+
+/// Quiet room: standard amplification chain plus a gentle noise gate for
+/// low-noise environments (quiet office, studio) where residual hiss and
+/// self-noise are more noticeable than they would be in typical use.
+/// Filter -> WDRC -> gain -> noise gate -> limiter.
+pub fn quiet_room(audiogram: &Audiogram, sample_rate: f32, block_size: usize) -> Pipeline {
+    let mut pipeline = Pipeline::new(sample_rate, block_size);
+    pipeline.add(Box::new(BiquadFilter::new(
+        FilterType::HighPass,
+        100.0,
+        0.707,
+    )));
+    pipeline.add(Box::new(WDRCompressor::new(-30.0, 2.0)));
+    pipeline.add(Box::new(GainProcessor::new(mid_gain_db(audiogram))));
+    pipeline.add(Box::new(NoiseGate::default_gate()));
     pipeline.add(Box::new(Limiter::new(-1.0)));
     pipeline.prepare();
     pipeline
