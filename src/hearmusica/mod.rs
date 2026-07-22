@@ -20,7 +20,7 @@ pub use delay::DelayLine;
 pub use feedback::FeedbackCanceller;
 pub use filter::{BiquadFilter, FilterType};
 pub use gain::GainProcessor;
-pub use limiter::Limiter;
+pub use limiter::{Limiter, NoiseGate};
 pub use mixer::Mixer;
 #[allow(unused_imports)]
 pub use presets::*;
