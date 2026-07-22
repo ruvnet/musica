@@ -1,0 +1,33 @@
+{
+  "id": "/musica/",
+  "name": "Musica VJ",
+  "short_name": "Musica VJ",
+  "description": "A live instrument for AI music and visuals. Install for one-tap access to the tour and downloads — the desktop app is where the live AI DJ + VJ rig actually runs.",
+  "start_url": "/musica/?source=pwa",
+  "scope": "/musica/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0a0a10",
+  "background_color": "#0a0a10",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

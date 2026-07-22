@@ -6,6 +6,9 @@
 <title>Musica VJ — Your AI DJ + VJ Rig</title>
 <meta name="description" content="Musica VJ is a free desktop app that generates live AI music and audio-reactive visuals in real time — DJ and VJ in one rig, for musicians, producers and DJs. macOS, Windows and Linux." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230b0b12'/%3E%3Ccircle cx='50' cy='50' r='28' fill='none' stroke='%2324c8db' stroke-width='6'/%3E%3Ccircle cx='50' cy='50' r='6' fill='%2375f4c5'/%3E%3C/svg%3E" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png" />
+<meta name="theme-color" content="#0a0a10" />
 <style>
   :root{
     --bg:#0a0a10;
@@ -157,6 +160,30 @@
   footer .wrap{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
   footer a{text-decoration:none;color:var(--muted)}
   footer a:hover{color:var(--fg)}
+
+  /* desktop-vs-browser comparison + install */
+  #capabilities{background:var(--bg-alt);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
+  @media (max-width:780px){ .compare{grid-template-columns:1fr} }
+  .compare-col{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px}
+  .compare-col h3{margin:0 0 4px;font-size:1.1rem;display:flex;align-items:center;gap:10px}
+  .compare-col .tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 18px}
+  .compare-col ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:13px}
+  .compare-col li{display:flex;gap:10px;font-size:14px;color:var(--fg)}
+  .compare-col li span.mark{flex-shrink:0;width:18px;text-align:center}
+  .compare-col.is-desktop{border-color:rgba(36,200,219,.35)}
+  .compare-col.is-desktop li span.mark{color:var(--accent-2)}
+  .compare-col.is-browser li span.mark{color:var(--muted)}
+  .compare-cta{margin-top:26px;text-align:center;color:var(--muted);font-size:14px}
+  .compare-cta strong{color:var(--fg);font-weight:600}
+
+  .preview-row{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:32px;padding-top:28px;border-top:1px solid var(--border)}
+  .preview-row p{margin:0;color:var(--muted);font-size:13.5px;flex:1;min-width:220px}
+  #preview-toggle-btn{flex-shrink:0}
+  #pwa-install-btn{display:none;flex-shrink:0}
+  #pwa-install-btn.is-visible{display:inline-flex}
+  #pwa-install-btn.is-highlight{animation:install-pulse 1.4s ease-in-out 2}
+  @keyframes install-pulse{0%,100%{box-shadow:0 8px 24px -8px rgba(36,200,219,.6)}50%{box-shadow:0 8px 32px -4px rgba(117,244,197,.9)}}
 </style>
 </head>
 <body>
@@ -165,6 +192,7 @@
   <a class="brand" href="#top"><span class="dot"></span>MUSICA VJ</a>
   <div class="navlinks">
     <a href="#features">Features</a>
+    <a href="#capabilities">Desktop vs. browser</a>
     <a href="#visuals">Visuals</a>
     <a href="#screenshots">Screenshots</a>
     <a href="#download">Download</a>
@@ -213,6 +241,45 @@
         <h3>Plug in your own gear</h3>
         <p>Any MIDI controller, your keyboard, or the Logitech MX Creative Console maps straight to tracks, scenes and macros — no setup file to write.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section id="capabilities">
+  <div class="wrap">
+    <p class="kicker">Desktop app vs. this page</p>
+    <h2>What runs where</h2>
+    <p class="section-lead">Everything here is free — the difference is what a browser tab is allowed to do versus what a real desktop app can do. Here's exactly what needs the install.</p>
+    <div class="compare">
+      <div class="compare-col is-desktop">
+        <h3>🖥️ Desktop app</h3>
+        <p class="tag">The actual DJ + VJ rig</p>
+        <ul>
+          <li><span class="mark">✓</span>Live AI music generation (Google Lyria RealTime) — an endless, evolving set</li>
+          <li><span class="mark">✓</span>Restream / RTMP broadcast straight to your stream, no separate encoder</li>
+          <li><span class="mark">✓</span>A persistent capture library, saved on your device</li>
+          <li><span class="mark">✓</span>Sign in once and stay signed in, for the smarter AI direction features</li>
+          <li><span class="mark">✓</span>MIDI, keyboard, and Logitech MX Creative Console control</li>
+          <li><span class="mark">✓</span>Updates itself in place as new styles and fixes ship</li>
+        </ul>
+      </div>
+      <div class="compare-col is-browser">
+        <h3>🌐 Browser (this page)</h3>
+        <p class="tag">The tour</p>
+        <ul>
+          <li><span class="mark">○</span>The full walkthrough — features, visuals, screenshots</li>
+          <li><span class="mark">○</span>Install as an app icon for one-tap access next time</li>
+          <li><span class="mark">○</span>Works offline as a shell, straight back to the downloads</li>
+          <li><span class="mark">○</span>No AI music generation here — that's the desktop app's job</li>
+        </ul>
+      </div>
+    </div>
+    <p class="compare-cta">Install this page for one-tap access — then <strong>download the desktop app</strong> for the full DJ+VJ rig.</p>
+
+    <div class="preview-row">
+      <p id="preview-caption">Curious what the visuals feel like reacting to a beat? This is a silent preview — no audio, no AI generation, just the render engine.</p>
+      <button class="btn btn-ghost" type="button" id="preview-toggle-btn" aria-pressed="false">▶ Silent preview</button>
+      <button class="btn btn-primary" type="button" id="pwa-install-btn">⤓ Install app</button>
     </div>
   </div>
 </section>
@@ -312,6 +379,7 @@
       </div>
     </div>
     <p class="download-note">Each download page lists the exact installer for your platform · <a href="https://github.com/ruvnet/musica" target="_blank" rel="noopener">View source &amp; release notes on GitHub →</a></p>
+    <p class="download-note">Not ready to install the desktop app? <a href="#capabilities">Install this page instead</a> for one-tap access, then come back for the full DJ+VJ rig.</p>
   </div>
 </section>
 
@@ -396,7 +464,11 @@ let raf = null;
 function tick(t) {
   const time = t * 0.001;
   // fake bpm-locked pulse ~ 124bpm so it feels musical without any audio access
-  const beat = Math.pow(Math.abs(Math.sin(time * (124 / 60) * Math.PI)), 6);
+  // window.__musicaPreviewBoost (set by the silent-preview toggle in
+  // #capabilities) temporarily exaggerates this same pulse — no new
+  // rendering path, just a louder version of what's already here.
+  const boost = window.__musicaPreviewBoost || 1;
+  const beat = Math.pow(Math.abs(Math.sin(time * (124 / 60) * Math.PI)), 6) * boost;
   const hue = (time * 8) % 360;
   particleMat.color.setHSL(190 / 360 + Math.sin(time * 0.05) * 0.05, 0.75, 0.55 + beat * 0.15);
   core.material.color.setHSL(hue / 360, 0.7, 0.6);
@@ -421,6 +493,88 @@ if (reduceMotion) {
     else if (!document.hidden && !raf) { raf = requestAnimationFrame(tick); }
   });
 }
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---- app-shell service worker (installability + offline shell) ---- */
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js").catch(function () {
+        /* offline shell is a bonus, not a requirement — fail silently */
+      });
+    });
+  }
+
+  /* ---- silent preview toggle: exaggerates the existing hero pulse ---- */
+  var previewBtn = document.getElementById("preview-toggle-btn");
+  var previewCaption = document.getElementById("preview-caption");
+  var previewTimer = null;
+  window.__musicaPreviewBoost = 1;
+  if (previewBtn) {
+    previewBtn.addEventListener("click", function () {
+      var active = previewBtn.getAttribute("aria-pressed") === "true";
+      if (active) {
+        window.__musicaPreviewBoost = 1;
+        previewBtn.setAttribute("aria-pressed", "false");
+        previewBtn.textContent = "▶ Silent preview";
+        previewCaption.textContent = "Curious what the visuals feel like reacting to a beat? This is a silent preview — no audio, no AI generation, just the render engine.";
+        if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+        return;
+      }
+      window.__musicaPreviewBoost = 2.2;
+      previewBtn.setAttribute("aria-pressed", "true");
+      previewBtn.textContent = "■ Stop preview";
+      previewCaption.textContent = "Previewing — silent, no AI generation. The desktop app drives this off your actual set instead of a fake pulse.";
+      if (previewTimer) clearTimeout(previewTimer);
+      previewTimer = setTimeout(function () {
+        window.__musicaPreviewBoost = 1;
+        previewBtn.setAttribute("aria-pressed", "false");
+        previewBtn.textContent = "▶ Silent preview";
+        previewCaption.textContent = "Curious what the visuals feel like reacting to a beat? This is a silent preview — no audio, no AI generation, just the render engine.";
+      }, 8000);
+    });
+  }
+
+  /* ---- Chrome/Edge PWA install: button + ?install=1 deep link ---- */
+  var installBtn = document.getElementById("pwa-install-btn");
+  var deferredPrompt = null;
+  var autoInstallRequested = new URLSearchParams(location.search).get("install") === "1";
+
+  function triggerInstall() {
+    if (!deferredPrompt) return;
+    var promptEvent = deferredPrompt;
+    deferredPrompt = null;
+    promptEvent.prompt();
+  }
+
+  window.addEventListener("beforeinstallprompt", function (event) {
+    event.preventDefault();
+    deferredPrompt = event;
+    if (localStorage.getItem("musicaPwaInstalled") === "1") return;
+    if (installBtn) installBtn.classList.add("is-visible");
+    if (autoInstallRequested) {
+      autoInstallRequested = false;
+      if (installBtn) {
+        installBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+        installBtn.classList.add("is-highlight");
+      }
+      triggerInstall();
+    }
+  });
+
+  window.addEventListener("appinstalled", function () {
+    localStorage.setItem("musicaPwaInstalled", "1");
+    if (installBtn) installBtn.classList.remove("is-visible");
+    deferredPrompt = null;
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener("click", triggerInstall);
+  }
+})();
 </script>
 
 </body>
