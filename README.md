@@ -566,6 +566,7 @@ High-fidelity Rust port of Tympan's MIT-licensed hearing aid DSP, integrated wit
 | DelayLine | AudioEffectDelay_F32 | Sample-accurate circular buffer |
 | Limiter | (custom) | Brick-wall output protection |
 | Mixer | AudioMixer_F32 | Weighted signal combination |
+| NoiseGate | (custom) | Smooth downward expander with attack/release/hold to suppress residual noise floor |
 
 ### Architecture
 
@@ -584,7 +585,8 @@ Four preset configurations cover common hearing aid use cases:
 | `standard_hearing_aid` | General-purpose amplification with feedback cancellation | BiquadFilter, FeedbackCanceller, WDRCompressor, GainProcessor, Limiter |
 | `speech_in_noise` | Optimized for noisy environments with graph-based separation | BiquadFilter, FeedbackCanceller, GraphSeparator, WDRCompressor, GainProcessor, Limiter |
 | `music_mode` | Wide bandwidth, gentle compression for music listening | BiquadFilter, WDRCompressor (low ratio), GainProcessor, Limiter |
-| `maximum_clarity` | Aggressive noise reduction for severe hearing loss | BiquadFilter, FeedbackCanceller, GraphSeparator, WDRCompressor (high ratio), GainProcessor, Limiter |
+| `maximum_clarity` | Aggressive noise reduction for severe hearing loss | BiquadFilter, FeedbackCanceller, GraphSeparator, WDRCompressor (high ratio), GainProcessor, Mixer, NoiseGate, Limiter |
+| `quiet_room` | Gentle chain for low-noise environments (office/studio) needing extra hiss suppression | BiquadFilter, WDRCompressor, GainProcessor, NoiseGate, Limiter |
 
 All presets accept an `Audiogram`, sample rate, and block size, and return a fully configured `Pipeline`.
 
