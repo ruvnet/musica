@@ -1,21 +1,34 @@
-# Musica — Agentic Live AI Music + Visual Performance
+# Musica VJ — Your AI DJ + VJ Rig
 
+[![Website](https://img.shields.io/badge/website-ruvnet.github.io%2Fmusica-75f4c5)](https://ruvnet.github.io/musica/)
 [![Musica VJ CI](https://github.com/ruvnet/musica/actions/workflows/musica-vj.yml/badge.svg)](https://github.com/ruvnet/musica/actions/workflows/musica-vj.yml)
 [![Rust](https://img.shields.io/badge/Rust-2021-f97316)](Cargo.toml)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db)](apps/musica-vj/src-tauri/tauri.conf.json)
 [![Three.js](https://img.shields.io/badge/Three.js-WebGL2-111111)](apps/musica-vj/src/visual/VisualEngine.ts)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](Cargo.toml)
-[![Release](https://img.shields.io/badge/release-v0.4.1-b06bf2)](https://github.com/ruvnet/musica/releases/tag/musica-vj-v0.4.0)
+[![Release](https://img.shields.io/badge/release-latest-b06bf2)](https://github.com/ruvnet/musica/releases/latest)
 
 ![Musica VJ studio: the live Spectral Field visual center stage, a Visual Bank of nine scenes and VJ presets on the left, and the Lyria RealTime deck stack — Main, Sequence, Vocalize, genre grid, and BPM/density/brightness controls — on the right, over a 16-step Lyria beat with SFX and loop lanes](apps/musica-vj/assets/screenshots/musica-vj-studio.png)
 
 _The live studio: audio-reactive Three.js visuals center stage, the Visual Bank and VJ presets on the left, and the synchronized Lyria RealTime decks (Main / Sequence / Vocalize) with the genre grid on the right — over a 16-step Lyria beat with SFX and loop lanes, MIDI + MX Console control, and one-click capture. The first run opens with the [Cognitum One sign-in gate](apps/musica-vj/assets/screenshots/musica-vj-signin.png) — sign in and Lyria audio just works, no bring-your-own key._
 
-Musica is becoming a SOTA live AI performance system: an agent-directed music workstation, realtime VJ instrument, secure creative-AI provider shell, MIDI and hardware controller surface, social capture rig, and Rust DSP research engine in one repo.
+**Musica VJ is a free desktop app for musicians, producers, and DJs.** Hit play and it generates a live, evolving beat in real time, then lights up the screen with visuals that react to the music automatically — no timeline to program, no separate VJ software, no second laptop. Point a MIDI controller, your keyboard, or a Logitech MX Creative Console at it and perform the whole set — music and visuals — like one instrument.
 
-The new flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with synchronized Lyria RealTime arrangement and beat streams, a guarded vocalization lane, editable rhythm guidance, AI-directed performance templates, one-click Demo automation, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
+Under the hood it's also an agent-directed music workstation, a governed creative-AI provider shell, and a Rust DSP research engine — but you don't need to know any of that to use it.
+
+👉 **[See it in action, screenshots, and download links →](https://ruvnet.github.io/musica/)**
+
+| | |
+|---|---|
+| 🎧 **Get the app** | [Download for macOS, Windows, or Linux](https://github.com/ruvnet/musica/releases/latest) — free, no account required to start |
+| 🖥️ **See it first** | [Live site with screenshots + a 60-second tour](https://ruvnet.github.io/musica/) |
+| 📖 **Go deeper** | [`apps/musica-vj/README.md`](apps/musica-vj/README.md) — full controls, MIDI mapping, and provider setup |
+
+The flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with synchronized Lyria RealTime arrangement and beat streams, a guarded vocalization lane, editable rhythm guidance, AI-directed performance templates, one-click Demo automation, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
 
 ## Current Direction
+
+_The table below is the detailed technical status, mainly useful for contributors. For a plain-language tour, see [the website](https://ruvnet.github.io/musica/)._
 
 | Layer | What Musica does now |
 |---|---|

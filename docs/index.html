@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Musica VJ — Your AI DJ + VJ Rig</title>
+<meta name="description" content="Musica VJ is a free desktop app that generates live AI music and audio-reactive visuals in real time — DJ and VJ in one rig, for musicians, producers and DJs. macOS, Windows and Linux." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230b0b12'/%3E%3Ccircle cx='50' cy='50' r='28' fill='none' stroke='%2324c8db' stroke-width='6'/%3E%3Ccircle cx='50' cy='50' r='6' fill='%2375f4c5'/%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#0a0a10;
+    --bg-alt:#101018;
+    --fg:#f2f2f7;
+    --muted:#a6a6b8;
+    --accent:#24c8db;
+    --accent-2:#75f4c5;
+    --accent-3:#ff31d2;
+    --card:#14141e;
+    --border:#232333;
+    --max:1180px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--fg);
+    font-family:"Space Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  a{color:inherit}
+  img{max-width:100%;display:block}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+  section{padding:96px 0}
+  @media (max-width:700px){ section{padding:64px 0} }
+
+  /* nav */
+  nav{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 24px;
+    background:linear-gradient(to bottom, rgba(10,10,16,0.9), rgba(10,10,16,0));
+    backdrop-filter:blur(6px);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:0.04em;font-size:15px;text-decoration:none}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 12px var(--accent-2)}
+  .navlinks{display:flex;gap:28px;font-size:14px;color:var(--muted)}
+  .navlinks a{text-decoration:none;transition:color .15s}
+  .navlinks a:hover{color:var(--fg)}
+  @media (max-width:640px){ .navlinks{display:none} }
+
+  /* buttons */
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:13px 24px;border-radius:999px;font-size:14px;font-weight:600;
+    text-decoration:none;border:1px solid transparent;cursor:pointer;
+    transition:transform .15s ease, box-shadow .15s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#04121a;box-shadow:0 8px 24px -8px rgba(36,200,219,.6)}
+  .btn-ghost{background:rgba(255,255,255,.04);color:var(--fg);border-color:var(--border)}
+  .btn-ghost:hover{background:rgba(255,255,255,.08)}
+  .btn-block{width:100%;justify-content:center}
+
+  /* hero */
+  .hero{
+    position:relative;min-height:100vh;display:flex;align-items:center;
+    padding-top:120px;padding-bottom:64px;
+    overflow:hidden;
+  }
+  #hero-canvas{position:absolute;inset:0;z-index:0;width:100%;height:100%;display:block}
+  .hero-inner{position:relative;z-index:2;max-width:760px}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-2);
+    border:1px solid rgba(117,244,197,.35);border-radius:999px;padding:6px 14px;margin-bottom:22px;
+    background:rgba(117,244,197,.06);
+  }
+  .hero h1{
+    font-size:clamp(2.1rem, 6vw, 4rem);line-height:1.06;margin:0 0 20px;
+    letter-spacing:-0.01em;
+  }
+  .hero h1 span{background:linear-gradient(120deg,var(--accent),var(--accent-2) 60%, var(--accent-3));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lead{font-size:clamp(1rem, 1.6vw, 1.2rem);color:var(--muted);max-width:560px;margin:0 0 34px}
+  .hero-ctas{display:flex;flex-wrap:wrap;gap:14px}
+  .hero-note{margin-top:20px;font-size:13px;color:var(--muted)}
+  .hero::after{
+    content:"";position:absolute;left:0;right:0;bottom:0;height:140px;z-index:1;
+    background:linear-gradient(to top, var(--bg), rgba(10,10,16,0));
+  }
+
+  /* sections */
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 12px;font-weight:700}
+  h2{font-size:clamp(1.6rem,3.4vw,2.3rem);margin:0 0 14px;letter-spacing:-0.01em}
+  .section-lead{color:var(--muted);max-width:640px;margin:0 0 48px;font-size:1.02rem}
+
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media (max-width:980px){ .grid-4{grid-template-columns:repeat(2,1fr)} .grid-3{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:640px){ .grid-4,.grid-3,.grid-2{grid-template-columns:1fr} }
+
+  .card{
+    background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px;
+  }
+  .card .ico{font-size:26px;margin-bottom:14px;display:inline-block}
+  .card h3{margin:0 0 8px;font-size:1.05rem}
+  .card p{margin:0;color:var(--muted);font-size:.95rem}
+
+  .chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+  .chip{
+    font-size:13px;padding:9px 16px;border-radius:999px;border:1px solid var(--border);
+    background:var(--bg-alt);color:var(--fg);
+  }
+
+  .scene-list{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}
+  @media (max-width:640px){ .scene-list{grid-template-columns:repeat(2,1fr)} }
+  .scene{
+    display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;
+    background:var(--bg-alt);border:1px solid var(--border);font-size:13.5px;
+  }
+  .swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+  .shot{border-radius:16px;overflow:hidden;border:1px solid var(--border);background:var(--bg-alt)}
+  .shot img{width:100%;height:auto}
+  figure{margin:0}
+  figcaption{color:var(--muted);font-size:13px;margin-top:10px}
+
+  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:56px;align-items:center}
+  @media (max-width:900px){ .split{grid-template-columns:1fr;gap:32px} }
+
+  .platform-card{
+    background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;
+    text-align:center;
+  }
+  .platform-card .plat-ico{font-size:34px;margin-bottom:10px}
+  .platform-card h3{margin:0 0 6px}
+  .platform-card p{color:var(--muted);font-size:13px;margin:0 0 18px}
+
+  #download{
+    background:radial-gradient(circle at 50% 0%, rgba(36,200,219,.10), transparent 60%);
+    border-top:1px solid var(--border);
+  }
+  .download-note{text-align:center;color:var(--muted);font-size:13.5px;margin-top:28px}
+  .download-note a{color:var(--accent-2);text-decoration:none}
+
+  footer{border-top:1px solid var(--border);padding:40px 0;color:var(--muted);font-size:13.5px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
+  footer a{text-decoration:none;color:var(--muted)}
+  footer a:hover{color:var(--fg)}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="brand" href="#top"><span class="dot"></span>MUSICA VJ</a>
+  <div class="navlinks">
+    <a href="#features">Features</a>
+    <a href="#visuals">Visuals</a>
+    <a href="#screenshots">Screenshots</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/ruvnet/musica" target="_blank" rel="noopener">GitHub</a>
+  </div>
+  <a class="btn btn-primary" href="#download" style="padding:10px 20px;font-size:13px">Download Free</a>
+</nav>
+
+<header class="hero" id="top">
+  <canvas id="hero-canvas" aria-hidden="true"></canvas>
+  <div class="wrap hero-inner">
+    <span class="eyebrow">Free &amp; open source · macOS · Windows · Linux</span>
+    <h1>Your DJ set,<br><span>directed by AI.</span><br>Your visuals, alive.</h1>
+    <p class="lead">Musica VJ is a desktop app for musicians, producers and DJs. It generates a live, evolving beat in real time and lights up the screen with visuals that react to your music automatically — no timeline, no VJ software, no second laptop.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="#download">Download Musica VJ — Free</a>
+      <a class="btn btn-ghost" href="#screenshots">See it in action</a>
+    </div>
+    <p class="hero-note">No account needed to start. Works fully offline in local mode.</p>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <p class="kicker">What it does</p>
+    <h2>Everything you need for a live AI-powered set</h2>
+    <p class="section-lead">No music-tech jargon required — here's what actually happens when you hit play.</p>
+    <div class="grid-4">
+      <div class="card">
+        <span class="ico">🎧</span>
+        <h3>An AI DJ that never repeats</h3>
+        <p>Generates a live, endless beat and music bed in real time. Steer it with a genre, a mood, or 20+ ready-made styles — or just let it drift.</p>
+      </div>
+      <div class="card">
+        <span class="ico">✨</span>
+        <h3>Visuals that play the room</h3>
+        <p>Eight audio-reactive visual scenes light up in sync with your set automatically. No keyframes, no rendering, no separate VJ rig.</p>
+      </div>
+      <div class="card">
+        <span class="ico">🎛️</span>
+        <h3>Perform it like an instrument</h3>
+        <p>Four live macros — Motion, Atmosphere, Sculpture, Ribbon — reshape the whole look in real time, plus a full effects rack: echo, reverb, drive, crush, filter sweep.</p>
+      </div>
+      <div class="card">
+        <span class="ico">🎚️</span>
+        <h3>Plug in your own gear</h3>
+        <p>Any MIDI controller, your keyboard, or the Logitech MX Creative Console maps straight to tracks, scenes and macros — no setup file to write.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="templates" style="background:var(--bg-alt);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+  <div class="wrap">
+    <p class="kicker">One click, full vibe</p>
+    <h2>Performance templates set the music and visuals together</h2>
+    <p class="section-lead">Each template dials in tempo, beat pattern, visual scene and mood in one move — pick a vibe and keep performing.</p>
+    <div class="chips">
+      <span class="chip">Warehouse Techno</span>
+      <span class="chip">Synthwave Drive</span>
+      <span class="chip">Ambient Dub</span>
+      <span class="chip">Liquid Breaks</span>
+      <span class="chip">Footwork Cuts</span>
+      <span class="chip">UK Garage Neon</span>
+      <span class="chip">Afro Cosmic House</span>
+      <span class="chip">Cinematic Pulse</span>
+      <span class="chip">Moonlight Sequencer</span>
+      <span class="chip">IDM Crystalline</span>
+      <span class="chip">Hyperpop Rush</span>
+    </div>
+  </div>
+</section>
+
+<section id="visuals">
+  <div class="wrap split">
+    <div>
+      <p class="kicker">The visual bank</p>
+      <h2>Eight scenes, built to move with you</h2>
+      <p class="section-lead" style="margin-bottom:22px">Switch scenes live, layer in VJ presets like Peak Rave or Cinema Fog, or hand it to the shuffle button and keep your hands on the music.</p>
+      <div class="scene-list">
+        <div class="scene"><span class="swatch" style="background:#ff31d2"></span>Neon Fold</div>
+        <div class="scene"><span class="swatch" style="background:#75f4c5"></span>Signal Bloom</div>
+        <div class="scene"><span class="swatch" style="background:#24c8db"></span>Spectral Field</div>
+        <div class="scene"><span class="swatch" style="background:#f97316"></span>Laser Grid</div>
+        <div class="scene"><span class="swatch" style="background:#a78bfa"></span>Aurora Veil</div>
+        <div class="scene"><span class="swatch" style="background:#4b5563"></span>Black Monolith</div>
+        <div class="scene"><span class="swatch" style="background:#facc15"></span>Pulse Field</div>
+        <div class="scene"><span class="swatch" style="background:#f472b6"></span>Chroma Wave</div>
+      </div>
+    </div>
+    <figure class="shot">
+      <img src="assets/screenshots/musica-vj-neon-fold.png" alt="Musica VJ Neon Fold visual scene, a glowing folded neon ribbon reacting to the beat" loading="lazy" width="1200" height="750" />
+    </figure>
+  </div>
+</section>
+
+<section id="capture" style="background:var(--bg-alt);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+  <div class="wrap split">
+    <figure class="shot">
+      <img src="assets/screenshots/musica-vj-welcome.png" alt="Musica VJ welcome screen" loading="lazy" width="1200" height="750" />
+    </figure>
+    <div>
+      <p class="kicker">Share the moment</p>
+      <h2>One-click capture, ready to post</h2>
+      <p class="section-lead" style="margin-bottom:0">Hit record and export a clip sized for TikTok, Reels or Stories — vertical or square, straight out of the app. No screen recorder, no editing software.</p>
+    </div>
+  </div>
+</section>
+
+<section id="screenshots">
+  <div class="wrap">
+    <p class="kicker">Inside the studio</p>
+    <h2>The full performance surface</h2>
+    <p class="section-lead">Music decks, visual bank and live controls, all in one window.</p>
+    <figure class="shot">
+      <img src="assets/screenshots/musica-vj-studio.png" alt="Musica VJ studio view: live visuals center stage with the visual bank on the left and music decks and controls on the right" loading="lazy" width="1600" height="900" />
+      <figcaption>The live studio — visuals center stage, the visual bank and presets on the left, music decks and controls on the right.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <p class="kicker" style="text-align:center">Get started</p>
+    <h2 style="text-align:center">Download Musica VJ</h2>
+    <p class="section-lead" style="margin:0 auto 48px;text-align:center">Free and open source. No account required to start — sign in later only if you want the smarter AI direction features.</p>
+    <div class="grid-3">
+      <div class="platform-card">
+        <div class="plat-ico">🍎</div>
+        <h3>macOS</h3>
+        <p>Apple Silicon &amp; Intel · .dmg</p>
+        <a class="btn btn-primary btn-block" href="https://github.com/ruvnet/musica/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+      <div class="platform-card">
+        <div class="plat-ico">🪟</div>
+        <h3>Windows</h3>
+        <p>Windows 10 / 11 · .exe installer</p>
+        <a class="btn btn-primary btn-block" href="https://github.com/ruvnet/musica/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+      <div class="platform-card">
+        <div class="plat-ico">🐧</div>
+        <h3>Linux</h3>
+        <p>.deb &amp; AppImage</p>
+        <a class="btn btn-primary btn-block" href="https://github.com/ruvnet/musica/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+    </div>
+    <p class="download-note">Each download page lists the exact installer for your platform · <a href="https://github.com/ruvnet/musica" target="_blank" rel="noopener">View source &amp; release notes on GitHub →</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Musica VJ · MIT OR Apache-2.0</span>
+    <span>
+      <a href="https://github.com/ruvnet/musica" target="_blank" rel="noopener">GitHub</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/ruvnet/musica/blob/main/README.md" target="_blank" rel="noopener">Full docs (for developers)</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/ruvnet/musica/releases" target="_blank" rel="noopener">Releases</a>
+    </span>
+  </div>
+</footer>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.185.1/build/three.module.js";
+
+const canvas = document.getElementById('hero-canvas');
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isSmall = window.innerWidth < 720;
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0, isSmall ? 9 : 7.5);
+
+function size() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+size();
+
+// Audio-reactive-style particle field (no mic — a self-playing "beat" envelope)
+const particleCount = isSmall ? 900 : 2200;
+const positions = new Float32Array(particleCount * 3);
+const radii = new Float32Array(particleCount);
+for (let i = 0; i < particleCount; i++) {
+  const r = 2.6 + Math.random() * 2.4;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos((Math.random() * 2) - 1);
+  positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+  positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.6;
+  positions[i * 3 + 2] = r * Math.cos(phi);
+  radii[i] = r;
+}
+const particleGeo = new THREE.BufferGeometry();
+particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+const particleMat = new THREE.PointsMaterial({
+  size: isSmall ? 0.045 : 0.055,
+  color: new THREE.Color('#24c8db'),
+  transparent: true,
+  opacity: 0.85,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+const particles = new THREE.Points(particleGeo, particleMat);
+scene.add(particles);
+
+// Wireframe core — the "visual scene" stand-in
+const core = new THREE.Mesh(
+  new THREE.IcosahedronGeometry(1.7, 2),
+  new THREE.MeshBasicMaterial({ color: '#75f4c5', wireframe: true, transparent: true, opacity: 0.35 })
+);
+scene.add(core);
+
+const ring = new THREE.Mesh(
+  new THREE.TorusGeometry(3.6, 0.012, 8, 120),
+  new THREE.MeshBasicMaterial({ color: '#ff31d2', transparent: true, opacity: 0.5 })
+);
+ring.rotation.x = Math.PI / 2.4;
+scene.add(ring);
+
+window.addEventListener('resize', size);
+
+let raf = null;
+function tick(t) {
+  const time = t * 0.001;
+  // fake bpm-locked pulse ~ 124bpm so it feels musical without any audio access
+  const beat = Math.pow(Math.abs(Math.sin(time * (124 / 60) * Math.PI)), 6);
+  const hue = (time * 8) % 360;
+  particleMat.color.setHSL(190 / 360 + Math.sin(time * 0.05) * 0.05, 0.75, 0.55 + beat * 0.15);
+  core.material.color.setHSL(hue / 360, 0.7, 0.6);
+  particles.rotation.y = time * 0.06;
+  particles.rotation.x = Math.sin(time * 0.08) * 0.15;
+  core.rotation.y = -time * 0.1;
+  core.rotation.x = time * 0.05;
+  const s = 1 + beat * 0.12;
+  core.scale.setScalar(s);
+  ring.rotation.z = time * 0.15;
+  ring.scale.setScalar(1 + beat * 0.06);
+  renderer.render(scene, camera);
+  raf = requestAnimationFrame(tick);
+}
+
+if (reduceMotion) {
+  renderer.render(scene, camera);
+} else {
+  raf = requestAnimationFrame(tick);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && raf) { cancelAnimationFrame(raf); raf = null; }
+    else if (!document.hidden && !raf) { raf = requestAnimationFrame(tick); }
+  });
+}
+</script>
+
+</body>
+</html>
