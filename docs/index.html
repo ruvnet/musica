@@ -73,6 +73,12 @@
   }
   #hero-canvas{position:absolute;inset:0;z-index:0;width:100%;height:100%;display:block}
   .hero-inner{position:relative;z-index:2;max-width:760px}
+  .hero-inner::before{
+    content:"";position:absolute;z-index:-1;border-radius:28px;
+    left:-28px;top:-40px;right:-10%;bottom:-40px;
+    background:radial-gradient(ellipse at 28% 42%, rgba(8,8,13,.82), rgba(8,8,13,.5) 55%, transparent 78%);
+  }
+  .hero h1, .hero p.lead, .eyebrow, .hero-note{text-shadow:0 2px 24px rgba(0,0,0,.55)}
   .eyebrow{
     display:inline-flex;align-items:center;gap:8px;
     font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-2);
