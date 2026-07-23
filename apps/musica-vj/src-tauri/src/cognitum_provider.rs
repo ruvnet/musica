@@ -307,7 +307,7 @@ fn parse_callback_query(request_line: &str, expected_state: &str) -> Option<Stri
     }
 }
 
-async fn read_bounded_json<T: for<'de> Deserialize<'de>>(
+pub(crate) async fn read_bounded_json<T: for<'de> Deserialize<'de>>(
     response: reqwest::Response,
 ) -> Result<T, String> {
     let bytes = response
@@ -320,7 +320,7 @@ async fn read_bounded_json<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&bytes).map_err(|_| "Cognitum returned an invalid response".into())
 }
 
-fn http_client() -> Result<Client, String> {
+pub(crate) fn http_client() -> Result<Client, String> {
     Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(Policy::none())
@@ -581,7 +581,9 @@ fn store_token_response(
 /// Returns a currently valid access token, refreshing when expired. The
 /// identity service rotates refresh tokens with reuse detection, so the stored
 /// refresh token is consumed exactly once and replaced (or the session ends).
-async fn fresh_access_token(provider: &State<'_, CognitumProvider>) -> Result<String, String> {
+pub(crate) async fn fresh_access_token(
+    provider: &State<'_, CognitumProvider>,
+) -> Result<String, String> {
     // A static gateway bearer (meta-proxy) short-circuits the OAuth flow.
     if let Some(bearer) = static_bearer() {
         return Ok(bearer);

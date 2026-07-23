@@ -10,6 +10,7 @@ Cargo.lock
 !apps/musica-vj/exports/*.mp3
 test_audio/*.wav
 apps/musica-vj/node_modules/
+services/*/node_modules/
 apps/musica-vj/dist/
 apps/musica-vj/.vite/
 apps/musica-vj/coverage/
