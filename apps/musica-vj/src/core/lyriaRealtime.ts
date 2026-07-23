@@ -1,4 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import {
+  getLyriaRealtimeWebStatus,
+  pollLyriaRealtimeWebAudio,
+  startLyriaRealtimeWeb,
+  stopLyriaRealtimeWeb,
+  updateLyriaRealtimeWeb,
+} from "./lyriaRealtimeWeb";
 import type { PerformanceTemplate, TrackId, TrackSnapshot } from "./types";
 
 export type LyriaRealtimeScale =
@@ -644,21 +651,7 @@ const TEMPLATE_STYLE_MAP: Record<string, string> = {
 };
 
 export async function getLyriaRealtimeStatus(deck: LyriaRealtimeDeckId = "main"): Promise<LyriaRealtimeStatus> {
-  if (!isTauri()) {
-    return {
-      deck,
-      available: false,
-      provider: "browser_preview",
-      model: "models/lyria-realtime-exp",
-      sampleRateHz: 48_000,
-      channels: 2,
-      audioFormat: "pcm16",
-      instrumentalOnly: true,
-      reason: "Lyria RealTime requires the desktop app so the Gemini key stays out of React",
-      bufferedAudioBytes: 0,
-      streamedAudioBytes: 0,
-    };
-  }
+  if (!isTauri()) return getLyriaRealtimeWebStatus(deck);
   return invoke<LyriaRealtimeStatus>("lyria_realtime_status", { deck });
 }
 
@@ -766,7 +759,7 @@ export async function startLyriaRealtime(
   request: LyriaRealtimeRequest,
   deck: LyriaRealtimeDeckId = "main",
 ): Promise<LyriaRealtimeSession> {
-  if (!isTauri()) throw new Error("Lyria RealTime requires the desktop app");
+  if (!isTauri()) return startLyriaRealtimeWeb(request, deck);
   return invoke<LyriaRealtimeSession>("lyria_realtime_start", { deck, request });
 }
 
@@ -774,26 +767,16 @@ export async function updateLyriaRealtime(
   request: LyriaRealtimeRequest,
   deck: LyriaRealtimeDeckId = "main",
 ): Promise<LyriaRealtimeSession> {
-  if (!isTauri()) throw new Error("Lyria RealTime requires the desktop app");
+  if (!isTauri()) return updateLyriaRealtimeWeb(request, deck);
   return invoke<LyriaRealtimeSession>("lyria_realtime_update", { deck, request });
 }
 
 export async function stopLyriaRealtime(deck: LyriaRealtimeDeckId = "main"): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) return stopLyriaRealtimeWeb(deck);
   await invoke<void>("lyria_realtime_stop", { deck });
 }
 
 export async function pollLyriaRealtimeAudio(deck: LyriaRealtimeDeckId = "main"): Promise<LyriaRealtimeAudioPoll> {
-  if (!isTauri()) {
-    return {
-      deck,
-      sampleRateHz: 48_000,
-      channels: 2,
-      audioFormat: "pcm16",
-      chunks: [],
-      bufferedAudioBytes: 0,
-      streamedAudioBytes: 0,
-    };
-  }
+  if (!isTauri()) return pollLyriaRealtimeWebAudio(deck);
   return invoke<LyriaRealtimeAudioPoll>("lyria_realtime_poll_audio", { deck });
 }

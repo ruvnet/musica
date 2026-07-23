@@ -1423,7 +1423,9 @@ export function App() {
 
   // Cognitum sign-in gate: the required first step, shown until the user is
   // signed in (skipped entirely when already signed in), with a running log.
-  const cognitumSignInAvailable = isTauri();
+  // Available on both desktop (loopback OAuth) and browser (manual paste-a-
+  // code flow, routed in handleCognitumSignIn below) — see ADR-182.
+  const cognitumSignInAvailable = true;
   const [cognitumGateSkipped, setCognitumGateSkipped] = useState(false);
   // Tracks the post-sign-in Lyria credential redemption so the gate can stay up
   // (and keep logging) until we know whether live audio came online.
@@ -1445,8 +1447,6 @@ export function App() {
       setCognitumStatus(status);
       if (status.signedIn) {
         appendCognitumLog(`Signed in as ${status.account ?? "your account"}.`, "ok");
-      } else if (!isTauri()) {
-        appendCognitumLog("Running in the browser — sign-in requires the desktop app.", "warn");
       } else {
         appendCognitumLog("Ready. Sign in with Cognitum One to begin.");
       }
@@ -1503,7 +1503,13 @@ export function App() {
     void runLyriaActivation();
   }, [cognitumStatus.signedIn, runLyriaActivation]);
 
+  // Desktop uses the loopback OAuth flow (auto-completes when the browser tab
+  // approves). A browser tab can't bind a loopback listener, so it always
+  // uses the manual paste-a-code flow instead — same underlying Cognitum
+  // authorization, just a code to copy back rather than an automatic
+  // redirect (ADR-182).
   const handleCognitumSignIn = useCallback(async () => {
+    if (!isTauri()) return handleManualSignInStart();
     setCognitumBusy(true);
     appendCognitumLog("Opening Cognitum One in your browser…");
     try {
@@ -1518,6 +1524,7 @@ export function App() {
     } finally {
       setCognitumBusy(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appendCognitumLog]);
 
   const handleCognitumSignOut = useCallback(async () => {

@@ -1,4 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import {
+  activateCognitumLyriaWeb,
+  completeCognitumManualSignInWeb,
+  getCognitumWebStatus,
+  signOutCognitumWeb,
+  startCognitumManualSignInWeb,
+} from "./cognitumWeb";
 import type { LyriaRealtimeConfig, LyriaWeightedPrompt } from "./lyriaRealtime";
 import { normalizeVisualPluginSpec, type VisualPluginSpec } from "./visualPlugins";
 
@@ -36,27 +43,30 @@ const OFFLINE_STATUS: CognitumStatus = {
 };
 
 export async function getCognitumStatus(): Promise<CognitumStatus> {
-  if (!isTauri()) return OFFLINE_STATUS;
+  if (!isTauri()) return getCognitumWebStatus();
   return invoke<CognitumStatus>("cognitum_status");
 }
 
+// The desktop's primary flow binds a loopback TCP listener for the OAuth
+// redirect — genuinely unavailable in a browser. The browser path always
+// uses the manual/paste-a-code flow instead (see startCognitumManualSignIn).
 export async function startCognitumSignIn(): Promise<{ authUrl: string }> {
   if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
   return invoke<{ authUrl: string }>("cognitum_auth_start");
 }
 
 export async function signOutCognitum(): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) return signOutCognitumWeb();
   await invoke("cognitum_sign_out");
 }
 
 export async function startCognitumManualSignIn(): Promise<{ authUrl: string }> {
-  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  if (!isTauri()) return startCognitumManualSignInWeb();
   return invoke<{ authUrl: string }>("cognitum_auth_manual_start");
 }
 
 export async function completeCognitumManualSignIn(code: string): Promise<void> {
-  if (!isTauri()) throw new Error(OFFLINE_STATUS.reason);
+  if (!isTauri()) return completeCognitumManualSignInWeb(code);
   await invoke("cognitum_auth_manual_complete", { code });
 }
 
@@ -71,7 +81,7 @@ export interface CognitumLyriaActivation {
 }
 
 export async function activateCognitumLyria(): Promise<CognitumLyriaActivation> {
-  if (!isTauri()) return { ok: false, reason: "desktop app required" };
+  if (!isTauri()) return activateCognitumLyriaWeb();
   try {
     const key = await invoke<string>("cognitum_lyria_credential");
     if (!key) return { ok: false, reason: "broker returned no key" };

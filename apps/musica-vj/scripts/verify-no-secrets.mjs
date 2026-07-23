@@ -28,8 +28,12 @@ const forbiddenLiterals = [
   "MUSICA_CREATIVE_API_TOKEN",
   "MUSICA_META_LLM_API_TOKEN",
   "x-goog-api-key",
-  "generativelanguage.googleapis.com",
 ];
+// generativelanguage.googleapis.com was forbidden here too until ADR-182:
+// the browser Lyria RealTime client (src/core/lyriaRealtimeWeb.ts) now
+// legitimately opens a WebSocket straight to that host, so its presence in
+// the bundle is expected, not a leak. The actual secrets — env var names,
+// canary values, and the AIza…/cog_… key patterns below — are still checked.
 const cognitumToken = /cog_[0-9a-f]{64}/g;
 const googleApiKey = /AIza[0-9A-Za-z_-]{35}/g;
 const findings = [];
