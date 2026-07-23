@@ -22,6 +22,7 @@ Under the hood it's also an agent-directed music workstation, a governed creativ
 |---|---|
 | 🎧 **Get the app** | [Download for macOS, Windows, or Linux](https://github.com/ruvnet/musica/releases/latest) — free, no account required to start |
 | 🖥️ **See it first** | [Live site with screenshots + a 60-second tour](https://ruvnet.github.io/musica/) |
+| 🌐 **Try it in the browser** | [PWA demo — installable, real Lyria generation](https://ruvnet.github.io/musica/app/) — sign in with [Cognitum One](https://cognitum.one) to authorize live audio (ADR-182) |
 | 📖 **Go deeper** | [`apps/musica-vj/README.md`](apps/musica-vj/README.md) — full controls, MIDI mapping, and provider setup |
 
 The flagship app is [`apps/musica-vj`](apps/musica-vj): a Tauri 2 desktop studio with synchronized Lyria RealTime arrangement and beat streams, a guarded vocalization lane, editable rhythm guidance, AI-directed performance templates, one-click Demo automation, Meta-LLM set planning, governed Gemini/Lyria song and loop generation, audio-reactive Three.js visuals, temporal VJ controls, Logitech MX Creative Console integration, browser MIDI, and release workflows for macOS, Linux, and Windows.
@@ -57,7 +58,9 @@ The [v0.3.0 release](https://github.com/ruvnet/musica/releases/tag/v0.3.0) ships
 
 ## Web + WASM Direction
 
-The browser version should use Web Audio and Three.js for the performance UI, then load Musica core through WASM for heavier analysis and structure-aware DSP. The repo already has a feature-gated [`src/wasm_bridge.rs`](src/wasm_bridge.rs) FFI surface for the graph separation pipeline:
+**The browser version is real, not just a plan**: [ruvnet.github.io/musica/app](https://ruvnet.github.io/musica/app/) is the same React studio as the desktop app, installable as a PWA, with live Lyria RealTime generation running directly over a browser `WebSocket` to Gemini's Live API — no server of ours in the loop. `AudioEngine` and `VisualEngine` needed zero changes (pure Web Audio/Three.js already); the new pieces are [`lyriaRealtimeWeb.ts`](apps/musica-vj/src/core/lyriaRealtimeWeb.ts) (a from-scratch port of `lyria_realtime_provider.rs`'s wire protocol) and [`cognitumWeb.ts`](apps/musica-vj/src/core/cognitumWeb.ts) (sign-in via Cognitum One's manual/paste-a-code OAuth flow, so no server-side redirect registration was needed). Full rationale, what's still desktop-only (Restream, the native capture library, MIDI controller bridges, auto-update), and the security tradeoffs (browser `localStorage` vs. the desktop's OS-keychain token storage) are in [ADR-182](docs/adr/ADR-182-browser-hosted-lyria-and-full-app-pwa.md).
+
+What's still aspirational: offloading heavier analysis and structure-aware DSP to Musica core through WASM, rather than the browser TypeScript doing only UI/transport/local-fallback work. The repo already has a feature-gated [`src/wasm_bridge.rs`](src/wasm_bridge.rs) FFI surface for the graph separation pipeline:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -68,11 +71,11 @@ The intended split is pragmatic:
 
 | Runtime | Responsibility |
 |---|---|
-| Browser TypeScript | UI, transport, Web Audio scheduling, Tone.js MIDI parsing, WEBMIDI.js controller input, file import, visual rendering, local fallback analysis |
+| Browser TypeScript | UI, transport, Web Audio scheduling, Lyria RealTime WebSocket, Cognitum sign-in, Tone.js MIDI parsing, WEBMIDI.js controller input, file import, visual rendering, local fallback analysis |
 | Musica WASM | STFT, graph masks, stem confidence, separation witnesses, structural section features, and low-latency DSP primitives |
-| Tauri Rust | Provider credentials, paid generation, private asset storage, controller socket, native dialogs, packaged export validation |
+| Tauri Rust | Restream/RTMP, the persistent capture library, native controller bridges, auto-update, and the desktop's OS-keychain-backed provider credentials |
 
-That keeps the web app usable without a server while preserving the stronger native security boundary for API tokens and paid generation.
+That keeps the web app usable without a server while preserving the stronger native security boundary for capabilities that genuinely need it.
 
 ## Run The Studio
 

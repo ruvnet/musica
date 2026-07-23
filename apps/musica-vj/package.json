@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit && vite build",
+    "build:web": "tsc --noEmit && MUSICA_WEB_BUILD=true vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "test": "vitest",
     "test:run": "vitest run --coverage=false",

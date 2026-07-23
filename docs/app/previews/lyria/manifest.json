@@ -1,0 +1,157 @@
+{
+  "generatedAt": "2026-07-20T02:34:19.948Z",
+  "durationSeconds": 30,
+  "loopCrossfadeSeconds": 2,
+  "previews": [
+    {
+      "id": "rock",
+      "file": "rock.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "8bit",
+      "file": "8bit.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "lofi",
+      "file": "lofi.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "dubstep",
+      "file": "dubstep.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "neuroflux",
+      "file": "neuroflux.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "house",
+      "file": "house.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "techno",
+      "file": "techno.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "cinematic",
+      "file": "cinematic.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "drum-bass",
+      "file": "drum-bass.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "hiphop",
+      "file": "hiphop.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "funk",
+      "file": "funk.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "samba",
+      "file": "samba.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "country",
+      "file": "country.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "edm",
+      "file": "edm.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "rnb",
+      "file": "rnb.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "blues",
+      "file": "blues.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "experimental",
+      "file": "experimental.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "jazz",
+      "file": "jazz.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "classical",
+      "file": "classical.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "ambient",
+      "file": "ambient.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "vocal-male",
+      "file": "vocal-male.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "vocal-female",
+      "file": "vocal-female.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "vocal-other",
+      "file": "vocal-other.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "welcome",
+      "file": "welcome.mp3",
+      "bytes": 601005,
+      "model": "models/lyria-realtime-exp"
+    },
+    {
+      "id": "intro-chime",
+      "file": "intro-chime.mp3",
+      "bytes": 140205,
+      "model": "models/lyria-realtime-exp"
+    }
+  ]
+}
