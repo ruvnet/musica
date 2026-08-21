@@ -1,0 +1,2 @@
+import{l as e,o as t}from"./index-DCnMB9Df.js";async function n(n,r){let i=new t;return i.onmessage=r,await e(`plugin:global-shortcut|register`,{shortcuts:Array.isArray(n)?n:[n],handler:i})}async function r(){return await e(`plugin:global-shortcut|unregister_all`,{})}export{n as register,r as unregisterAll};
+//# sourceMappingURL=dist-js-BKob2Q1i.js.map
