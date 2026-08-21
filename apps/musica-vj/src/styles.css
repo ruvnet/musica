@@ -851,6 +851,37 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 9px; height
 .restream-live-button:disabled { opacity: .45; cursor: not-allowed; }
 .restream-control small { color: #787d88; font: 500 6px/1.35 "DM Mono"; }
 
+/* Settings broadcast + live follow (ADR-182). Cyan/violet rather than the
+   RESTREAM pink, so an encoder stream and a settings relay never read alike. */
+.broadcast-panel { display: grid; gap: 10px; }
+.broadcast-note { margin: 0; color: #7f8695; font: 500 7px/1.45 "DM Mono", monospace; }
+.broadcast-go-live, .broadcast-directory, .broadcast-following { display: grid; gap: 7px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.09); }
+.broadcast-panel > section:first-of-type { padding-top: 0; border-top: 0; }
+.broadcast-panel > section > header { display: flex; align-items: center; justify-content: space-between; }
+.broadcast-panel > section > header span { display: flex; align-items: center; gap: 6px; color: #c4c8d2; font: 700 8px "DM Mono", monospace; }
+.broadcast-panel > section > header i { width: 6px; height: 6px; border-radius: 50%; background: #5a5e68; }
+.broadcast-panel > section > header i.online { background: #35dcff; box-shadow: 0 0 8px rgba(53,220,255,.65); }
+.broadcast-panel > section > header b { color: #777c87; font: 700 7px "DM Mono", monospace; }
+.broadcast-panel small { color: #787d88; font: 500 6px/1.4 "DM Mono", monospace; }
+.broadcast-go-live label { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 7px; }
+.broadcast-go-live label span { color: #5e6674; font: 650 6px "DM Mono", monospace; }
+.broadcast-go-live input { min-width: 0; height: 27px; padding: 0 7px; border: 1px solid var(--line); border-radius: 5px; background: #0c0d12; color: #d7d9df; font: 600 7px "DM Mono", monospace; }
+.broadcast-go-live .restream-live-button { border-color: rgba(53,220,255,.32); background: rgba(53,220,255,.07); color: #9debf6; }
+.broadcast-go-live .restream-live-button.active { border-color: #35dcff; background: #35dcff; color: #04121a; }
+.broadcast-leaderboard { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.broadcast-leaderboard li { display: grid; grid-template-columns: 14px 1fr auto auto; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 6px; background: rgba(0,0,0,.28); }
+.broadcast-leaderboard li.following { border-color: rgba(176,107,242,.45); background: rgba(176,107,242,.08); }
+.broadcast-leaderboard em { color: #5e6674; font: 700 8px "DM Mono", monospace; font-style: normal; }
+.broadcast-entry-detail { display: grid; gap: 2px; min-width: 0; }
+.broadcast-entry-detail strong { overflow: hidden; color: #d6dae2; font: 700 8px "DM Mono", monospace; letter-spacing: .04em; text-overflow: ellipsis; white-space: nowrap; }
+.broadcast-entry-detail small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.broadcast-entry-listeners { min-width: 20px; color: #9debf6; font: 700 9px "DM Mono", monospace; text-align: right; }
+.broadcast-leaderboard button { height: 26px; padding: 0 10px; border: 1px solid rgba(53,220,255,.32); border-radius: 5px; background: rgba(53,220,255,.06); color: #9debf6; font: 700 7px "DM Mono", monospace; cursor: pointer; }
+.broadcast-leaderboard button:hover { border-color: rgba(53,220,255,.6); }
+.broadcast-leaderboard li.following button { border-color: rgba(176,107,242,.5); background: rgba(176,107,242,.1); color: #d8b6f4; }
+.broadcast-following { border-color: rgba(176,107,242,.3); }
+.broadcast-following > header b { color: #d8b6f4; }
+
 .footerbar { display: grid; grid-template-columns: minmax(180px,260px) minmax(240px,1fr) minmax(180px,250px) auto; align-items: center; gap: 16px; padding: 0 14px; border-top: 1px solid rgba(53,220,255,.12); background: rgba(4,7,11,.98); }
 .footer-status { min-width: 0; display: grid; gap: 2px; }
 .footer-status strong { overflow: hidden; color: #edf2f7; font: 650 10px "Space Grotesk", sans-serif; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,3 +1,4 @@
+mod broadcast_provider;
 mod cognitum_provider;
 mod controller_bridge;
 mod creative_provider;
@@ -7,6 +8,10 @@ mod meta_llm_provider;
 mod process_util;
 mod restream_provider;
 
+use broadcast_provider::{
+    broadcast_leave, broadcast_list, broadcast_listen, broadcast_publish, broadcast_status,
+    broadcast_stop, BroadcastProvider,
+};
 use cognitum_provider::{
     cognitum_auth_manual_complete, cognitum_auth_manual_start, cognitum_auth_start,
     cognitum_autodj_brief, cognitum_fx_direction, cognitum_lyria_credential, cognitum_set_arc,
@@ -145,6 +150,7 @@ pub fn run() {
                 let _ = window.set_title(&format!("Musica VJ v{}", env!("CARGO_PKG_VERSION")));
             }
             let asset_root = app.path().app_data_dir()?;
+            app.manage(BroadcastProvider::default());
             app.manage(CognitumProvider::new());
             app.manage(CreativeProvider::from_env(asset_root));
             app.manage(LyriaRealtimeProvider::from_env());
@@ -156,6 +162,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            broadcast_status,
+            broadcast_publish,
+            broadcast_stop,
+            broadcast_list,
+            broadcast_listen,
+            broadcast_leave,
             cognitum_auth_manual_complete,
             cognitum_auth_manual_start,
             cognitum_auth_start,

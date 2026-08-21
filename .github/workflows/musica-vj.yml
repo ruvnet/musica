@@ -15,6 +15,7 @@ on:
       - "src/**"
       - "docs/adr/ADR-16*.md"
       - "docs/specs/musica-lyria-3-pro-integration.md"
+      - "services/musica-broadcast/**"
       - ".github/workflows/musica-vj.yml"
   push:
     branches: [main]
@@ -27,12 +28,32 @@ on:
       - "src/**"
       - "docs/adr/ADR-16*.md"
       - "docs/specs/musica-lyria-3-pro-integration.md"
+      - "services/musica-broadcast/**"
       - ".github/workflows/musica-vj.yml"
 
 permissions:
   contents: read
 
 jobs:
+  broadcast-service:
+    # The settings broadcast plane (ADR-182). Its gate is the only thing
+    # standing between a Cognitum sign-in and other users' live state, so it is
+    # verified on every change rather than only at deploy time.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/musica-broadcast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/musica-broadcast/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

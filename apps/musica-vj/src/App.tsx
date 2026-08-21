@@ -26,6 +26,23 @@ import {
 } from "./core/djControls";
 import { openDjControlWindow } from "./core/djWindows";
 import {
+  BROADCAST_POLL_INTERVAL_MS,
+  BROADCAST_PUBLISH_MIN_INTERVAL_MS,
+  BROADCAST_STALE_AFTER_SECONDS,
+  broadcastAvailable,
+  broadcastSnapshotFingerprint,
+  captureBroadcastSnapshot,
+  followBroadcast,
+  isNewerBroadcastSnapshot,
+  leaveBroadcast,
+  listBroadcasts,
+  publishBroadcast,
+  slewRemoteIntensity,
+  stopBroadcast,
+  type BroadcastDirectory,
+  type BroadcastSnapshot,
+} from "./core/broadcast";
+import {
   compileLyriaPrompt,
   LYRIA_PRO_PRICE_USD,
   LYRIA_VOCAL_LANGUAGES,
@@ -235,7 +252,8 @@ type StudioPanelId =
   | "audio-templates"
   | "audio-agent"
   | "audio-generation"
-  | "av-output";
+  | "av-output"
+  | "broadcast";
 
 const INITIAL_CONTROLLER_STATUS: ControllerStatus = {
   keyboard: true,
@@ -1338,6 +1356,21 @@ export function App() {
   // In-app updater: check on launch and expose a manual check + one-click
   // install so the desktop app self-updates (no uninstall/reinstall).
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo>({ available: false });
+  // Settings broadcast + live follow (ADR-182).
+  const [broadcastName, setBroadcastName] = useState("");
+  const [broadcastLive, setBroadcastLive] = useState(false);
+  const [broadcastListeners, setBroadcastListeners] = useState(0);
+  const [broadcastBusy, setBroadcastBusy] = useState(false);
+  const [broadcastDirectory, setBroadcastDirectory] = useState<BroadcastDirectory>({ top: [], all: [] });
+  const [followingId, setFollowingId] = useState<string>();
+  const [followState, setFollowState] = useState<{ live: boolean; listeners: number; updatedAgoSeconds: number }>();
+  const broadcastRevRef = useRef(0);
+  const broadcastFingerprintRef = useRef<string | undefined>(undefined);
+  const broadcastPublishedAtRef = useRef(0);
+  // The newest revision already applied locally, so a repeated or reordered
+  // poll cannot resurrect stale state.
+  const appliedRevRef = useRef<number | undefined>(undefined);
+  const followIntensityRef = useRef<{ value: number; at: number } | undefined>(undefined);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateChecked, setUpdateChecked] = useState(false);
@@ -2958,6 +2991,197 @@ export function App() {
     });
   };
 
+  // --- Settings broadcast, live follow, listener leaderboard (ADR-182) -----
+  //
+  // Followers re-synthesize locally from a broadcaster's parameters; no audio
+  // moves over the network. Everything inbound was already clamped, whitelisted,
+  // and length-capped in `core/broadcast` — what is left here is the rest of the
+  // safety contract: consent before audio starts, slewed visuals, and never
+  // writing over the follower's own saved work.
+
+  const captureBroadcast = useCallback((rev: number) => captureBroadcastSnapshot({
+    rev,
+    bpm: snapshot.bpm,
+    styleId: lyriaStyleId,
+    styleLabel: activeLyriaStyle.label,
+    deckEnabled: lyriaDeckEnabled,
+    deckControls: lyriaDeckControls,
+    lyriaConfig: lyriaRealtimeConfig,
+    lyriaPrompts,
+    visualScene: selectedScene,
+    visualIntensity: intensity,
+    visualColor: visualColorControls,
+    masterEffects,
+    masterEffectParams,
+  }), [
+    activeLyriaStyle.label, intensity, lyriaDeckControls, lyriaDeckEnabled, lyriaPrompts,
+    lyriaRealtimeConfig, lyriaStyleId, masterEffectParams, masterEffects, selectedScene,
+    snapshot.bpm, visualColorControls,
+  ]);
+
+  useEffect(() => {
+    if (!broadcastLive) return;
+    const outgoing = captureBroadcast(broadcastRevRef.current + 1);
+    // Local state re-emits on every fader move; that frequency must not become
+    // the network's. An idle set stops republishing entirely.
+    const fingerprint = broadcastSnapshotFingerprint(outgoing);
+    if (fingerprint === broadcastFingerprintRef.current) return;
+    const wait = Math.max(0, BROADCAST_PUBLISH_MIN_INTERVAL_MS - (Date.now() - broadcastPublishedAtRef.current));
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const published = await publishBroadcast(broadcastName, outgoing);
+          broadcastFingerprintRef.current = fingerprint;
+          broadcastPublishedAtRef.current = Date.now();
+          broadcastRevRef.current += 1;
+          setBroadcastListeners(published.listeners);
+        } catch (error) {
+          setBroadcastLive(false);
+          setNotice(error instanceof Error ? error.message : "Broadcast failed");
+        }
+      })();
+    }, wait);
+    return () => window.clearTimeout(timer);
+  }, [broadcastLive, broadcastName, captureBroadcast]);
+
+  const applyFollowedSnapshot = useCallback((incoming: BroadcastSnapshot) => {
+    engineRef.current.setBpm(incoming.performance.bpm);
+
+    // The prompts and config are the set's direction; the style id is only a
+    // label, and a broadcaster's custom style does not exist here — so it is
+    // adopted only when it resolves locally, and the sound follows regardless.
+    const resolved = lyriaRealtimeStyleById(incoming.performance.styleId);
+    if (resolved?.id === incoming.performance.styleId) setLyriaStyleId(incoming.performance.styleId);
+    // Set state and let the existing debounced live-update effect push it to
+    // whichever decks are running — going through `applyRealtimeRequest` here
+    // would double-send and post a notice on every poll.
+    setLyriaPrompts(incoming.lyria.prompts);
+    setLyriaRealtimeConfig(incoming.lyria.config);
+
+    setLyriaDeckControls(incoming.performance.deckControls);
+    // Enabling a deck starts a metered Lyria session. A follow never does that
+    // on its own: the settings land now, and the deck comes up when the
+    // follower starts audio themselves.
+    if (lyriaSessionRef.current) {
+      for (const deck of LYRIA_DECKS) {
+        if (lyriaDeckEnabled[deck] !== incoming.performance.deckEnabled[deck]) {
+          void setRealtimeDeckEnabled(deck, incoming.performance.deckEnabled[deck]);
+        }
+      }
+    }
+
+    setSelectedScene(incoming.visual.scene);
+    // Rate-limited rather than snapped: a remote intensity flipping between
+    // extremes passes every range clamp and is a strobe.
+    const at = Date.now();
+    const previous = followIntensityRef.current;
+    const elapsed = previous ? at - previous.at : BROADCAST_POLL_INTERVAL_MS;
+    const nextIntensity = slewRemoteIntensity(previous?.value ?? intensityRef.current, incoming.visual.intensity, elapsed);
+    followIntensityRef.current = { value: nextIntensity, at };
+    setIntensity(nextIntensity);
+    changeVisualColor(incoming.visual.color);
+
+    // A locked effect is the follower's own decision and outranks the wire.
+    setMasterEffects((current) => Object.fromEntries(
+      MASTER_EFFECT_IDS.map((effect) => [effect, fxLocks[effect] ? current[effect] : incoming.fx.effects[effect]]),
+    ) as unknown as MasterEffectsState);
+    setMasterEffectParams(incoming.fx.params);
+  }, [changeVisualColor, fxLocks, lyriaDeckEnabled, setRealtimeDeckEnabled]);
+
+  // Held in a ref so the poll interval is not torn down and rebuilt every time
+  // an unrelated control moves.
+  const applyFollowedSnapshotRef = useRef(applyFollowedSnapshot);
+  useEffect(() => {
+    applyFollowedSnapshotRef.current = applyFollowedSnapshot;
+  }, [applyFollowedSnapshot]);
+
+  useEffect(() => {
+    if (!followingId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const update = await followBroadcast(followingId, appliedRevRef.current);
+        if (cancelled || !update) return;
+        setFollowState({ live: update.live, listeners: update.listeners, updatedAgoSeconds: update.updatedAgoSeconds });
+        if (update.snapshot && isNewerBroadcastSnapshot(update.snapshot, appliedRevRef.current)) {
+          appliedRevRef.current = update.snapshot.rev;
+          applyFollowedSnapshotRef.current(update.snapshot);
+        }
+      } catch {
+        // A dropped poll is not worth interrupting a performance for; the next
+        // tick retries.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), BROADCAST_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [followingId]);
+
+  const refreshBroadcastDirectory = useCallback(async () => {
+    try {
+      setBroadcastDirectory(await listBroadcasts());
+    } catch {
+      // The directory is best-effort; the panel keeps its last good list.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!cognitumStatus.signedIn || !broadcastAvailable()) return;
+    if (collapsedPanels.has("broadcast")) return;
+    void refreshBroadcastDirectory();
+    const timer = window.setInterval(() => void refreshBroadcastDirectory(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [cognitumStatus.signedIn, collapsedPanels, refreshBroadcastDirectory]);
+
+  const toggleBroadcast = useCallback(async () => {
+    setBroadcastBusy(true);
+    try {
+      if (broadcastLive) {
+        await stopBroadcast();
+        setBroadcastLive(false);
+        setNotice("Broadcast ended. Your last settings stay available to followers.");
+        return;
+      }
+      const outgoing = captureBroadcast(broadcastRevRef.current + 1);
+      const published = await publishBroadcast(broadcastName, outgoing);
+      if (!published.live) {
+        setNotice(published.reason ?? "Broadcast is unavailable");
+        return;
+      }
+      broadcastRevRef.current += 1;
+      broadcastPublishedAtRef.current = Date.now();
+      broadcastFingerprintRef.current = broadcastSnapshotFingerprint(outgoing);
+      setBroadcastLive(true);
+      setBroadcastListeners(published.listeners);
+      setNotice(`Broadcasting as ${published.displayName ?? (broadcastName || "Unnamed")}.`);
+      void refreshBroadcastDirectory();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Broadcast failed");
+    } finally {
+      setBroadcastBusy(false);
+    }
+  }, [broadcastLive, broadcastName, captureBroadcast, refreshBroadcastDirectory]);
+
+  const startFollowing = useCallback((id: string) => {
+    appliedRevRef.current = undefined;
+    followIntensityRef.current = undefined;
+    setFollowState(undefined);
+    setFollowingId(id);
+    setNotice("Following. Their settings will land here — start audio to hear them.");
+  }, []);
+
+  const stopFollowing = useCallback(() => {
+    const id = followingId;
+    setFollowingId(undefined);
+    setFollowState(undefined);
+    appliedRevRef.current = undefined;
+    followIntensityRef.current = undefined;
+    if (id) void leaveBroadcast(id).catch(() => undefined);
+  }, [followingId]);
+
   const renderStudioPanel = (panelId: StudioPanelId, title: string, meta: string, children: ReactNode, className = "") => {
     const collapsed = collapsedPanels.has(panelId);
     return (
@@ -3869,6 +4093,96 @@ export function App() {
             </section>
           ))}
 
+          {renderStudioPanel(
+            "broadcast",
+            "BROADCAST",
+            broadcastLive ? `${broadcastListeners} LISTENING` : followingId ? "FOLLOWING" : "OFF",
+            (
+              <section className="broadcast-panel">
+                <p className="broadcast-note">
+                  Shares your settings, not your audio — followers re-synthesize on their own machine.
+                  For a real audio stream use RESTREAM.
+                </p>
+
+                <section className="broadcast-go-live" aria-label="Broadcast your settings">
+                  <header><span><i className={broadcastLive ? "online" : ""} /> YOUR SET</span><b>{broadcastLive ? `${broadcastListeners} LISTENING` : "OFF AIR"}</b></header>
+                  <label>
+                    <span>NAME</span>
+                    <input
+                      type="text"
+                      value={broadcastName}
+                      maxLength={32}
+                      placeholder="How you appear in the directory"
+                      onChange={(event) => setBroadcastName(event.target.value)}
+                      disabled={broadcastBusy}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className={`restream-live-button ${broadcastLive ? "active" : ""}`}
+                    onClick={() => void toggleBroadcast()}
+                    disabled={broadcastBusy || !cognitumStatus.signedIn || !broadcastAvailable()}
+                  >
+                    {broadcastBusy ? "WORKING..." : broadcastLive ? "STOP BROADCAST" : "BROADCAST SETTINGS"}
+                  </button>
+                  {!cognitumStatus.signedIn && <small>Sign in with Cognitum One to broadcast.</small>}
+                  {cognitumStatus.signedIn && !broadcastAvailable() && <small>Broadcasting requires the desktop app.</small>}
+                </section>
+
+                <section className="broadcast-directory" aria-label="Broadcast leaderboard">
+                  <header><span>TOP 5 LIVE</span><b>{broadcastDirectory.all.length} ON AIR</b></header>
+                  {broadcastDirectory.top.length === 0 && <small>Nobody is broadcasting yet.</small>}
+                  <ol className="broadcast-leaderboard">
+                    {broadcastDirectory.top.map((entry, index) => {
+                      const stale = entry.updatedAgoSeconds > BROADCAST_STALE_AFTER_SECONDS;
+                      return (
+                        <li key={entry.id} className={followingId === entry.id ? "following" : ""}>
+                          <em>{index + 1}</em>
+                          <div className="broadcast-entry-detail">
+                            <strong>{entry.displayName}</strong>
+                            <small>
+                              {entry.styleLabel || "—"} · {entry.bpm} BPM
+                              {/* Never let a quiet broadcaster read as live. */}
+                              {!entry.live || stale ? ` · OFFLINE ${entry.updatedAgoSeconds}s` : ""}
+                            </small>
+                          </div>
+                          <span className="broadcast-entry-listeners">{entry.listeners}</span>
+                          <button
+                            type="button"
+                            onClick={() => (followingId === entry.id ? stopFollowing() : startFollowing(entry.id))}
+                          >
+                            {followingId === entry.id ? "UNFOLLOW" : "FOLLOW"}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  <div className="workspace-settings-actions">
+                    <button type="button" onClick={() => void refreshBroadcastDirectory()}>REFRESH</button>
+                    {followingId && <button type="button" onClick={stopFollowing}>STOP FOLLOWING</button>}
+                  </div>
+                </section>
+
+                {followingId && (
+                  <section className="broadcast-following" aria-label="Currently following" aria-live="polite">
+                    <header>
+                      <span>FOLLOWING</span>
+                      <b>{followState?.live && (followState?.updatedAgoSeconds ?? 0) <= BROADCAST_STALE_AFTER_SECONDS ? "LIVE" : "OFFLINE"}</b>
+                    </header>
+                    <small>
+                      {followState === undefined
+                        ? "Connecting…"
+                        : followState.live && followState.updatedAgoSeconds <= BROADCAST_STALE_AFTER_SECONDS
+                          ? `Tracking their set · ${followState.listeners} listening`
+                          : `They stopped ${followState.updatedAgoSeconds}s ago — you have their last settings.`}
+                    </small>
+                    <small>Your master volume and transport stay yours. Start audio to hear the followed set.</small>
+                  </section>
+                )}
+              </section>
+            ),
+          )}
+
           {renderStudioPanel("cognitum-ai", "COGNITUM AI", cognitumStatus.signedIn ? (cognitumStatus.account ?? "LINKED") : cognitumStatus.pending ? "WAITING" : "OPTIONAL", (
             <section className="cognitum-panel" aria-label="Cognitum One AI enhancements">
               {!cognitumStatus.signedIn ? (
@@ -4206,6 +4520,7 @@ export function App() {
               </section>
             </section>
           ))}
+
         </aside>
       </section>
 

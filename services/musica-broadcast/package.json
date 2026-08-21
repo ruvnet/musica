@@ -1,0 +1,22 @@
+{
+  "name": "musica-broadcast",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Settings broadcast, live follow, and listener leaderboard for Musica (ADR-182)",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "node --test",
+    "start": "functions-framework --target=musicaBroadcast",
+    "deploy": "bash deploy.sh",
+    "dev": "node dev-server.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@google-cloud/functions-framework": "^3.4.5",
+    "jose": "^5.9.6"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
